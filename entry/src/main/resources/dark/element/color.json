@@ -1,0 +1,100 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#10131A"
+    },
+    {
+      "name": "bika_primary",
+      "value": "#FF8FB3"
+    },
+    {
+      "name": "bika_primary_tint",
+      "value": "#3D2430"
+    },
+    {
+      "name": "bika_primary_tint2",
+      "value": "#33202A"
+    },
+    {
+      "name": "bika_primary_border",
+      "value": "#5C3242"
+    },
+    {
+      "name": "bika_primary_disabled",
+      "value": "#8A5A6C"
+    },
+    {
+      "name": "bika_favorited_bg",
+      "value": "#3D2430"
+    },
+    {
+      "name": "bika_bg",
+      "value": "#10131A"
+    },
+    {
+      "name": "bika_bg_section",
+      "value": "#10131A"
+    },
+    {
+      "name": "bika_card",
+      "value": "#1B2029"
+    },
+    {
+      "name": "bika_placeholder",
+      "value": "#232936"
+    },
+    {
+      "name": "bika_input_bg",
+      "value": "#1E2430"
+    },
+    {
+      "name": "bika_glass_top",
+      "value": "#CC10131A"
+    },
+    {
+      "name": "bika_divider",
+      "value": "#343B48"
+    },
+    {
+      "name": "bika_text_title",
+      "value": "#F1F4FA"
+    },
+    {
+      "name": "bika_text_secondary",
+      "value": "#B1BACB"
+    },
+    {
+      "name": "bika_text_hint",
+      "value": "#8B94A7"
+    },
+    {
+      "name": "bika_text_disabled",
+      "value": "#5A6270"
+    },
+    {
+      "name": "bika_white",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "bika_reader_bg",
+      "value": "#10131A"
+    },
+    {
+      "name": "bika_reader_toolbar_bg",
+      "value": "#80000000"
+    },
+    {
+      "name": "bika_reader_toolbar_disabled",
+      "value": "#80646464"
+    },
+    {
+      "name": "bika_reader_toolbar_active",
+      "value": "#E6FF7CA8"
+    },
+    {
+      "name": "bika_reader_text_muted",
+      "value": "#AAAAAA"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "bika-harmonyos",
+  "version": "1.0.0",
+  "description": "HarmonyOS 哔咔漫画阅读器（第三方 PicACG 客户端）",
+  "main": "",
+  "author": "",
+  "license": "GPL-3.0",
+  "modelVersion": "6.1.1",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.25",
+    "@ohos/hamock": "1.0.0"
+  }
+}

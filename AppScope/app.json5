@@ -1,0 +1,11 @@
+{
+  "app": {
+    "bundleName": "com.lomocat.bika",
+    "vendor": "example",
+    "versionCode": 1000003,
+    "versionName": "1.0.3",
+    "buildVersion": "1",
+    "icon": "$media:bika",
+    "label": "$string:app_name"
+  }
+}

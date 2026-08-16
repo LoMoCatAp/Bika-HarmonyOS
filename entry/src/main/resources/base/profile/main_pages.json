@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/IndexPage",
+    "pages/LoginPage",
+    "pages/ComicDetailPage",
+    "pages/ReaderPage",
+    "pages/ChannelListPage",
+    "pages/SearchPage"
+  ]
+}
