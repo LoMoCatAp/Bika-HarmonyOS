@@ -653,6 +653,7 @@ struct ReaderPage {
           }
           .width('100%')
           .constraintSize({ maxHeight: '82%' })
+          .align(Alignment.Top)
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         }

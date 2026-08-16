@@ -100,6 +100,7 @@ struct HomePage {
       }
       .width('100%')
       .height('100%')
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .backgroundColor(COLOR_BG)
@@ -464,6 +465,14 @@ interface ChangelogEntry {
 
 /** 更新日志（PezMax 同款可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.0.4',
+    date: '2026-08-16',
+    items: [
+      '修复所有滚动页面内容垂直居中问题（内容改为从顶部排布）',
+      '首页/我的/收藏/搜索/频道/详情等页面的 Scroll 统一顶部对齐'
+    ]
+  },
   {
     version: '1.0.3',
     date: '2026-08-16',
@@ -970,6 +979,7 @@ struct ProfilePage {
       }
       .width('100%')
       .height('100%')
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .backgroundColor(COLOR_BG)
@@ -1091,6 +1101,7 @@ struct ProfilePage {
         }
         .width('100%')
         .layoutWeight(1)
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .onReachEnd(() => {
@@ -1516,6 +1527,7 @@ struct ProfilePage {
         }
         .layoutWeight(1)
         .width('100%')
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
@@ -1633,6 +1645,7 @@ struct ProfilePage {
         }
         .layoutWeight(1)
         .width('100%')
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
@@ -1778,6 +1791,7 @@ struct ProfilePage {
         }
         .width('100%')
         .height(350)
+        .align(Alignment.Top)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
@@ -1867,6 +1881,7 @@ struct ProfilePage {
       }
       .width('100%')
       .height(420)
+      .align(Alignment.Top)
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }

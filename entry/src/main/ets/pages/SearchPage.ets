@@ -216,6 +216,7 @@ struct SearchPage {
             }
             .width('100%')
             .layoutWeight(1)
+            .align(Alignment.Top)
             .scrollBar(BarState.Off)
             .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
             .onReachEnd(() => {

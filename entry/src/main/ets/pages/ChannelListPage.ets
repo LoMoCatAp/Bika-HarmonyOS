@@ -403,6 +403,7 @@ struct ChannelListPage {
       }
       .width('100%')
       .height('100%')
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .onReachEnd(() => {
         if (!this.isFixedChannel() && this.hasMore && !this.isLoading) {

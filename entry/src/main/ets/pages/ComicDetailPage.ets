@@ -556,6 +556,7 @@ struct ComicDetailPage {
     }
     .width('100%')
     .height('100%')
+    .align(Alignment.Top)
     .scrollBar(BarState.Off)
     .backgroundColor(COLOR_BG)
   }
@@ -1101,6 +1102,7 @@ struct ComicDetailPage {
       }
       .width('100%')
       .height(220)
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
 
