@@ -1,7 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, DividerShowType, hdsMaterial } from '@kit.UIDesignKit';
 import { ApiService } from '../network/ApiService';
-import { ComicViewModel, BikaComicSummary, BikaKnightUser, buildImageUrl } from '../models/Comic';
+import { ComicViewModel, BikaComicSummary, BikaKnightUser, buildImageUrl, isBlockedComic } from '../models/Comic';
 import { ComicCard } from '../components/ComicCard';
 import { NetImage } from '../components/NetImage';
 import {
@@ -186,13 +186,18 @@ struct ChannelListPage {
         this.knights = await this.apiService.getKnightLeaderboard();
       } else if (this.kind === 'leaderboard') {
         vms = (await this.apiService.getLeaderboard(LEADERBOARD_TABS[this.leaderboardTab]))
+          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
           .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
       } else if (this.kind === 'random') {
-        vms = (await this.apiService.getRandomComics()).map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+        vms = (await this.apiService.getRandomComics())
+          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+          .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
       } else {
         let topic = this.kind === 'recent' ? '' : this.label;
         let result = await this.apiService.getComics(topic, this.currentSort, this.currentPage);
-        vms = result.comics.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+        vms = result.comics
+          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+          .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
         this.hasMore = this.currentPage < result.pages;
       }
       if (this.kind === 'recommend' || this.kind === 'recent' || this.kind === 'topic') {

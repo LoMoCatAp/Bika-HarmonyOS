@@ -1,7 +1,10 @@
 import { router, promptAction, window, display } from '@kit.ArkUI';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
+import { ImageLoader } from '../common/ImageLoader';
 import { BikaPageDoc } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
 import { DownloadManager } from '../common/DownloadManager';
@@ -95,6 +98,9 @@ struct ReaderPage {
   @State zoomScale: number = 1.0;
   /** 阅读模式：0 左→右 1 右→左 2 上→下单页 3 条漫(有隙) 4 条漫(无缝，默认) */
   @State readingMode: number = 4;
+  /** 保存图片弹窗 */
+  @State showSaveSheet: boolean = false;
+  @State saveSheetIndex: number = 0;
   /** 单页模式的当前页（切换模式时保留阅读位置） */
   @State swiperIndex: number = 0;
   /** 单页模式控制器（非受控 index，避免手势被状态回写打断） */
@@ -412,6 +418,101 @@ struct ReaderPage {
     }
   }
 
+  /** 长按图片的上下文菜单（原生 Menu） */
+  @Builder
+  saveImageMenu(index: number) {
+    Menu() {
+      MenuItem({ content: '保存图片到相册' })
+        .onClick(() => {
+          this.saveSheetIndex = index;
+          this.showSaveSheet = true;
+        })
+    }
+  }
+
+  /** 保存弹窗：预览 + 系统 SaveButton 安全控件（临时授权，无需权限声明） */
+  @Builder
+  saveImageSheet() {
+    Column({ space: 12 }) {
+      Text('')
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(COLOR_TEXT_SECONDARY)
+        .opacity(0.32)
+        .margin({ top: 6, bottom: 2 })
+      NetImage({
+        src: this.imageDataSource.getData(this.saveSheetIndex).url,
+        fit: ImageFit.Contain,
+        radius: 12,
+        fillParent: true
+      })
+        .width('100%')
+        .height(280)
+        .backgroundColor(COLOR_CARD)
+      Text('点击下方安全按钮，授权保存到系统相册')
+        .fontSize(12)
+        .fontColor(COLOR_TEXT_HINT)
+      SaveButton({
+        icon: SaveIconStyle.FULL_FILLED,
+        text: SaveDescription.SAVE_IMAGE,
+        buttonType: ButtonType.Capsule
+      })
+        .width(220)
+        .height(40)
+        .onClick((event: ClickEvent, result: SaveButtonOnClickResult) => {
+          if (result === SaveButtonOnClickResult.SUCCESS) {
+            this.writeImageToAlbum(this.saveSheetIndex);
+          } else {
+            promptAction.showToast({ message: '未获得保存授权', duration: 1600 });
+          }
+        })
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: this.bottomSafeHeight + 12 })
+    .backgroundColor(COLOR_CARD)
+    .borderRadius({ topLeft: 20, topRight: 20 })
+  }
+
+  /** 临时授权成功后写入相册 */
+  private async writeImageToAlbum(index: number): Promise<void> {
+    let img = this.imageDataSource.getData(index);
+    if (!img || img.failed) {
+      promptAction.showToast({ message: '图片不可用', duration: 1600 });
+      return;
+    }
+    let bytes: ArrayBuffer;
+    try {
+      if (img.url.startsWith('file://')) {
+        let path = img.url.substring(7);
+        let stat = fs.statSync(path);
+        let buf = new ArrayBuffer(stat.size);
+        let file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+        fs.readSync(file.fd, buf);
+        fs.closeSync(file.fd);
+        bytes = buf;
+      } else {
+        bytes = await ImageLoader.downloadBytes([img.url]);
+      }
+    } catch (err) {
+      promptAction.showToast({ message: '图片获取失败', duration: 1600 });
+      return;
+    }
+    try {
+      let ph = photoAccessHelper.getPhotoAccessHelper(getContext(this));
+      let uri = await ph.createAsset(photoAccessHelper.PhotoType.IMAGE, 'jpg', {
+        title: 'bika_' + Date.now()
+      });
+      let file = fs.openSync(uri, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE);
+      fs.writeSync(file.fd, bytes);
+      fs.closeSync(file.fd);
+      this.showSaveSheet = false;
+      promptAction.showToast({ message: '已保存到相册', duration: 1600 });
+    } catch (err) {
+      promptAction.showToast({ message: '保存失败：' + (err as Error).message, duration: 2000 });
+    }
+  }
+
   /** 保存当前页级进度（单页模式用 swiperIndex，滚动模式用当前可见页） */
   private persistPageIndex(): void {
     let page = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
@@ -498,6 +599,7 @@ struct ReaderPage {
               })
                 .width('100%')
                 .height('100%')
+                .bindContextMenu(this.saveImageMenu(index), ResponseType.LongPress)
             }, (img: ReaderImage, index: number) => String(index) + '_' + img.url)
           }
           .vertical(this.readingMode === 2)
@@ -542,6 +644,7 @@ struct ReaderPage {
                     })
                       .width('100%')
                       .backgroundColor(COLOR_CARD)
+                      .bindContextMenu(this.saveImageMenu(index), ResponseType.LongPress)
                   }
                 }
                 .width('100%')
@@ -659,6 +762,16 @@ struct ReaderPage {
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
       onWillDismiss: (): void => {
         this.showSettings = false;
+      }
+    })
+    .bindSheet($$this.showSaveSheet, this.saveImageSheet(), {
+      detents: [SheetSize.FIT_CONTENT],
+      preferType: SheetType.BOTTOM,
+      showClose: false,
+      dragBar: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      onWillDismiss: (): void => {
+        this.showSaveSheet = false;
       }
     })
   }

@@ -1,4 +1,4 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, bundleManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -20,6 +20,13 @@ export default class EntryAbility extends UIAbility {
     const systemMode: string = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
       ? 'dark' : 'light';
     AppStorage.setOrCreate('system_color_mode', systemMode);
+    // 记录当前版本号（检查更新对比用）
+    try {
+      let info = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      AppStorage.setOrCreate('bika_current_version', info.versionName);
+    } catch (e) {
+      hilog.error(DOMAIN, 'BikaTag', 'Failed to read version. Cause: %{public}s', JSON.stringify(e));
+    }
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onCreate');
   }
 
@@ -75,6 +82,8 @@ export default class EntryAbility extends UIAbility {
         AppStorage.set('bika_dns_api_ips', cache.getSetting('dns_api_ips', '[]'));
         AppStorage.setOrCreate('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
         AppStorage.set('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
+        AppStorage.setOrCreate('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
+        AppStorage.set('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
 
         // 应用显示模式
         try {

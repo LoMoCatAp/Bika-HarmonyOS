@@ -178,6 +178,75 @@ export class CacheManager {
     return this.getString('download_tasks');
   }
 
+  // ─── 屏蔽标签 ───
+
+  saveBlockedTags(tags: string[]): void {
+    this.put('blocked_tags', JSON.stringify(tags));
+  }
+
+  loadBlockedTags(): string[] {
+    let raw = this.getString('blocked_tags', '[]');
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── 搜索历史 ───
+
+  saveSearchHistory(keyword: string): void {
+    let arr = this.loadSearchHistory();
+    let idx = arr.indexOf(keyword);
+    if (idx >= 0) {
+      arr.splice(idx, 1);
+    }
+    arr.unshift(keyword);
+    if (arr.length > 20) {
+      arr = arr.slice(0, 20);
+    }
+    this.put('search_history', JSON.stringify(arr));
+  }
+
+  loadSearchHistory(): string[] {
+    let raw = this.getString('search_history', '[]');
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  clearSearchHistory(): void {
+    this.prefs?.deleteSync('search_history');
+    this.prefs?.flushSync();
+  }
+
+  // ─── 首页频道自定义 ───
+
+  saveChannelsCustom(order: string[], hidden: string[]): void {
+    this.put('channels_order', JSON.stringify(order));
+    this.put('channels_hidden', JSON.stringify(hidden));
+  }
+
+  loadChannelsOrder(): string[] {
+    let raw = this.getString('channels_order', '[]');
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  loadChannelsHidden(): string[] {
+    let raw = this.getString('channels_hidden', '[]');
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+
   // ─── 通用设置持久化（AppStorage 为内存态，重启后从此恢复） ───
 
   saveSetting(key: string, value: string): void {
