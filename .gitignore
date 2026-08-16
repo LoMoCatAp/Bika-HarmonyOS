@@ -12,3 +12,4 @@
 /.appanalyzer
 /.zcode
 /app-signed.hap
+/build-profile.json5
