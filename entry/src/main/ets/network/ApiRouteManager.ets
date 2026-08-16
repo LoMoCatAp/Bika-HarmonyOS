@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { ImageLoader } from '../common/ImageLoader';
 import {
   BIKA_API_HOST,
   BIKA_INIT_HOST,
@@ -73,6 +74,22 @@ export class ApiRouteManager {
   resetToDefault(): void {
     this.ipPool = BIKA_FALLBACK_IPS.slice(0);
     this.lastRefreshAt = 0;
+  }
+
+  /** 当前生效的 API 直连 IP */
+  getApiDnsIps(): string[] {
+    return this.ipPool.slice(0);
+  }
+
+  /** 应用 DNS 选择：API IP 列表 + 图片 IP 列表（空数组恢复默认） */
+  applyCustomDns(apiIps: string[], imageIps: string[]): void {
+    if (apiIps.length > 0) {
+      this.ipPool = apiIps.slice(0);
+    } else {
+      this.ipPool = BIKA_FALLBACK_IPS.slice(0);
+    }
+    this.lastRefreshAt = 0;
+    ImageLoader.setCustomImageIps(imageIps);
   }
 
   /**

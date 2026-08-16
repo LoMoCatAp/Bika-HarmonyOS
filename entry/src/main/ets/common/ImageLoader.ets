@@ -14,6 +14,48 @@ export class ImageLoader {
   private static cache: Map<string, PixelMap> = new Map();
   private static order: string[] = [];
   private static pending: Map<string, Promise<PixelMap>> = new Map();
+  /** DNS 优化选中的图片直连 IP（空 = 默认系统解析） */
+  private static customImageIps: string[] = [];
+
+  static setCustomImageIps(ips: string[]): void {
+    ImageLoader.customImageIps = ips.slice(0);
+  }
+
+  static getCustomImageIps(): string[] {
+    return ImageLoader.customImageIps.slice(0);
+  }
+
+  /** 生成图片 URL 的 IP 直连变体（保留路径，SNI/Host 指回原域名） */
+  private static ipVariants(url: string): string[] {
+    if (ImageLoader.customImageIps.length === 0) {
+      return [];
+    }
+    let schemeIdx = url.indexOf('://');
+    if (schemeIdx < 0) {
+      return [];
+    }
+    let hostStart = schemeIdx + 3;
+    let pathIdx = url.indexOf('/', hostStart);
+    if (pathIdx < 0) {
+      return [];
+    }
+    let path = url.substring(pathIdx);
+    let out: string[] = [];
+    for (let ip of ImageLoader.customImageIps) {
+      out.push('https://' + ip + path);
+    }
+    return out;
+  }
+
+  private static hostOf(url: string): string {
+    let schemeIdx = url.indexOf('://');
+    if (schemeIdx < 0) {
+      return '';
+    }
+    let hostStart = schemeIdx + 3;
+    let pathIdx = url.indexOf('/', hostStart);
+    return pathIdx < 0 ? url.substring(hostStart) : url.substring(hostStart, pathIdx);
+  }
 
   /** 同步取缓存（供组件首帧使用） */
   static getCached(url: string): PixelMap | null {
@@ -53,28 +95,54 @@ export class ImageLoader {
     throw lastErr;
   }
 
-  /** 下载原始字节（供下载器写本地文件；含镜像回退） */
+  /** 下载原始字节（供下载器写本地文件；含镜像回退与自定义 DNS 直连变体） */
   static async downloadBytes(urls: string[]): Promise<ArrayBuffer> {
     let lastErr: Error = new Error('no valid url');
     for (let url of urls) {
       if (!url || url.length === 0) {
         continue;
       }
-      try {
-        return await BikaHttpClient.downloadBinary(url, { 'User-Agent': 'okhttp/3.8.1' });
-      } catch (err) {
-        lastErr = err as Error;
-        console.warn('[ImageLoader] downloadBytes failed ' + url + ': ' + lastErr.message);
+      let host = ImageLoader.hostOf(url);
+      let variants = ImageLoader.ipVariants(url);
+      let candidates: string[] = [url].concat(variants);
+      for (let candidate of candidates) {
+        let isIpDirect = candidate !== url;
+        try {
+          let headers: Record<string, string> = { 'User-Agent': 'okhttp/3.8.1' };
+          if (isIpDirect && host.length > 0) {
+            headers['Host'] = host;
+          }
+          return await BikaHttpClient.downloadBinary(candidate, headers, isIpDirect ? host : '');
+        } catch (err) {
+          lastErr = err as Error;
+          console.warn('[ImageLoader] downloadBytes failed ' + candidate + ': ' + lastErr.message);
+        }
       }
     }
     throw lastErr;
   }
 
-  /** 下载并解码为 PixelMap */
+  /** 下载并解码为 PixelMap（含自定义 DNS 直连变体） */
   private static async download(url: string): Promise<PixelMap> {
-    let bytes = await BikaHttpClient.downloadBinary(url, { 'User-Agent': 'okhttp/3.8.1' });
-    let source = image.createImageSource(bytes);
-    return await source.createPixelMap();
+    let host = ImageLoader.hostOf(url);
+    let variants = ImageLoader.ipVariants(url);
+    let candidates: string[] = [url].concat(variants);
+    let lastErr: Error = new Error('download failed');
+    for (let candidate of candidates) {
+      let isIpDirect = candidate !== url;
+      try {
+        let headers: Record<string, string> = { 'User-Agent': 'okhttp/3.8.1' };
+        if (isIpDirect && host.length > 0) {
+          headers['Host'] = host;
+        }
+        let bytes = await BikaHttpClient.downloadBinary(candidate, headers, isIpDirect ? host : '');
+        let source = image.createImageSource(bytes);
+        return await source.createPixelMap();
+      } catch (err) {
+        lastErr = err as Error;
+      }
+    }
+    throw lastErr;
   }
 
   private static put(url: string, pm: PixelMap): void {

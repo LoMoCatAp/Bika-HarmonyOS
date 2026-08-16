@@ -164,11 +164,13 @@ export class BikaHttpClient {
    * 下载二进制数据（阅读器图片等）
    * @param url 完整 URL
    * @param headers 额外请求头
+   * @param sniHost 直连 IP 时的真实域名（SNI/Host 校验），空 = 域名直连
    * @returns ArrayBuffer
    */
   static async downloadBinary(
     url: string,
-    headers: Record<string, string> = {}
+    headers: Record<string, string> = {},
+    sniHost: string = ''
   ): Promise<ArrayBuffer> {
     // 共享单例：图片请求同样复用连接，避免大量新握手
     let request = BikaHttpClient.getRequest();
@@ -176,13 +178,19 @@ export class BikaHttpClient {
     // 跟随重定向（最多 3 跳），镜像站可能 302 到真实存储
     let currentUrl = url;
     for (let hop = 0; hop < 3; hop++) {
-      let response = await request.request(currentUrl, {
+      let options: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
         header: headers,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
         connectTimeout: 30000,
         readTimeout: 60000
-      });
+      };
+      if (sniHost && sniHost.length > 0) {
+        // 图片 DNS 优化：直连选中 IP，SNI 指回原域名
+        options.sniHostName = sniHost;
+        options.remoteValidation = 'skip';
+      }
+      let response = await request.request(currentUrl, options);
 
       if (response.responseCode === 200) {
         return response.result as ArrayBuffer;

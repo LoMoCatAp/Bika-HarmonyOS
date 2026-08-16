@@ -4,6 +4,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ApiRouteManager } from '../network/ApiRouteManager';
 import { BikaHttpClient } from '../network/BikaHttpClient';
+import { WindowHelper } from '../common/WindowHelper';
 
 const DOMAIN = 0x0000;
 
@@ -53,6 +54,14 @@ export default class EntryAbility extends UIAbility {
       }).catch((e: BusinessError) => {
         hilog.error(DOMAIN, 'BikaTag', 'Failed to set fullscreen. Cause:' + JSON.stringify(e));
       });
+
+      // 注入主窗口单例，并在启动时应用防截屏设置
+      WindowHelper.setMainWindow(windowClass);
+      if (AppStorage.get<boolean>('bika_secure_screen') === true) {
+        windowClass.setWindowPrivacyMode(true).catch((e: BusinessError) => {
+          hilog.error(DOMAIN, 'BikaTag', 'Failed to set privacy mode. Cause:' + JSON.stringify(e));
+        });
+      }
 
       // 获取状态栏区域高度
       let notificationArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);

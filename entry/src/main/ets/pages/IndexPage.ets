@@ -1,4 +1,4 @@
-import { router, display, promptAction, window } from '@kit.ArkUI';
+import { router, display, promptAction } from '@kit.ArkUI';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ConfigurationConstant } from '@kit.AbilityKit';
@@ -10,7 +10,9 @@ import { CacheManager, HistoryItem } from '../common/CacheManager';
 import { DownloadManager, DownloadTask } from '../common/DownloadManager';
 import { compatibleImmersiveMaterial } from '../common/CompatibleMaterial';
 import { ImageLoader } from '../common/ImageLoader';
+import { WindowHelper } from '../common/WindowHelper';
 import { ApiRouteManager } from '../network/ApiRouteManager';
+import { DnsService, DnsIpEntry } from '../network/DnsService';
 import {
   COLOR_PRIMARY,
   COLOR_PRIMARY_TINT,
@@ -469,6 +471,16 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.0.7',
+    date: '2026-08-16',
+    items: [
+      'DNS 优化全面升级：分流线路拉取 + IP 握手测速 + 应用最低延迟 + 线路点选',
+      'DNS 选择实时生效（API 与图片各自直连所选 IP），支持重置默认',
+      '防截屏改为启动即应用 + 开关即时生效（主窗口单例）',
+      '退出登录位置上移'
+    ]
+  },
+  {
     version: '1.0.6',
     date: '2026-08-16',
     items: [
@@ -611,9 +623,13 @@ struct ProfilePage {
   @State downloadSizeBytes: number = 0;
   @State cacheSizeBytes: number = 0;
   @State storageRefreshing: boolean = false;
-  /** DNS 状态 */
-  @State dnsPool: string[] = [];
-  @State dnsRefreshing: boolean = false;
+  /** DNS 分流线路状态 */
+  @State dnsLines: Map<string, DnsIpEntry[]> = new Map();
+  @State dnsFetching: boolean = false;
+  @State dnsTesting: boolean = false;
+  @State dnsError: string = '';
+  @State dnsApiIps: string[] = [];
+  @State dnsImageIps: string[] = [];
   @State punching: boolean = false;
   @StorageLink('download_revision') @Watch('onDownloadChanged') downloadRevision: number = 0;
   @State downloadList: DownloadTask[] = [];
@@ -707,13 +723,10 @@ struct ProfilePage {
     }
   }
 
-  /** 应用防截屏开关（ArkUI 原生窗口 API） */
+  /** 应用防截屏开关（ArkUI 原生窗口 API，主窗口单例） */
   private applySecureScreen(): void {
-    let context = getContext(this);
-    window.getLastWindow(context).then((win: window.Window) => {
-      win.setWindowPrivacyMode(this.secureScreen);
-    }).catch((err: Error) => {
-      console.warn('[ProfilePage] setWindowPrivacyMode failed: ' + JSON.stringify(err));
+    WindowHelper.applyPrivacyMode(this.secureScreen).catch((err: Error) => {
+      console.warn('[ProfilePage] privacy mode failed: ' + JSON.stringify(err));
     });
   }
 
@@ -779,27 +792,269 @@ struct ProfilePage {
     });
   }
 
-  /** 读取 DNS 池快照 */
-  private refreshDnsPool(): void {
-    this.dnsPool = ApiRouteManager.getInstance().getCandidates();
+  /** 线路显示名 */
+  private dnsLineName(key: string): string {
+    if (key === 'unicom') {
+      return '联通分流线路';
+    }
+    if (key === 'telecom') {
+      return '电信分流线路';
+    }
+    if (key === 'mobile') {
+      return '移动分流线路';
+    }
+    if (key === 'overseas') {
+      return '海外分流线路';
+    }
+    return key + ' 分流线路';
   }
 
-  /** 强制刷新 DNS 池 */
-  private forceDnsRefresh(): void {
-    this.dnsRefreshing = true;
-    ApiRouteManager.getInstance().forceRefresh();
-    setTimeout(() => {
-      this.refreshDnsPool();
-      this.dnsRefreshing = false;
-      promptAction.showToast({ message: 'IP 池刷新完成', duration: 1600 });
-    }, 2500);
+  /** 按固定顺序返回线路 key */
+  private dnsLineKeys(): string[] {
+    let keys = Array.from(this.dnsLines.keys());
+    let order = ['unicom', 'telecom', 'mobile', 'overseas'];
+    keys.sort((a: string, b: string) => {
+      let ia = order.indexOf(a);
+      let ib = order.indexOf(b);
+      if (ia >= 0 && ib >= 0) {
+        return ia - ib;
+      }
+      if (ia >= 0) {
+        return -1;
+      }
+      if (ib >= 0) {
+        return 1;
+      }
+      return a.localeCompare(b);
+    });
+    return keys;
   }
 
-  /** 恢复默认 DNS 池 */
-  private resetDnsPool(): void {
+  /** 读取已保存的 DNS 选择 */
+  private loadDnsSelection(): void {
+    try {
+      let apiRaw = AppStorage.get<string>('bika_dns_api_ips') ?? '';
+      let imageRaw = AppStorage.get<string>('bika_dns_image_ips') ?? '';
+      this.dnsApiIps = apiRaw.length > 0 ? JSON.parse(apiRaw) as string[] : [];
+      this.dnsImageIps = imageRaw.length > 0 ? JSON.parse(imageRaw) as string[] : [];
+    } catch (err) {
+      this.dnsApiIps = [];
+      this.dnsImageIps = [];
+    }
+  }
+
+  /** 应用并持久化 DNS 选择 */
+  private applyDnsSelection(apiIps: string[], imageIps: string[]): void {
+    this.dnsApiIps = apiIps.slice(0);
+    this.dnsImageIps = imageIps.slice(0);
+    AppStorage.setOrCreate('bika_dns_api_ips', JSON.stringify(apiIps));
+    AppStorage.setOrCreate('bika_dns_image_ips', JSON.stringify(imageIps));
+    ApiRouteManager.getInstance().applyCustomDns(apiIps, imageIps);
+    // 刷新列表选中态
+    let newMap = new Map<string, DnsIpEntry[]>();
+    let keys = Array.from(this.dnsLines.keys());
+    for (let k of keys) {
+      let list = this.dnsLines.get(k);
+      let newList: DnsIpEntry[] = [];
+      if (list) {
+        for (let e of list) {
+          newList.push({
+            ip: e.ip,
+            line: e.line,
+            domain: e.domain,
+            latency: e.latency,
+            selected: e.domain === 'picacomic.com' ? imageIps.indexOf(e.ip) >= 0 : apiIps.indexOf(e.ip) >= 0
+          });
+        }
+      }
+      newMap.set(k, newList);
+    }
+    this.dnsLines = newMap;
+    promptAction.showToast({ message: 'DNS 选择已生效', duration: 1600 });
+  }
+
+  /** 获取线路并测速（bika 同款：双源拉取 + TCP 握手测速） */
+  private async fetchAndTestDns(): Promise<void> {
+    if (this.dnsFetching || this.dnsTesting) {
+      return;
+    }
+    this.dnsFetching = true;
+    this.dnsError = '';
+    try {
+      let lines = await DnsService.fetchLines(this.dnsApiIps, this.dnsImageIps);
+      if (lines.size === 0) {
+        this.dnsError = '未能获取到任何 IP，请检查网络连接。';
+        this.dnsFetching = false;
+        return;
+      }
+      this.dnsLines = lines;
+      this.dnsFetching = false;
+      await this.testAllDnsLatencies();
+    } catch (err) {
+      this.dnsError = (err as Error).message || '拉取 IP 列表失败';
+      this.dnsFetching = false;
+    }
+  }
+
+  /** 并发 6 路测速全部 IP */
+  private async testAllDnsLatencies(): Promise<void> {
+    this.dnsTesting = true;
+    let all: DnsIpEntry[] = [];
+    let keys = Array.from(this.dnsLines.keys());
+    for (let k of keys) {
+      let list = this.dnsLines.get(k);
+      if (list) {
+        all = all.concat(list);
+      }
+    }
+    let idx = 0;
+    let worker = async (): Promise<void> => {
+      while (idx < all.length) {
+        let entry = all[idx];
+        idx++;
+        let latency = await DnsService.testLatency(entry.ip);
+        let updated: DnsIpEntry = {
+          ip: entry.ip,
+          line: entry.line,
+          domain: entry.domain,
+          latency: latency,
+          selected: entry.selected
+        };
+        let newMap = new Map<string, DnsIpEntry[]>();
+        let mapKeys = Array.from(this.dnsLines.keys());
+        for (let k of mapKeys) {
+          let list = this.dnsLines.get(k);
+          let newList: DnsIpEntry[] = [];
+          if (list) {
+            for (let e of list) {
+              newList.push(e.ip === entry.ip ? updated : e);
+            }
+          }
+          newMap.set(k, newList);
+        }
+        this.dnsLines = newMap;
+      }
+    };
+    let workers: Promise<void>[] = [];
+    for (let i = 0; i < 6; i++) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+    this.dnsTesting = false;
+  }
+
+  /** 应用最低延迟 IP（API 与图片各自取最优） */
+  private applyLowestLatencyDns(): void {
+    let all: DnsIpEntry[] = [];
+    let keys = Array.from(this.dnsLines.keys());
+    for (let k of keys) {
+      let list = this.dnsLines.get(k);
+      if (list) {
+        all = all.concat(list);
+      }
+    }
+    let bestApi = '';
+    let bestApiLat = 999999;
+    let bestImage = '';
+    let bestImageLat = 999999;
+    for (let e of all) {
+      if (e.latency < 0) {
+        continue;
+      }
+      if (e.domain === 'picaapi.picacomic.com' && e.latency < bestApiLat) {
+        bestApi = e.ip;
+        bestApiLat = e.latency;
+      } else if (e.domain === 'picacomic.com' && e.latency < bestImageLat) {
+        bestImage = e.ip;
+        bestImageLat = e.latency;
+      }
+    }
+    let apiIps = bestApi.length > 0 ? [bestApi] : this.dnsApiIps;
+    let imageIps = bestImage.length > 0 ? [bestImage] : this.dnsImageIps;
+    this.applyDnsSelection(apiIps, imageIps);
+  }
+
+  /** 选择某条线路 IP（同线路另一域名自动取最优） */
+  private selectDnsIp(entry: DnsIpEntry): void {
+    let newApi = this.dnsApiIps.slice(0);
+    let newImage = this.dnsImageIps.slice(0);
+    let lineList = this.dnsLines.get(entry.line);
+    if (entry.domain === 'picacomic.com') {
+      newImage = [entry.ip];
+      if (lineList) {
+        let apiList = lineList.filter(e => e.domain === 'picaapi.picacomic.com');
+        let best = '';
+        let bestLat = 999999;
+        for (let e of apiList) {
+          if (e.latency >= 0 && e.latency < bestLat) {
+            best = e.ip;
+            bestLat = e.latency;
+          }
+        }
+        if (best.length === 0 && apiList.length > 0) {
+          best = apiList[0].ip;
+        }
+        if (best.length > 0) {
+          newApi = [best];
+        }
+      }
+    } else {
+      newApi = [entry.ip];
+      if (lineList) {
+        let imgList = lineList.filter(e => e.domain === 'picacomic.com');
+        let best = '';
+        let bestLat = 999999;
+        for (let e of imgList) {
+          if (e.latency >= 0 && e.latency < bestLat) {
+            best = e.ip;
+            bestLat = e.latency;
+          }
+        }
+        if (best.length === 0 && imgList.length > 0) {
+          best = imgList[0].ip;
+        }
+        if (best.length > 0) {
+          newImage = [best];
+        }
+      }
+    }
+    this.applyDnsSelection(newApi, newImage);
+  }
+
+  /** 重置默认 DNS */
+  private resetDns(): void {
     ApiRouteManager.getInstance().resetToDefault();
-    this.refreshDnsPool();
-    promptAction.showToast({ message: '已恢复默认 IP 池', duration: 1600 });
+    ImageLoader.setCustomImageIps([]);
+    this.dnsApiIps = [];
+    this.dnsImageIps = [];
+    AppStorage.setOrCreate('bika_dns_api_ips', '[]');
+    AppStorage.setOrCreate('bika_dns_image_ips', '[]');
+    // 刷新选中态
+    let newMap = new Map<string, DnsIpEntry[]>();
+    let keys = Array.from(this.dnsLines.keys());
+    for (let k of keys) {
+      let list = this.dnsLines.get(k);
+      let newList: DnsIpEntry[] = [];
+      if (list) {
+        for (let e of list) {
+          newList.push({ ip: e.ip, line: e.line, domain: e.domain, latency: e.latency, selected: false });
+        }
+      }
+      newMap.set(k, newList);
+    }
+    this.dnsLines = newMap;
+    promptAction.showToast({ message: '已恢复默认 DNS', duration: 1600 });
+  }
+
+  /** 延迟显示 */
+  private dnsLatencyLabel(entry: DnsIpEntry): string {
+    if (entry.latency === -2) {
+      return '测量中…';
+    }
+    if (entry.latency < 0) {
+      return '超时';
+    }
+    return entry.latency + ' ms';
   }
 
   private sizeLabelForStorage(bytes: number): string {
@@ -1187,7 +1442,7 @@ struct ProfilePage {
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .margin({ left: 16, right: 16, bottom: 62 })
+          .margin({ left: 16, right: 16, bottom: this.bottomSafeHeight + 72 })
           .onClick(() => this.onLogout())
         }
       }
@@ -1717,6 +1972,10 @@ struct ProfilePage {
                   this.secureScreen = isOn;
                   AppStorage.setOrCreate('bika_secure_screen', isOn);
                   this.applySecureScreen();
+                  promptAction.showToast({
+                    message: isOn ? '已开启防截屏，截屏/录屏将显示黑屏' : '已关闭防截屏',
+                    duration: 1600
+                  });
                 })
             }
             .width('100%')
@@ -1788,7 +2047,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('直连 IP 池管理与刷新')
+                Text('直连与分流线路优化')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -2178,82 +2437,211 @@ struct ProfilePage {
     })
   }
 
-  /** DNS 优化子页 */
+  /** DNS 直连与分流优化子页 */
   @Builder
   dnsDestination() {
     HdsNavDestination() {
       Column() {
-        this.subpageHeader('DNS 优化')
+        this.subpageHeader('DNS 直连与分流优化')
+        if (this.dnsFetching) {
+          Row({ space: 8 }) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(COLOR_PRIMARY)
+            Text('正在获取分流线路…')
+              .fontSize(13)
+              .fontColor(COLOR_TEXT_SECONDARY)
+          }
+          .width('100%')
+          .height(36)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(COLOR_PRIMARY_TINT)
+        } else if (this.dnsTesting) {
+          Row({ space: 8 }) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(COLOR_PRIMARY)
+            Text('正在测量 IP 握手延迟…')
+              .fontSize(13)
+              .fontColor(COLOR_TEXT_SECONDARY)
+          }
+          .width('100%')
+          .height(36)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(COLOR_PRIMARY_TINT)
+        }
         Scroll() {
           Column({ space: 12 }) {
-            Column() {
-              Text('直连 IP 池')
-                .fontSize(13)
-                .fontColor(COLOR_TEXT_HINT)
-                .width('100%')
-                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
-              ForEach(this.dnsPool, (ip: string, index: number) => {
-                Row() {
-                  Text('' + (index + 1))
-                    .fontSize(12)
-                    .fontColor(COLOR_TEXT_HINT)
-                    .textAlign(TextAlign.Center)
-                    .width(24)
-                    .height(24)
-                    .borderRadius(12)
-                    .backgroundColor(COLOR_PRIMARY_TINT)
-                  Text(ip)
-                    .fontSize(14)
-                    .fontColor(COLOR_TEXT_TITLE)
-                    .margin({ left: 10 })
-                    .layoutWeight(1)
-                  if (index === 0) {
-                    Text('首选')
-                      .fontSize(10)
-                      .fontColor(COLOR_PRIMARY)
-                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .backgroundColor(COLOR_PRIMARY_TINT)
-                      .borderRadius(8)
-                  }
-                }
-                .width('100%')
-                .height(46)
-                .padding({ left: 16, right: 16 })
-              }, (ip: string, index: number) => ip + '_' + index)
-            }
-            .width('100%')
-            .backgroundColor(Color.Transparent)
-            .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-            .padding({ bottom: 8 })
-
-            Row() {
-              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                .fontSize(20)
-                .fontColor([this.accentColor])
-              Text(this.dnsRefreshing ? '刷新中…' : '强制刷新 IP 池')
-                .fontSize(15)
+            // 当前生效 IP
+            Column({ space: 8 }) {
+              Text('当前生效的直连 IP')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
                 .fontColor(COLOR_TEXT_TITLE)
-                .margin({ left: 12 })
+                .width('100%')
+              Row() {
+                Column({ space: 2 }) {
+                  Text('API 线路')
+                    .fontSize(12)
+                    .fontColor(COLOR_TEXT_SECONDARY)
+                  Text(this.dnsApiIps.length > 0 ? this.dnsApiIps.join(', ') : '默认系统解析')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Bold)
+                    .fontFamily('monospace')
+                    .fontColor(COLOR_TEXT_TITLE)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
+                Column({ space: 2 }) {
+                  Text('图片存储')
+                    .fontSize(12)
+                    .fontColor(COLOR_TEXT_SECONDARY)
+                  Text(this.dnsImageIps.length > 0 ? this.dnsImageIps.join(', ') : '默认系统解析')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Bold)
+                    .fontFamily('monospace')
+                    .fontColor(COLOR_TEXT_TITLE)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                .margin({ left: 16 })
+              }
+              .width('100%')
             }
+            .alignItems(HorizontalAlign.Start)
             .width('100%')
-            .height(52)
-            .padding({ left: 16, right: 16 })
+            .padding(16)
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
             .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-            .onClick(() => {
-              if (!this.dnsRefreshing) {
-                this.forceDnsRefresh();
-              }
-            })
 
+            // 操作按钮
+            Row({ space: 12 }) {
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                    .fontSize(16)
+                    .fontColor([COLOR_WHITE])
+                  Text('获取并测速')
+                    .fontSize(14)
+                    .fontColor(COLOR_WHITE)
+                }
+              }
+              .layoutWeight(1)
+              .height(42)
+              .backgroundColor(COLOR_PRIMARY)
+              .borderRadius(21)
+              .enabled(!this.dnsFetching && !this.dnsTesting)
+              .onClick(() => {
+                this.fetchAndTestDns();
+              })
+
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.bolt'))
+                    .fontSize(16)
+                    .fontColor([COLOR_PRIMARY])
+                  Text('应用最低延迟')
+                    .fontSize(14)
+                    .fontColor(COLOR_PRIMARY)
+                }
+              }
+              .layoutWeight(1)
+              .height(42)
+              .backgroundColor(COLOR_PRIMARY_TINT)
+              .borderRadius(21)
+              .enabled(!this.dnsFetching && !this.dnsTesting && this.dnsLines.size > 0)
+              .onClick(() => {
+                this.applyLowestLatencyDns();
+              })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16 })
+
+            // 错误提示
+            if (this.dnsError.length > 0) {
+              Text(this.dnsError)
+                .fontSize(13)
+                .fontColor('#C62828')
+                .width('100%')
+                .padding(12)
+                .backgroundColor('#FDECEC')
+                .borderRadius(12)
+            }
+
+            // 分流线路列表
+            ForEach(this.dnsLineKeys(), (lineKey: string) => {
+              Column({ space: 8 }) {
+                Text(this.dnsLineName(lineKey))
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(COLOR_TEXT_TITLE)
+                  .width('100%')
+                ForEach(this.dnsLines.get(lineKey) as DnsIpEntry[], (entry: DnsIpEntry) => {
+                  Row({ space: 8 }) {
+                    Text(entry.ip)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Bold)
+                      .fontFamily('monospace')
+                      .fontColor(COLOR_TEXT_TITLE)
+                    Text(entry.domain === 'picacomic.com' ? '图片' : 'API')
+                      .fontSize(10)
+                      .fontColor(entry.domain === 'picacomic.com' ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .backgroundColor(entry.domain === 'picacomic.com' ? COLOR_PRIMARY_TINT : COLOR_INPUT_BG)
+                      .borderRadius(4)
+                    Blank()
+                    Text(this.dnsLatencyLabel(entry))
+                      .fontSize(12)
+                      .fontColor(entry.latency < 0 ? '#C62828' : COLOR_TEXT_SECONDARY)
+                    if (entry.selected) {
+                      SymbolGlyph($r('sys.symbol.checkmark_circle'))
+                        .fontSize(18)
+                        .fontColor([COLOR_PRIMARY])
+                    }
+                  }
+                  .width('100%')
+                  .padding(14)
+                  .backgroundColor(entry.selected ? COLOR_PRIMARY_TINT : Color.Transparent)
+                  .borderRadius(12)
+                  .border({ width: entry.selected ? 2 : 1, color: entry.selected ? COLOR_PRIMARY : COLOR_DIVIDER })
+                  .onClick(() => this.selectDnsIp(entry))
+                }, (entry: DnsIpEntry) => entry.domain + '_' + entry.ip)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+              .margin({ top: 4 })
+            }, (lineKey: string) => lineKey)
+
+            if (this.dnsLines.size === 0 && !this.dnsFetching) {
+              Column({ space: 8 }) {
+                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                  .fontSize(36)
+                  .fontColor([COLOR_TEXT_DISABLED])
+                Text('尚未获取分流线路')
+                  .fontSize(14)
+                  .fontColor(COLOR_TEXT_HINT)
+                Text('点击「获取并测速」拉取可用的直连 IP')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .width('100%')
+              .padding({ top: 40, bottom: 20 })
+              .alignItems(HorizontalAlign.Center)
+            }
+
+            // 重置默认
             Row() {
               SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
                 .fontSize(20)
                 .fontColor([COLOR_TEXT_SECONDARY])
-              Text('恢复默认池')
+              Text('重置默认')
                 .fontSize(15)
                 .fontColor(COLOR_TEXT_TITLE)
                 .margin({ left: 12 })
@@ -2265,14 +2653,7 @@ struct ProfilePage {
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
             .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-            .onClick(() => this.resetDnsPool())
-
-            Text('直连池按顺序尝试连接，全部失败才回退。刷新将从引导接口拉取最新地址并去重追加，默认 IP 保持首位。')
-              .fontSize(12)
-              .lineHeight(18)
-              .fontColor(COLOR_TEXT_HINT)
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 4 })
+            .onClick(() => this.resetDns())
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 8, bottom: 40 })
@@ -2294,7 +2675,7 @@ struct ProfilePage {
       return true;
     })
     .onShown(() => {
-      this.refreshDnsPool();
+      this.loadDnsSelection();
     })
   }
 
