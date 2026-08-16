@@ -37,6 +37,7 @@ interface ReaderRouteParams {
   currentOrder: number;
   localDir?: string;
   localCount?: number;
+  coverUrl?: string;
 }
 
 @Entry
@@ -317,7 +318,8 @@ struct ComicDetailPage {
       comicId: this.comicId,
       comicTitle: this.comicTitle,
       epsCount: eps,
-      currentOrder: ep.order
+      currentOrder: ep.order,
+      coverUrl: this.comic !== null ? this.comic.coverUrl : ''
     };
     if (task !== undefined && task.status === 'completed') {
       params.localDir = task.dir;

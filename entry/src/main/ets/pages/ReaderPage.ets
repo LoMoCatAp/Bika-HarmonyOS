@@ -33,6 +33,7 @@ interface ReaderRouterParams {
   currentOrder: number;
   localDir?: string;
   localCount?: number;
+  coverUrl?: string;
 }
 
 /** 单张图片条目 */
@@ -107,6 +108,7 @@ struct ReaderPage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
 
   private comicId: string = '';
+  private coverUrl: string = '';
   private localDir: string = '';
   private localCount: number = 0;
   /** 是否本地离线阅读模式 */
@@ -125,6 +127,7 @@ struct ReaderPage {
     if (params) {
       this.comicId = params.comicId;
       this.comicTitle = params.comicTitle || '';
+      this.coverUrl = params.coverUrl || '';
       this.epsCount = params.epsCount || 1;
       this.currentOrder = params.currentOrder || 1;
       if (params.localDir) {
@@ -171,7 +174,7 @@ struct ReaderPage {
     // 本地阅读同样记录进度与历史，并恢复上次阅读页
     CacheManager.getInstance().then(cache => {
       cache.saveReadProgress(this.comicId, this.currentOrder);
-      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder);
+      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
       this.restoreLastPage(cache);
     });
   }
@@ -217,7 +220,7 @@ struct ReaderPage {
       this.imageDataSource.reload(list);
       this.totalImages = list.length;
       cache.saveReadProgress(this.comicId, this.currentOrder);
-      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder);
+      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
       this.restoreLastPage(cache);
     } catch (err) {
       if (gen !== this.generation) {

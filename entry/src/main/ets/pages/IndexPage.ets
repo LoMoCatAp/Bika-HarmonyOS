@@ -471,6 +471,18 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.1.0',
+    date: '2026-08-16',
+    items: [
+      '浏览历史增强：封面缩略图、阅读时间显示',
+      '浏览历史支持单条删除与一键清空（原生确认框）',
+      '全部设置持久化：显示模式/档位/自动签到/防截屏/下载/DNS 重启保留',
+      '设置下拉框改为原生菜单，选项即时同步',
+      '进入章节自动恢复上次阅读页（页级进度）',
+      '阅读器多项修复：翻页手势、页码显示、底部工具栏'
+    ]
+  },
+  {
     version: '1.0.10',
     date: '2026-08-16',
     items: [
@@ -1235,6 +1247,62 @@ struct ProfilePage {
     });
   }
 
+  /** 历史时间显示 */
+  private historyTimeLabel(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '';
+    }
+    let d = new Date(timestamp);
+    let now = new Date();
+    let pad = (n: number): string => n < 10 ? '0' + n : String(n);
+    if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) {
+      return '今天 ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /** 删除单条历史（原生确认框） */
+  private confirmDeleteHistory(item: HistoryItem): void {
+    promptAction.showDialog({
+      title: '删除历史记录',
+      message: '删除《' + item.title + '》的浏览记录？',
+      buttons: [
+        { text: '取消', color: '#666666' },
+        { text: '删除', color: '#C62828' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        CacheManager.getInstance().then(cache => {
+          cache.deleteHistoryItem(item.comicId);
+          this.historyItems = cache.loadHistory();
+        });
+      }
+    }).catch((err: Error) => {
+      console.warn('[ProfilePage] delete history dialog failed: ' + JSON.stringify(err));
+    });
+  }
+
+  /** 清空全部历史（原生确认框） */
+  private confirmClearHistory(): void {
+    promptAction.showDialog({
+      title: '清空全部历史',
+      message: '将删除所有浏览记录，且不可恢复。',
+      buttons: [
+        { text: '取消', color: '#666666' },
+        { text: '清空', color: '#C62828' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        CacheManager.getInstance().then(cache => {
+          cache.clearHistory();
+          this.historyItems = [];
+        });
+      }
+    }).catch((err: Error) => {
+      console.warn('[ProfilePage] clear history dialog failed: ' + JSON.stringify(err));
+    });
+  }
+
   private onDownloadChanged(): void {
     this.downloadList = DownloadManager.getInstance().getTasks();
   }
@@ -1676,24 +1744,50 @@ struct ProfilePage {
             ForEach(this.historyItems, (item: HistoryItem, index: number) => {
               ListItem() {
                 Row() {
+                  if (item.coverUrl.length > 0) {
+                    NetImage({
+                      src: item.coverUrl,
+                      fit: ImageFit.Cover,
+                      radius: 8,
+                      fillParent: true
+                    })
+                      .width(48)
+                      .height(64)
+                  } else {
+                    Image($r('app.media.ic_default_avatar'))
+                      .width(48)
+                      .height(64)
+                      .borderRadius(8)
+                      .objectFit(ImageFit.Cover)
+                      .backgroundColor(COLOR_PLACEHOLDER)
+                  }
                   Column({ space: 4 }) {
                     Text(item.title)
                       .fontSize(15)
                       .fontColor(COLOR_TEXT_TITLE)
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text('看到第 ' + item.order + ' 话')
+                    Text('看到第 ' + item.order + ' 话 · ' + this.historyTimeLabel(item.timestamp))
                       .fontSize(12)
                       .fontColor(COLOR_TEXT_HINT)
                   }
                   .alignItems(HorizontalAlign.Start)
+                  .margin({ left: 12 })
                   .layoutWeight(1)
+                  SymbolGlyph($r('sys.symbol.trash'))
+                    .fontSize(18)
+                    .fontColor([COLOR_TEXT_HINT])
+                    .padding(6)
+                    .onClick(() => {
+                      this.confirmDeleteHistory(item);
+                    })
                   SymbolGlyph($r('sys.symbol.chevron_right'))
                     .fontSize(16)
                     .fontColor([COLOR_TEXT_DISABLED])
                 }
                 .width('100%')
-                .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                .alignItems(VerticalAlign.Center)
+                .padding({ left: 16, right: 16, top: 12, bottom: 12 })
                 .onClick(() => {
                   router.pushUrl({
                     url: 'pages/ComicDetailPage',
@@ -1703,10 +1797,24 @@ struct ProfilePage {
               }
               if (index < this.historyItems.length - 1) {
                 ListItem() {
-                  Divider().height(1).color(COLOR_DIVIDER).margin({ left: 16 })
+                  Divider().height(1).color(COLOR_DIVIDER).margin({ left: 76 })
                 }
               }
             }, (item: HistoryItem) => item.comicId)
+
+            ListItem() {
+              Row() {
+                Text('清空全部历史')
+                  .fontSize(14)
+                  .fontColor('#C62828')
+              }
+              .width('100%')
+              .height(48)
+              .justifyContent(FlexAlign.Center)
+              .onClick(() => {
+                this.confirmClearHistory();
+              })
+            }
           }
           .width('100%')
           .layoutWeight(1)

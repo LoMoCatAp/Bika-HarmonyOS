@@ -228,11 +228,14 @@ export class CacheManager {
     return val ? parseInt(val) : 0;
   }
 
-  /** 记录浏览历史条目（含标题） */
-  saveHistoryItem(comicId: string, title: string, order: number): void {
+  /** 记录浏览历史条目（含标题与封面） */
+  saveHistoryItem(comicId: string, title: string, order: number, coverUrl: string = ''): void {
     this.put('history_title_' + comicId, title);
     this.put('history_order_' + comicId, order.toString());
     this.put('history_time_' + comicId, Date.now().toString());
+    if (coverUrl.length > 0) {
+      this.put('history_cover_' + comicId, coverUrl);
+    }
     let ids = this.getString('history_ids', '[]');
     let arr: string[] = [];
     try {
@@ -265,11 +268,58 @@ export class CacheManager {
         comicId: id,
         title: title,
         order: parseInt(this.getString('history_order_' + id, '0')),
-        timestamp: parseInt(this.getString('history_time_' + id, '0'))
+        timestamp: parseInt(this.getString('history_time_' + id, '0')),
+        coverUrl: this.getString('history_cover_' + id, '')
       });
     }
     items.sort((a: HistoryItem, b: HistoryItem) => b.timestamp - a.timestamp);
     return items;
+  }
+
+  /** 删除单条历史 */
+  deleteHistoryItem(comicId: string): void {
+    if (this.prefs === null) {
+      return;
+    }
+    this.prefs.deleteSync('history_title_' + comicId);
+    this.prefs.deleteSync('history_order_' + comicId);
+    this.prefs.deleteSync('history_time_' + comicId);
+    this.prefs.deleteSync('history_cover_' + comicId);
+    let ids = this.getString('history_ids', '[]');
+    let arr: string[] = [];
+    try {
+      arr = JSON.parse(ids) as string[];
+    } catch {
+      arr = [];
+    }
+    let idx = arr.indexOf(comicId);
+    if (idx >= 0) {
+      arr.splice(idx, 1);
+      this.put('history_ids', JSON.stringify(arr));
+    }
+    this.prefs.flushSync();
+  }
+
+  /** 清空全部历史 */
+  clearHistory(): void {
+    if (this.prefs === null) {
+      return;
+    }
+    let ids = this.getString('history_ids', '[]');
+    let arr: string[] = [];
+    try {
+      arr = JSON.parse(ids) as string[];
+    } catch {
+      arr = [];
+    }
+    for (let id of arr) {
+      this.prefs.deleteSync('history_title_' + id);
+      this.prefs.deleteSync('history_order_' + id);
+      this.prefs.deleteSync('history_time_' + id);
+      this.prefs.deleteSync('history_cover_' + id);
+    }
+    this.prefs.deleteSync('history_ids');
+    this.prefs.flushSync();
   }
 }
 
@@ -279,6 +329,8 @@ export interface HistoryItem {
   title: string;
   order: number;
   timestamp: number;
+  /** 封面图 URL（用于历史列表缩略图） */
+  coverUrl: string;
 }
 
 /** 缓存条目 */
