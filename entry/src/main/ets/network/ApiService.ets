@@ -33,6 +33,8 @@ interface BikaEnvelope<T> {
   code: number | string;
   message: string;
   data: T;
+  /** 业务错误码（HTTP 400 时服务端放在 error 字段，如 1019） */
+  error?: string;
 }
 
 /** 服务器错误码 → 中文提示 */
@@ -42,7 +44,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   '1005': '登录已过期，请重新登录',
   '1007': '数据不存在或已被删除',
   '1014': '该漫画暂时无法查看（审核中）',
-  '1019': '无法发表评论',
+  '1019': '等级不足或评论权限受限，无法发表评论',
   '1031': '等级不足，无法发表评论'
 };
 
@@ -618,6 +620,9 @@ export class ApiService {
         console.error('[ApiService] 请求失败 path=' + path + ' code=' + envelope.code + ' message=' + envelope.message);
         let key = String(envelope.code);
         let friendly = ERROR_MESSAGES[key];
+        if (!friendly && envelope.error && envelope.error.length > 0) {
+          friendly = ERROR_MESSAGES[String(envelope.error)];
+        }
         if (friendly) {
           throw new Error(friendly);
         }

@@ -94,6 +94,10 @@ struct ReaderPage {
   @State zoomScale: number = 1.0;
   /** 阅读模式：0 左→右 1 右→左 2 上→下单页 3 条漫(有隙) 4 条漫(无缝，默认) */
   @State readingMode: number = 4;
+  /** 单页模式的当前页（切换模式时保留阅读位置） */
+  @State swiperIndex: number = 0;
+  /** 单页模式控制器（非受控 index，避免手势被状态回写打断） */
+  private swiperController: SwiperController = new SwiperController();
   @State showSettings: boolean = false;
   /** 阅读亮度（0.1 ~ 1.0，-1 表示跟随系统） */
   @State readerBrightness: number = -1;
@@ -160,8 +164,16 @@ struct ReaderPage {
     }
     this.imageDataSource.reload(list);
     this.totalImages = list.length;
+    this.currentVisibleIndex = 0;
+    this.swiperIndex = 0;
     this.isLoading = false;
     this.showControls = true;
+    // 本地阅读同样记录进度与历史，并恢复上次阅读页
+    CacheManager.getInstance().then(cache => {
+      cache.saveReadProgress(this.comicId, this.currentOrder);
+      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder);
+      this.restoreLastPage(cache);
+    });
   }
 
   private async loadImagesWithCache(): Promise<void> {
@@ -172,6 +184,7 @@ struct ReaderPage {
     this.imageDataSource.reload([]);
     this.totalImages = 0;
     this.currentVisibleIndex = 0;
+    this.swiperIndex = 0;
 
     try {
       let cache = await CacheManager.getInstance();
@@ -204,6 +217,8 @@ struct ReaderPage {
       this.imageDataSource.reload(list);
       this.totalImages = list.length;
       cache.saveReadProgress(this.comicId, this.currentOrder);
+      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder);
+      this.restoreLastPage(cache);
     } catch (err) {
       if (gen !== this.generation) {
         return;
@@ -235,6 +250,7 @@ struct ReaderPage {
     if (!this.hasPrevChapter) {
       return;
     }
+    this.persistPageIndex();
     this.currentOrder--;
     this.updateChapterButtons();
     this.zoomScale = 1.0;
@@ -251,6 +267,7 @@ struct ReaderPage {
     if (!this.hasNextChapter) {
       return;
     }
+    this.persistPageIndex();
     this.currentOrder++;
     this.updateChapterButtons();
     this.zoomScale = 1.0;
@@ -295,10 +312,36 @@ struct ReaderPage {
     .height(48)
     .padding({ left: 20, right: 20 })
     .onClick(() => {
+      this.switchReadingMode(mode);
+    })
+  }
+
+  /** 切换阅读模式并保留当前阅读位置 */
+  private switchReadingMode(mode: number): void {
+    if (mode === this.readingMode) {
+      this.showSettings = false;
+      return;
+    }
+    // 记录切换前所在页
+    let currentIndex = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+    this.swiperIndex = currentIndex;
+    if (mode > 2) {
+      // 切到连续滚动：重建 List 后定位到同一张图
       this.readingMode = mode;
       this.showSettings = false;
-      console.info('[ReaderPage] readingMode = ' + mode);
-    })
+      setTimeout(() => {
+        this.listScroller.scrollToIndex(this.swiperIndex, true, ScrollAlign.START);
+      }, 80);
+    } else {
+      // 切到单页：Swiper 渲染完成后跳到当前页（非受控，手势不受状态干扰）
+      this.readingMode = mode;
+      this.showSettings = false;
+      let target = this.swiperIndex;
+      setTimeout(() => {
+        this.swiperController.changeIndex(target, false);
+      }, 150);
+    }
+    console.info('[ReaderPage] readingMode = ' + mode + ', keepIndex = ' + this.swiperIndex);
   }
 
   /** 屏幕方向选项行 */
@@ -350,8 +393,36 @@ struct ReaderPage {
     });
   }
 
+  /** 进入章节后恢复到上次阅读的页 */
+  private restoreLastPage(cache: CacheManager): void {
+    let savedPage = cache.getPageProgress(this.comicId, this.currentOrder);
+    if (savedPage > 0 && savedPage < this.totalImages) {
+      this.currentVisibleIndex = savedPage;
+      this.swiperIndex = savedPage;
+      setTimeout(() => {
+        if (this.readingMode <= 2) {
+          this.swiperController.changeIndex(savedPage, false);
+        } else {
+          this.listScroller.scrollToIndex(savedPage, true, ScrollAlign.START);
+        }
+      }, 150);
+    }
+  }
+
+  /** 保存当前页级进度（单页模式用 swiperIndex，滚动模式用当前可见页） */
+  private persistPageIndex(): void {
+    let page = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+    if (page < 0 || this.totalImages <= 0) {
+      return;
+    }
+    CacheManager.getInstance().then(cache => {
+      cache.savePageProgress(this.comicId, this.currentOrder, page);
+    });
+  }
+
   aboutToDisappear(): void {
-    // 退出阅读器时恢复系统亮度与方向
+    // 退出阅读器：保存页级进度 + 恢复系统亮度与方向
+    this.persistPageIndex();
     let context = getContext(this);
     window.getLastWindow(context).then((win: window.Window) => {
       win.setWindowBrightness(-1);
@@ -413,7 +484,7 @@ struct ReaderPage {
       } else {
         if (this.readingMode <= 2) {
           // ── 单页翻页模式 ──
-          Swiper() {
+          Swiper(this.swiperController) {
             ForEach(this.imageDataSource.getAll(), (img: ReaderImage, index: number) => {
               NetImage({
                 src: img.url,
@@ -426,15 +497,17 @@ struct ReaderPage {
                 .height('100%')
             }, (img: ReaderImage, index: number) => String(index) + '_' + img.url)
           }
-          .index(0)
           .vertical(this.readingMode === 2)
           .indicator(false)
           .loop(false)
           .width('100%')
           .height('100%')
           .backgroundColor(COLOR_READER_BG)
+          .key('swiper_' + this.comicId + '_' + this.currentOrder)
           .onChange((index: number) => {
+            this.swiperIndex = index;
             this.currentVisibleIndex = index;
+            this.persistPageIndex();
           })
           .onClick(() => this.toggleControls())
         } else {
@@ -469,9 +542,6 @@ struct ReaderPage {
                   }
                 }
                 .width('100%')
-                .onAppear(() => {
-                  this.currentVisibleIndex = index;
-                })
               }, (img: ReaderImage, index: number) => String(index) + '_' + img.url + '_' + img.failed)
             }
             .listDirection(Axis.Vertical)
@@ -479,6 +549,10 @@ struct ReaderPage {
             .cachedCount(10)
             .width('100%')
             .height('100%')
+            .onScrollIndex((start: number, end: number, center: number) => {
+              this.currentVisibleIndex = start;
+              this.persistPageIndex();
+            })
             .nestedScroll({
               scrollForward: NestedScrollMode.PARENT_FIRST,
               scrollBackward: NestedScrollMode.PARENT_FIRST
@@ -533,7 +607,7 @@ struct ReaderPage {
         .backgroundColor(COLOR_READER_TOOLBAR_BG)
         .backdropBlur(20)
 
-        // ── 悬浮底部工具栏 ──
+        // ── 悬浮底部工具栏（position+offset 悬浮，无 markAnchor） ──
         Row() {
           Button(this.hasPrevChapter ? '上一话' : '已是第一话')
             .fontSize(14)
@@ -570,7 +644,6 @@ struct ReaderPage {
         .backdropBlur(20)
         .justifyContent(FlexAlign.SpaceBetween)
       }
-
     }
     .width('100%')
     .height('100%')

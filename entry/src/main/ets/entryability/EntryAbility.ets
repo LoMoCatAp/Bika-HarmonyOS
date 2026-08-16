@@ -5,6 +5,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { ApiRouteManager } from '../network/ApiRouteManager';
 import { BikaHttpClient } from '../network/BikaHttpClient';
 import { WindowHelper } from '../common/WindowHelper';
+import { CacheManager } from '../common/CacheManager';
 
 const DOMAIN = 0x0000;
 
@@ -55,13 +56,47 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, 'BikaTag', 'Failed to set fullscreen. Cause:' + JSON.stringify(e));
       });
 
-      // 注入主窗口单例，并在启动时应用防截屏设置
+      // 注入主窗口单例
       WindowHelper.setMainWindow(windowClass);
-      if (AppStorage.get<boolean>('bika_secure_screen') === true) {
-        windowClass.setWindowPrivacyMode(true).catch((e: BusinessError) => {
-          hilog.error(DOMAIN, 'BikaTag', 'Failed to set privacy mode. Cause:' + JSON.stringify(e));
-        });
-      }
+
+      // 从持久化恢复全部设置并应用（AppStorage 为内存态）
+      // 显式传入 AbilityContext：getContext() 全局函数在非 UI 场景不可用
+      CacheManager.getInstance(this.context).then(cache => {
+        let colorMode = cache.getSetting('color_mode', 'system');
+        AppStorage.setOrCreate('bika_color_mode', colorMode);
+        AppStorage.set('bika_color_mode', colorMode);
+        AppStorage.setOrCreate('bika_material_level', cache.getSetting('material_level', 'EXQUISITE'));
+        AppStorage.set('bika_material_level', cache.getSetting('material_level', 'EXQUISITE'));
+        AppStorage.setOrCreate('bika_auto_punch', cache.getSetting('auto_punch', 'false') === 'true');
+        AppStorage.set('bika_auto_punch', cache.getSetting('auto_punch', 'false') === 'true');
+        AppStorage.setOrCreate('bika_secure_screen', cache.getSetting('secure_screen', 'false') === 'true');
+        AppStorage.set('bika_secure_screen', cache.getSetting('secure_screen', 'false') === 'true');
+        AppStorage.setOrCreate('bika_dns_api_ips', cache.getSetting('dns_api_ips', '[]'));
+        AppStorage.set('bika_dns_api_ips', cache.getSetting('dns_api_ips', '[]'));
+        AppStorage.setOrCreate('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
+        AppStorage.set('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
+
+        // 应用显示模式
+        try {
+          let appCtx = this.context.getApplicationContext();
+          if (colorMode === 'dark') {
+            appCtx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+          } else if (colorMode === 'light') {
+            appCtx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
+          } else {
+            appCtx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+          }
+        } catch (e) {
+          hilog.error(DOMAIN, 'BikaTag', 'Failed to apply color mode. Cause: %{public}s', JSON.stringify(e));
+        }
+
+        // 应用防截屏
+        if (cache.getSetting('secure_screen', 'false') === 'true') {
+          windowClass.setWindowPrivacyMode(true).catch((e: BusinessError) => {
+            hilog.error(DOMAIN, 'BikaTag', 'Failed to set privacy mode. Cause:' + JSON.stringify(e));
+          });
+        }
+      });
 
       // 获取状态栏区域高度
       let notificationArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);

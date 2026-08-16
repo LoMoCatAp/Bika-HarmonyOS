@@ -471,6 +471,25 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.0.10',
+    date: '2026-08-16',
+    items: [
+      '防截屏开关提示文案修正',
+      '阅读模式切换保留当前阅读位置',
+      '修复上一话/下一话按钮点击无效',
+      '本地离线阅读同样保存进度与历史记录',
+      '阅读器底部工具栏恢复悬浮毛玻璃（position+offset 定位）',
+      '浏览历史异步加载修复',
+      '评论弹窗改用系统原生标题（关闭按钮不重叠）',
+      '评论失败提示中文化（等级不足说明）',
+      '修复进入章节页码错乱与单页模式手势翻页',
+      '离线场景翻话按钮按已下载任务计算话数',
+      '进入章节自动恢复上次阅读的页（页级进度）',
+      '显示模式/档位下拉改为原生菜单，即时同步',
+      '全部设置持久化：重启后保留（颜色模式/档位/签到/防截屏/下载/DNS）'
+    ]
+  },
+  {
     version: '1.0.9',
     date: '2026-08-16',
     items: [
@@ -584,9 +603,9 @@ interface MaterialOption {
 
 const MATERIAL_OPTIONS: MaterialOption[] = [
   { value: 'EXQUISITE', label: '强' },
-  { value: 'GENTLE', label: '均衡（默认）' },
+  { value: 'GENTLE', label: '均衡' },
   { value: 'SMOOTH', label: '弱' },
-  { value: 'ADAPTIVE', label: '系统自适应' }
+  { value: 'ADAPTIVE', label: '自适应' }
 ];
 
 /** 显示模式选项 */
@@ -628,7 +647,7 @@ struct ProfilePage {
   @State myComments: BikaComment[] = [];
   @State commentsLoading: boolean = false;
   @State historyItems: HistoryItem[] = [];
-  @State colorMode: string = 'system';
+  @StorageLink('bika_color_mode') colorMode: string = 'system';
   /** 下载设置 */
   @State downloadWifiOnly: boolean = false;
   @State downloadConcurrent: number = 1;
@@ -671,7 +690,6 @@ struct ProfilePage {
 
   aboutToAppear(): void {
     AppStorage.set('isLoggedIn', this.apiService.isLoggedIn());
-    this.colorMode = AppStorage.get('bika_color_mode') as string ?? 'system';
     this.downloadWifiOnly = DownloadManager.getInstance().getWifiOnly();
     this.downloadConcurrent = DownloadManager.getInstance().getMaxConcurrent();
     this.autoPunch = AppStorage.get<boolean>('bika_auto_punch') === true;
@@ -865,6 +883,10 @@ struct ProfilePage {
     this.dnsImageIps = imageIps.slice(0);
     AppStorage.setOrCreate('bika_dns_api_ips', JSON.stringify(apiIps));
     AppStorage.setOrCreate('bika_dns_image_ips', JSON.stringify(imageIps));
+    CacheManager.getInstance().then(c => {
+      c.saveSetting('dns_api_ips', JSON.stringify(apiIps));
+      c.saveSetting('dns_image_ips', JSON.stringify(imageIps));
+    });
     ApiRouteManager.getInstance().applyCustomDns(apiIps, imageIps);
     // 刷新列表选中态
     let newMap = new Map<string, DnsIpEntry[]>();
@@ -1045,6 +1067,10 @@ struct ProfilePage {
     this.dnsImageIps = [];
     AppStorage.setOrCreate('bika_dns_api_ips', '[]');
     AppStorage.setOrCreate('bika_dns_image_ips', '[]');
+    CacheManager.getInstance().then(c => {
+      c.saveSetting('dns_api_ips', '[]');
+      c.saveSetting('dns_image_ips', '[]');
+    });
     // 刷新选中态
     let newMap = new Map<string, DnsIpEntry[]>();
     let keys = Array.from(this.dnsLines.keys());
@@ -1202,7 +1228,11 @@ struct ProfilePage {
   }
 
   private loadHistory(): void {
-    this.historyItems = this.cache ? this.cache.loadHistory() : [];
+    // 缓存单例可能尚未就绪，异步读取后再刷新列表
+    CacheManager.getInstance().then(cache => {
+      this.cache = cache;
+      this.historyItems = cache.loadHistory();
+    });
   }
 
   private onDownloadChanged(): void {
@@ -1210,8 +1240,9 @@ struct ProfilePage {
   }
 
   private setColorMode(mode: string): void {
+    // StorageLink 赋值即同步 AppStorage，Menu 下拉显示实时刷新
     this.colorMode = mode;
-    AppStorage.set('bika_color_mode', mode);
+    CacheManager.getInstance().then(c => c.saveSetting('color_mode', mode));
     let ctx = getContext(this).getApplicationContext();
     if (mode === 'dark') {
       ctx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
@@ -1242,6 +1273,7 @@ struct ProfilePage {
       return;
     }
     this.materialLevel = option.value;
+    CacheManager.getInstance().then(c => c.saveSetting('material_level', option.value));
   }
 
   private selectColorModeOption(index: number): void {
@@ -1252,22 +1284,27 @@ struct ProfilePage {
     this.setColorMode(option.value);
   }
 
-  /** 设置页统一下拉框 */
+  /** 设置页统一下拉（原生 Menu；显示文字直接读 AppStorage，状态变化即时刷新） */
   @Builder
-  settingSelect(options: MaterialOption[], currentValue: string, onSelect: (index: number) => void) {
-    Select(this.selectOptions(options))
-      .selected(this.optionIndex(options, currentValue))
-      .value(this.labels(options)[this.optionIndex(options, currentValue)])
-      .font({ size: 15 })
-      .fontColor(COLOR_PRIMARY)
-      .selectedOptionFont({ size: 15, weight: FontWeight.Medium })
-      .selectedOptionFontColor(COLOR_PRIMARY)
-      .optionFont({ size: 15 })
-      .optionFontColor(COLOR_TEXT_TITLE)
-      .optionBgColor(COLOR_CARD)
-      .onSelect((index: number): void => {
-        onSelect(index);
-      })
+  settingSelect(options: MaterialOption[], storageKey: string, defaultValue: string,
+    onSelect: (index: number) => void) {
+    Row({ space: 4 }) {
+      Text(this.labels(options)[this.optionIndex(options, AppStorage.get<string>(storageKey) ?? defaultValue)])
+        .fontSize(15)
+        .fontColor(COLOR_PRIMARY)
+      SymbolGlyph($r('sys.symbol.chevron_down'))
+        .fontSize(12)
+        .fontColor([COLOR_PRIMARY])
+    }
+    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+    .bindMenu(options.map((opt: MaterialOption, index: number): MenuElement => {
+      return {
+        value: opt.label,
+        action: (): void => {
+          onSelect(index);
+        }
+      };
+    }))
   }
 
   // ── 用户卡 ──
@@ -1885,7 +1922,7 @@ struct ProfilePage {
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
-              this.settingSelect(COLOR_MODE_OPTIONS, this.colorMode, (index: number): void => {
+              this.settingSelect(COLOR_MODE_OPTIONS, 'bika_color_mode', 'system', (index: number): void => {
                 this.selectColorModeOption(index);
               })
             }
@@ -1919,7 +1956,7 @@ struct ProfilePage {
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
-              this.settingSelect(MATERIAL_OPTIONS, this.materialLevel, (index: number): void => {
+              this.settingSelect(MATERIAL_OPTIONS, 'bika_material_level', 'EXQUISITE', (index: number): void => {
                 this.selectMaterial(index);
               })
             }
@@ -1959,6 +1996,7 @@ struct ProfilePage {
                 .onChange((isOn: boolean) => {
                   this.autoPunch = isOn;
                   AppStorage.setOrCreate('bika_auto_punch', isOn);
+                  CacheManager.getInstance().then(c => c.saveSetting('auto_punch', isOn ? 'true' : 'false'));
                   if (isOn) {
                     this.maybeAutoPunch();
                   }
@@ -1991,9 +2029,10 @@ struct ProfilePage {
                 .onChange((isOn: boolean) => {
                   this.secureScreen = isOn;
                   AppStorage.setOrCreate('bika_secure_screen', isOn);
+                  CacheManager.getInstance().then(c => c.saveSetting('secure_screen', isOn ? 'true' : 'false'));
                   this.applySecureScreen();
                   promptAction.showToast({
-                    message: isOn ? '已开启防截屏，截屏/录屏将显示黑屏' : '已关闭防截屏',
+                    message: isOn ? '已开启防截屏，将禁止截屏/录屏功能' : '已关闭防截屏，恢复截屏/录屏功能',
                     duration: 1600
                   });
                 })

@@ -301,10 +301,22 @@ struct ComicDetailPage {
   onChapterClick(ep: EpViewModel): void {
     // 已下载的话走本地离线阅读
     let task = DownloadManager.getInstance().hasTask(this.comicId, ep.order);
+    let eps = this.chapters.length;
+    if (eps === 0) {
+      // 章节列表未加载（离线/失败）时，按已下载任务数估算总话数，保证翻话按钮可用
+      let tasks = DownloadManager.getInstance().getTasks();
+      let maxOrder = 0;
+      for (let t of tasks) {
+        if (t.comicId === this.comicId && t.chapterOrder > maxOrder) {
+          maxOrder = t.chapterOrder;
+        }
+      }
+      eps = maxOrder;
+    }
     let params: ReaderRouteParams = {
       comicId: this.comicId,
       comicTitle: this.comicTitle,
-      epsCount: this.chapters.length,
+      epsCount: eps,
       currentOrder: ep.order
     };
     if (task !== undefined && task.status === 'completed') {
@@ -988,6 +1000,8 @@ struct ComicDetailPage {
       showClose: true,
       dragBar: false,
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      // 系统原生标题：关闭按钮自动避让，不与内容重叠
+      title: { title: this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论' },
       onWillDismiss: (): void => {
         this.showCommentSheet = false;
       }
@@ -1000,12 +1014,6 @@ struct ComicDetailPage {
   @Builder
   commentSheet() {
     Column({ space: 12 }) {
-      Text(this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_TEXT_TITLE)
-        .width('100%')
-        .padding({ top: 16 })
       TextArea({ placeholder: '说点什么吧…', text: this.commentInput })
         .height(120)
         .width('100%')

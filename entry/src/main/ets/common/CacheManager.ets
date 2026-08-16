@@ -1,4 +1,5 @@
 import { preferences } from '@kit.ArkData';
+import { Context } from '@kit.AbilityKit';
 
 /**
  * 本地缓存管理器
@@ -22,12 +23,15 @@ export class CacheManager {
   private constructor() {
   }
 
-  static async getInstance(): Promise<CacheManager> {
+  static async getInstance(ctx?: Context): Promise<CacheManager> {
     if (CacheManager.instance === null) {
       CacheManager.instance = new CacheManager();
     }
     if (CacheManager.instance.prefs === null) {
-      CacheManager.instance.prefs = await preferences.getPreferences(getContext(), CacheManager.PREF_NAME);
+      // getContext() 全局函数仅在 UI 组件上下文可用；
+      // 非 UI 场景（如 EntryAbility）必须显式传入 AbilityContext
+      let context: Context = ctx ?? getContext();
+      CacheManager.instance.prefs = await preferences.getPreferences(context, CacheManager.PREF_NAME);
     }
     return CacheManager.instance;
   }
@@ -174,6 +178,16 @@ export class CacheManager {
     return this.getString('download_tasks');
   }
 
+  // ─── 通用设置持久化（AppStorage 为内存态，重启后从此恢复） ───
+
+  saveSetting(key: string, value: string): void {
+    this.put('setting_' + key, value);
+  }
+
+  getSetting(key: string, defVal: string = ''): string {
+    return this.getString('setting_' + key, defVal);
+  }
+
   // ─── 用户偏好 ───
 
   saveLastCategory(category: string): void {
@@ -197,6 +211,16 @@ export class CacheManager {
   saveReadProgress(comicId: string, order: number): void {
     this.put('progress_' + comicId, order.toString());
     this.put('history_time_' + comicId, Date.now().toString());
+  }
+
+  /** 页级进度：某话读到第几页 */
+  savePageProgress(comicId: string, order: number, pageIndex: number): void {
+    this.put('page_' + comicId + '_' + order, pageIndex.toString());
+  }
+
+  getPageProgress(comicId: string, order: number): number {
+    let val = this.getString('page_' + comicId + '_' + order);
+    return val ? parseInt(val) : 0;
   }
 
   getReadProgress(comicId: string): number {

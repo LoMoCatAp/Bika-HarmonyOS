@@ -66,6 +66,7 @@ export class DownloadManager {
   setWifiOnly(only: boolean): void {
     this.wifiOnly = only;
     AppStorage.setOrCreate('bika_download_wifi_only', only);
+    CacheManager.getInstance().then(c => c.saveSetting('wifi_only', only ? 'true' : 'false'));
     this.notify();
     if (!only) {
       this.startNext();
@@ -80,6 +81,7 @@ export class DownloadManager {
   setMaxConcurrent(n: number): void {
     this.maxConcurrent = Math.min(5, Math.max(1, n));
     AppStorage.setOrCreate('bika_download_concurrent', this.maxConcurrent);
+    CacheManager.getInstance().then(c => c.saveSetting('concurrent', String(this.maxConcurrent)));
     this.startNext();
   }
 
@@ -393,6 +395,14 @@ export class DownloadManager {
           // 解析失败保留现有任务
         }
       }
+      // 设置恢复：仅 WiFi / 并发数从持久化读回
+      this.wifiOnly = cache.getSetting('wifi_only', 'false') === 'true';
+      AppStorage.setOrCreate('bika_download_wifi_only', this.wifiOnly);
+      let savedConcurrent = parseInt(cache.getSetting('concurrent', '1'));
+      if (savedConcurrent >= 1 && savedConcurrent <= 5) {
+        this.maxConcurrent = savedConcurrent;
+      }
+      AppStorage.setOrCreate('bika_download_concurrent', this.maxConcurrent);
       // 启动恢复：上次未完成的任务重新入队（串行启动续传）
       for (let t of this.tasks) {
         if (t.status === 'failed' || t.status === 'downloading') {
