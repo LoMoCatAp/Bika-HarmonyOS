@@ -211,6 +211,32 @@ export class DownloadManager {
     }
   }
 
+  /** 下载总占用（字节，实时统计目录大小） */
+  getTotalSizeBytes(): number {
+    let total = 0;
+    for (let t of this.tasks) {
+      try {
+        total += this.calcDirSize(t.dir);
+      } catch (err) {
+      }
+    }
+    return total;
+  }
+
+  /** 清空全部下载任务与本地文件 */
+  clearAll(): void {
+    for (let t of this.tasks) {
+      try {
+        fs.rmdirSync(t.dir);
+      } catch (err) {
+        console.warn('[DownloadManager] rmdir failed: ' + JSON.stringify(err));
+      }
+    }
+    this.tasks = [];
+    this.persist();
+    this.notify();
+  }
+
   /** 下载头图到本地（一次，失败忽略） */
   private async ensureCover(task: DownloadTask): Promise<void> {
     try {

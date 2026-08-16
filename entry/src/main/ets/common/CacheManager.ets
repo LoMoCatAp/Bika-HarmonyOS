@@ -132,6 +132,28 @@ export class CacheManager {
     this.put('comics_cache_version', Date.now().toString());
   }
 
+  /** 清理图片相关缓存（章节图片列表 + 列表页缓存 + 分类），返回清除的键数 */
+  clearImageCache(): number {
+    if (this.prefs === null) {
+      return 0;
+    }
+    let count = 0;
+    try {
+      let all = this.prefs.getAllSync();
+      let keys = Object.keys(all);
+      for (let k of keys) {
+        if (k.startsWith('chapter_') || k.startsWith('comics_') || k === 'categories') {
+          this.prefs.deleteSync(k);
+          count++;
+        }
+      }
+      this.prefs.flushSync();
+    } catch (err) {
+      console.warn('[CacheManager] clearImageCache failed: ' + JSON.stringify(err));
+    }
+    return count;
+  }
+
   // ─── 章节图片地址缓存 ───
 
   saveChapterPages(comicId: string, order: number, pagesJson: string): void {

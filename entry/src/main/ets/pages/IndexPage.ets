@@ -1,4 +1,5 @@
-import { router, display, promptAction } from '@kit.ArkUI';
+import { router, display, promptAction, window } from '@kit.ArkUI';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { ApiService, ComicsPageResult } from '../network/ApiService';
@@ -8,6 +9,8 @@ import { ComicCard } from '../components/ComicCard';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
 import { DownloadManager, DownloadTask } from '../common/DownloadManager';
 import { compatibleImmersiveMaterial } from '../common/CompatibleMaterial';
+import { ImageLoader } from '../common/ImageLoader';
+import { ApiRouteManager } from '../network/ApiRouteManager';
 import {
   COLOR_PRIMARY,
   COLOR_PRIMARY_TINT,
@@ -463,8 +466,18 @@ interface ChangelogEntry {
   items: string[];
 }
 
-/** 更新日志（PezMax 同款可折叠列表） */
+/** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.0.5',
+    date: '2026-08-16',
+    items: [
+      '设置新增常规项：自动签到 / 防截屏 / 清理图片缓存',
+      '新增存储与空间管理（下载占用、缓存占用、一键清理）',
+      '新增 DNS 优化（直连 IP 池查看、强制刷新、恢复默认）',
+      '退出登录移至页面底部，底部导航位置微调'
+    ]
+  },
   {
     version: '1.0.4',
     date: '2026-08-16',
@@ -477,7 +490,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     version: '1.0.3',
     date: '2026-08-16',
     items: [
-      '设置子页全部改为从顶部排布（PezMax 同款自绘返回头）',
+      '设置子页全部改为从顶部排布',
       '底部导航与卡片全面接入沉浸光感材质（档位可调）',
       '关于页：更新日志折叠卡片 + 隐私政策',
       '评论点赞 / 回复 / 发表，子回复展开',
@@ -525,7 +538,7 @@ interface MenuItemData {
   page: string;
 }
 
-/** 沉浸光感档位选项（PezMax 同款） */
+/** 沉浸光感档位选项 */
 interface MaterialOption {
   value: string;
   label: string;
@@ -545,7 +558,7 @@ struct ProfilePage {
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
   // 主题强调色：哔咔粉（保留哔咔主题色）
   private accentColor: ResourceColor = $r('app.color.bika_primary');
-  /** 强调色 hex（沉浸光感点光用，PezMax 同款） */
+  /** 强调色 hex（沉浸光感点光用） */
   private accentHex: string = '#FF7CA8';
   @State profileError: string = '';
   @State userName: string = '';
@@ -574,11 +587,21 @@ struct ProfilePage {
   /** 下载设置 */
   @State downloadWifiOnly: boolean = false;
   @State downloadConcurrent: number = 1;
+  /** 常规设置 */
+  @State autoPunch: boolean = false;
+  @State secureScreen: boolean = false;
+  /** 存储占用（字节） */
+  @State downloadSizeBytes: number = 0;
+  @State cacheSizeBytes: number = 0;
+  @State storageRefreshing: boolean = false;
+  /** DNS 状态 */
+  @State dnsPool: string[] = [];
+  @State dnsRefreshing: boolean = false;
   @State punching: boolean = false;
   @StorageLink('download_revision') @Watch('onDownloadChanged') downloadRevision: number = 0;
   @State downloadList: DownloadTask[] = [];
   @State punched: boolean = false;
-  /** 关于弹窗（PezMax 同款 bindSheet） */
+  /** 关于弹窗（bindSheet） */
   @State showAboutSheet: boolean = false;
   @State expandedAboutVersion: string = '1.0.0';
   @State aboutEntered: boolean = false;
@@ -602,6 +625,9 @@ struct ProfilePage {
     this.colorMode = AppStorage.get('bika_color_mode') as string ?? 'system';
     this.downloadWifiOnly = DownloadManager.getInstance().getWifiOnly();
     this.downloadConcurrent = DownloadManager.getInstance().getMaxConcurrent();
+    this.autoPunch = AppStorage.get<boolean>('bika_auto_punch') === true;
+    this.secureScreen = AppStorage.get<boolean>('bika_secure_screen') === true;
+    this.applySecureScreen();
     if (this.apiService.isLoggedIn()) {
       this.loadProfile();
     }
@@ -634,10 +660,142 @@ struct ProfilePage {
       }
       this.profileLoaded = true;
       console.info('[ProfilePage] profile loaded: ' + this.userName + ' LV.' + this.userLevel);
+      this.maybeAutoPunch();
     } catch (err) {
       this.profileError = (err as Error).message || '加载失败';
       console.warn('[ProfilePage] loadProfile failed: ' + this.profileError);
     }
+  }
+
+  /** 自动签到（bika 同款：开启后每天首次打开自动打卡，当天只签一次） */
+  private async maybeAutoPunch(): Promise<void> {
+    if (!this.autoPunch || this.punched || this.punching) {
+      return;
+    }
+    let today = new Date();
+    let day = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate();
+    if (AppStorage.get<string>('bika_last_punch_day') === day) {
+      return;
+    }
+    this.punching = true;
+    try {
+      await this.apiService.punchIn();
+      this.punched = true;
+      AppStorage.set('bika_last_punch_day', day);
+      promptAction.showToast({ message: '自动签到成功', duration: 1600 });
+    } catch (err) {
+      console.warn('[ProfilePage] auto punch failed: ' + JSON.stringify(err));
+    } finally {
+      this.punching = false;
+    }
+  }
+
+  /** 应用防截屏开关（ArkUI 原生窗口 API） */
+  private applySecureScreen(): void {
+    let context = getContext(this);
+    window.getLastWindow(context).then((win: window.Window) => {
+      win.setWindowPrivacyMode(this.secureScreen);
+    }).catch((err: Error) => {
+      console.warn('[ProfilePage] setWindowPrivacyMode failed: ' + JSON.stringify(err));
+    });
+  }
+
+  /** 清理图片缓存（原生确认对话框） */
+  private confirmClearImageCache(): void {
+    promptAction.showDialog({
+      title: '清理图片缓存',
+      message: '将清除章节图片列表、列表页与分类缓存，不影响已下载的漫画。',
+      buttons: [
+        { text: '取消', color: '#666666' },
+        { text: '清理', color: '#FF7CA8' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        ImageLoader.clearCache();
+        CacheManager.getInstance().then((cache: CacheManager) => {
+          let count = cache.clearImageCache();
+          promptAction.showToast({ message: '已清除 ' + count + ' 项缓存', duration: 1600 });
+        });
+      }
+    }).catch((err: Error) => {
+      console.warn('[ProfilePage] clear cache dialog failed: ' + JSON.stringify(err));
+    });
+  }
+
+  /** 刷新存储占用统计 */
+  private refreshStorage(): void {
+    this.storageRefreshing = true;
+    this.downloadSizeBytes = DownloadManager.getInstance().getTotalSizeBytes();
+    this.cacheSizeBytes = 0;
+    try {
+      let dir = getContext(this).preferencesDir;
+      let files = fs.listFileSync(dir);
+      for (let name of files) {
+        try {
+          this.cacheSizeBytes += fs.statSync(dir + '/' + name).size;
+        } catch (err) {
+        }
+      }
+    } catch (err) {
+      console.warn('[ProfilePage] cache size calc failed: ' + JSON.stringify(err));
+    }
+    this.storageRefreshing = false;
+  }
+
+  /** 清空全部下载（原生确认对话框） */
+  private confirmClearAllDownloads(): void {
+    promptAction.showDialog({
+      title: '清空全部下载',
+      message: '将删除所有已下载漫画的本地文件，且不可恢复。',
+      buttons: [
+        { text: '取消', color: '#666666' },
+        { text: '清空', color: '#C62828' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        DownloadManager.getInstance().clearAll();
+        this.refreshStorage();
+        promptAction.showToast({ message: '已清空全部下载', duration: 1600 });
+      }
+    }).catch((err: Error) => {
+      console.warn('[ProfilePage] clear downloads dialog failed: ' + JSON.stringify(err));
+    });
+  }
+
+  /** 读取 DNS 池快照 */
+  private refreshDnsPool(): void {
+    this.dnsPool = ApiRouteManager.getInstance().getCandidates();
+  }
+
+  /** 强制刷新 DNS 池 */
+  private forceDnsRefresh(): void {
+    this.dnsRefreshing = true;
+    ApiRouteManager.getInstance().forceRefresh();
+    setTimeout(() => {
+      this.refreshDnsPool();
+      this.dnsRefreshing = false;
+      promptAction.showToast({ message: 'IP 池刷新完成', duration: 1600 });
+    }, 2500);
+  }
+
+  /** 恢复默认 DNS 池 */
+  private resetDnsPool(): void {
+    ApiRouteManager.getInstance().resetToDefault();
+    this.refreshDnsPool();
+    promptAction.showToast({ message: '已恢复默认 IP 池', duration: 1600 });
+  }
+
+  private sizeLabelForStorage(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    if (bytes >= 1024 * 1024) {
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    if (bytes >= 1024) {
+      return (bytes / 1024).toFixed(0) + ' KB';
+    }
+    return bytes + ' B';
   }
 
   onLogin(): void {
@@ -673,9 +831,9 @@ struct ProfilePage {
     }
   }
 
-  /** 打开子页面（PezMax 同款：底部导航动画收缩隐藏） */
+  /** 打开子页面：底部导航动画收缩隐藏 */
   private openSubpage(name: string): void {
-    if (!this.isLoggedIn && name !== 'settings' && name !== 'downloads' && name !== 'about') {
+    if (!this.isLoggedIn && name !== 'settings' && name !== 'downloads' && name !== 'about' && name !== 'storage' && name !== 'dns') {
       router.pushUrl({ url: 'pages/LoginPage' });
       return;
     }
@@ -773,7 +931,7 @@ struct ProfilePage {
     }
   }
 
-  /** 沉浸光感档位（PezMax 同款 Select 辅助） */
+  /** 沉浸光感档位（Select 辅助） */
   private labels(options: MaterialOption[]): string[] {
     return options.map((option: MaterialOption): string => option.label);
   }
@@ -917,71 +1075,78 @@ struct ProfilePage {
 
   build() {
     HdsNavigation(this.stack) {
-      Scroll() {
-        Column({ space: 12 }) {
-          if (this.isLoggedIn) {
-            this.userCard()
-          } else {
-            Row() {
-              Image($r('app.media.ic_default_avatar'))
-                .width(56)
-                .height(56)
-                .borderRadius(28)
-                .objectFit(ImageFit.Cover)
-              Column({ space: 2 }) {
-                Text('未登录')
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(COLOR_TEXT_TITLE)
-                Text('登录后同步收藏与评论')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+      Column() {
+        Scroll() {
+          Column({ space: 12 }) {
+            if (this.isLoggedIn) {
+              this.userCard()
+            } else {
+              Row() {
+                Image($r('app.media.ic_default_avatar'))
+                  .width(56)
+                  .height(56)
+                  .borderRadius(28)
+                  .objectFit(ImageFit.Cover)
+                Column({ space: 2 }) {
+                  Text('未登录')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(COLOR_TEXT_TITLE)
+                  Text('登录后同步收藏与评论')
+                    .fontSize(12)
+                    .fontColor(COLOR_TEXT_HINT)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .margin({ left: 14 })
+                .layoutWeight(1)
+
+                Button('登录', { type: ButtonType.Normal })
+                  .fontSize(14)
+                  .fontColor(COLOR_WHITE)
+                  .backgroundColor(COLOR_PRIMARY)
+                  .borderRadius(18)
+                  .height(36)
+                  .padding({ left: 20, right: 20 })
+                  .onClick(() => this.onLogin())
               }
-              .alignItems(HorizontalAlign.Start)
-              .margin({ left: 14 })
-              .layoutWeight(1)
-
-              Button('登录', { type: ButtonType.Normal })
-                .fontSize(14)
-                .fontColor(COLOR_WHITE)
-                .backgroundColor(COLOR_PRIMARY)
-                .borderRadius(18)
-                .height(36)
-                .padding({ left: 20, right: 20 })
-                .onClick(() => this.onLogin())
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(Color.Transparent)
+              .borderRadius(18)
+              .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
             }
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-            .backgroundColor(Color.Transparent)
-            .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          }
 
-          this.menuList()
-
-          if (this.isLoggedIn) {
-            Row() {
-              Text('退出登录')
-                .fontSize(15)
-                .fontColor('#C62828')
-            }
-            .width('100%')
-            .height(48)
-            .justifyContent(FlexAlign.Center)
-            .backgroundColor(Color.Transparent)
-            .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-            .onClick(() => this.onLogout())
+            this.menuList()
           }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 16 })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 40 })
+        .layoutWeight(1)
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .backgroundColor(COLOR_BG)
+
+        // 退出登录固定在页面底部
+        if (this.isLoggedIn) {
+          Row() {
+            Text('退出登录')
+              .fontSize(15)
+              .fontColor('#C62828')
+          }
+          .width('100%')
+          .height(48)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .margin({ left: 16, right: 16, bottom: 12 })
+          .onClick(() => this.onLogout())
+        }
       }
       .width('100%')
       .height('100%')
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .backgroundColor(COLOR_BG)
     }
     .hideTitleBar(true)
@@ -1003,7 +1168,7 @@ struct ProfilePage {
     })
   }
 
-  /** 子页返回头（PezMax subpageHeader 同款：自绘返回键 + 大标题，内容从上往下排布） */
+  /** 子页返回头：自绘返回键 + 大标题，内容从上往下排布 */
   @Builder
   subpageHeader(title: string) {
     Column() {
@@ -1032,7 +1197,7 @@ struct ProfilePage {
     .padding({ top: this.topSafeHeight })
   }
 
-  /** 子页面注册（PezMax 同款） */
+  /** 子页面注册 */
   @Builder
   pageMap(name: string) {
     if (name === 'favourites') {
@@ -1049,6 +1214,10 @@ struct ProfilePage {
       this.settingsDestination()
     } else if (name === 'about') {
       this.aboutDestination()
+    } else if (name === 'storage') {
+      this.storageDestination()
+    } else if (name === 'dns') {
+      this.dnsDestination()
     }
   }
 
@@ -1426,6 +1595,146 @@ struct ProfilePage {
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
 
           Column() {
+            Text('常规')
+              .fontSize(13)
+              .fontColor(COLOR_TEXT_HINT)
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+            Row() {
+              SymbolGlyph($r('sys.symbol.calendar'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Column({ space: 3 }) {
+                Text('自动签到')
+                  .fontSize(15)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('每天首次打开自动打卡')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.autoPunch })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((isOn: boolean) => {
+                  this.autoPunch = isOn;
+                  AppStorage.setOrCreate('bika_auto_punch', isOn);
+                  if (isOn) {
+                    this.maybeAutoPunch();
+                  }
+                })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.eye_slash'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Column({ space: 3 }) {
+                Text('防截屏')
+                  .fontSize(15)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('截屏与录屏时隐藏内容')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.secureScreen })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((isOn: boolean) => {
+                  this.secureScreen = isOn;
+                  AppStorage.setOrCreate('bika_secure_screen', isOn);
+                  this.applySecureScreen();
+                })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.trash'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Column({ space: 3 }) {
+                Text('清理图片缓存')
+                  .fontSize(15)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('章节图片列表与列表页缓存')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.confirmClearImageCache())
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.externaldrive'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Column({ space: 3 }) {
+                Text('存储与空间')
+                  .fontSize(15)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('下载、缓存占用与清理')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.openSubpage('storage'))
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Column({ space: 3 }) {
+                Text('DNS 优化')
+                  .fontSize(15)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('直连 IP 池管理与刷新')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.openSubpage('dns'))
+          }
+          .width('100%')
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .padding({ bottom: 8 })
+
+          Column() {
             Text('下载')
               .fontSize(13)
               .fontColor(COLOR_TEXT_HINT)
@@ -1543,7 +1852,7 @@ struct ProfilePage {
     })
   }
 
-  /** 关于子页（PezMax aboutContent 同款） */
+  /** 关于子页 */
   @Builder
   aboutDestination() {
     HdsNavDestination() {
@@ -1661,6 +1970,243 @@ struct ProfilePage {
     })
   }
 
+  /** 存储与空间子页 */
+  @Builder
+  storageDestination() {
+    HdsNavDestination() {
+      Column() {
+        this.subpageHeader('存储与空间')
+        Scroll() {
+          Column({ space: 12 }) {
+            Column() {
+              Text('下载')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              Row() {
+                Column({ space: 3 }) {
+                  Text('已下载漫画占用')
+                    .fontSize(15)
+                    .fontColor(COLOR_TEXT_TITLE)
+                  Text(this.storageRefreshing ? '计算中…' : this.sizeLabelForStorage(this.downloadSizeBytes))
+                    .fontSize(13)
+                    .fontColor(COLOR_PRIMARY)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Text('清空')
+                  .fontSize(14)
+                  .fontColor('#C62828')
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .backgroundColor(COLOR_PRIMARY_TINT)
+                  .borderRadius(14)
+                  .onClick(() => this.confirmClearAllDownloads())
+              }
+              .width('100%')
+              .height(64)
+              .padding({ left: 16, right: 16 })
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+
+            Column() {
+              Text('缓存')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              Row() {
+                Column({ space: 3 }) {
+                  Text('图片与页面缓存')
+                    .fontSize(15)
+                    .fontColor(COLOR_TEXT_TITLE)
+                  Text('内存 ' + ImageLoader.cachedCount() + ' 张 · 磁盘 ' +
+                    this.sizeLabelForStorage(this.cacheSizeBytes))
+                    .fontSize(13)
+                    .fontColor(COLOR_TEXT_SECONDARY)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Text('清理')
+                  .fontSize(14)
+                  .fontColor(COLOR_PRIMARY)
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .backgroundColor(COLOR_PRIMARY_TINT)
+                  .borderRadius(14)
+                  .onClick(() => {
+                    this.confirmClearImageCache();
+                    setTimeout(() => this.refreshStorage(), 600);
+                  })
+              }
+              .width('100%')
+              .height(64)
+              .padding({ left: 16, right: 16 })
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+
+            Row() {
+              Text('刷新统计')
+                .fontSize(15)
+                .fontColor(COLOR_PRIMARY)
+            }
+            .width('100%')
+            .height(48)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .onClick(() => this.refreshStorage())
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_BG)
+    }
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .onBackPressed((): boolean => {
+      this.closeSubpage();
+      return true;
+    })
+    .onShown(() => {
+      this.refreshStorage();
+    })
+  }
+
+  /** DNS 优化子页 */
+  @Builder
+  dnsDestination() {
+    HdsNavDestination() {
+      Column() {
+        this.subpageHeader('DNS 优化')
+        Scroll() {
+          Column({ space: 12 }) {
+            Column() {
+              Text('直连 IP 池')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              ForEach(this.dnsPool, (ip: string, index: number) => {
+                Row() {
+                  Text('' + (index + 1))
+                    .fontSize(12)
+                    .fontColor(COLOR_TEXT_HINT)
+                    .textAlign(TextAlign.Center)
+                    .width(24)
+                    .height(24)
+                    .borderRadius(12)
+                    .backgroundColor(COLOR_PRIMARY_TINT)
+                  Text(ip)
+                    .fontSize(14)
+                    .fontColor(COLOR_TEXT_TITLE)
+                    .margin({ left: 10 })
+                    .layoutWeight(1)
+                  if (index === 0) {
+                    Text('首选')
+                      .fontSize(10)
+                      .fontColor(COLOR_PRIMARY)
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .backgroundColor(COLOR_PRIMARY_TINT)
+                      .borderRadius(8)
+                  }
+                }
+                .width('100%')
+                .height(46)
+                .padding({ left: 16, right: 16 })
+              }, (ip: string, index: number) => ip + '_' + index)
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .padding({ bottom: 8 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Text(this.dnsRefreshing ? '刷新中…' : '强制刷新 IP 池')
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .margin({ left: 12 })
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .onClick(() => {
+              if (!this.dnsRefreshing) {
+                this.forceDnsRefresh();
+              }
+            })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+                .fontSize(20)
+                .fontColor([COLOR_TEXT_SECONDARY])
+              Text('恢复默认池')
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .margin({ left: 12 })
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .onClick(() => this.resetDnsPool())
+
+            Text('直连池按顺序尝试连接，全部失败才回退。刷新将从引导接口拉取最新地址并去重追加，默认 IP 保持首位。')
+              .fontSize(12)
+              .lineHeight(18)
+              .fontColor(COLOR_TEXT_HINT)
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4 })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_BG)
+    }
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .onBackPressed((): boolean => {
+      this.closeSubpage();
+      return true;
+    })
+    .onShown(() => {
+      this.refreshDnsPool();
+    })
+  }
+
   /** 打开更新日志弹窗 */
   private openChangelog(): void {
     this.expandedAboutVersion = CHANGELOG_ENTRIES[0].version;
@@ -1682,7 +2228,7 @@ struct ProfilePage {
     }, 80);
   }
 
-  /** 关于弹窗（按类型分发，PezMax aboutSheet 同款） */
+  /** 关于弹窗（按类型分发） */
   @Builder
   aboutSheet() {
     if (this.aboutSheetKind === 1) {
@@ -1692,7 +2238,7 @@ struct ProfilePage {
     }
   }
 
-  /** 更新日志弹窗（PezMax changelogSheet 同款） */
+  /** 更新日志弹窗 */
   @Builder
   changelogSheet() {
     Column({ space: 14 }) {
@@ -1805,7 +2351,7 @@ struct ProfilePage {
     .padding({ left: 20, right: 20, top: 8, bottom: 20 })
   }
 
-  /** 隐私政策弹窗（PezMax privacySheet 同款） */
+  /** 隐私政策弹窗 */
   @Builder
   privacySheet() {
     Column({ space: 14 }) {
@@ -1940,7 +2486,7 @@ struct IndexPage {
     }
   }
 
-  /** 子页面开合 → 页签收起/恢复动画（PezMax MainShellView 同款） */
+  /** 子页面开合 → 页签收起/恢复动画 */
   onSubpageChanged(): void {
     if (this.subpageOpen) {
       this.tabsController.applyHideAnimation(HdsAnimationMode.SCROLL_ANIMATION);
@@ -1961,7 +2507,7 @@ struct IndexPage {
     AppStorage.set('isLoggedIn', ApiService.getInstance().isLoggedIn());
   }
 
-  /** 沉浸光感档位映射（PezMax MainShellView 同款） */
+  /** 沉浸光感档位映射 */
   private hdsMaterialLevel(): hdsMaterial.MaterialLevel {
     if (this.materialLevel === 'EXQUISITE') {
       return hdsMaterial.MaterialLevel.EXQUISITE;
@@ -2010,8 +2556,8 @@ struct IndexPage {
     .barPosition(BarPosition.End)
     .divider({ mode: DividerMode.NONE })
     .barFloatingStyle({
-      // 全屏窗口下抬起至手势条上方（PezMax 非全屏窗口时同为 4）
-      barBottomMargin: 4 + this.bottomSafeHeight,
+      // 全屏窗口下抬起至手势条上方，再向下 5vp
+      barBottomMargin: Math.max(0, this.bottomSafeHeight - 1),
       adaptToHandedness: true,
       lightColor: '#FF7CA8',
       systemMaterialEffect: {

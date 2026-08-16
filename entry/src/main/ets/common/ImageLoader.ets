@@ -95,4 +95,15 @@ export class ImageLoader {
     }
     ImageLoader.order.push(url);
   }
+
+  /** 当前内存缓存张数 */
+  static cachedCount(): number {
+    return ImageLoader.cache.size;
+  }
+
+  /** 清空内存图片缓存 */
+  static clearCache(): void {
+    ImageLoader.cache.clear();
+    ImageLoader.order = [];
+  }
 }

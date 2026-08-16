@@ -3,7 +3,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { hdsEffect } from '@kit.UIDesignKit';
 
 /**
- * 沉浸光感材质（PezMax CompatibleMaterial 同款）
+ * 沉浸光感材质
  * - API 26+：uiMaterial.ImmersiveMaterial（THIN 沉浸薄材 + 主色点光）
  * - 旧设备：hdsEffect 点光 + 渐变阴影回退
  */

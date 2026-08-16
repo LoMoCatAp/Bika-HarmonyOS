@@ -62,6 +62,22 @@ export class ApiRouteManager {
     }
   }
 
+  /** 强制刷新直连 IP 池（忽略 1 小时节流，设置页手动触发） */
+  forceRefresh(): void {
+    if (this.refreshPromise !== null) {
+      return;
+    }
+    this.refreshPromise = this.doRefresh().finally(() => {
+      this.refreshPromise = null;
+    });
+  }
+
+  /** 恢复默认 IP 池 */
+  resetToDefault(): void {
+    this.ipPool = BIKA_FALLBACK_IPS.slice(0);
+    this.lastRefreshAt = 0;
+  }
+
   /**
    * 后台拉取 init 引导配置。
    * 复刻 BIKA fetchBootstrapConfig：先 HTTPS 再 HTTP 回退；响应地址严格

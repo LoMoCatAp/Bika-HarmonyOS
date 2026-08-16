@@ -414,7 +414,7 @@ struct ChannelListPage {
     }
   }
 
-  /** HDS 系统沉浸光感标题栏（官方材质，PezMax 同款） */
+  /** HDS 系统沉浸光感标题栏（官方材质） */
   private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
     return {
       content: {

@@ -14,7 +14,7 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'BikaTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
-    // 记录系统深浅色（沉浸光感材质按此取色，PezMax 同款）
+    // 记录系统深浅色（沉浸光感材质按此取色）
     const systemMode: string = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
       ? 'dark' : 'light';
     AppStorage.setOrCreate('system_color_mode', systemMode);
