@@ -1,7 +1,8 @@
 import { router, display, promptAction } from '@kit.ArkUI';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { ConfigurationConstant } from '@kit.AbilityKit';
+import { ConfigurationConstant, common } from '@kit.AbilityKit';
 import { ApiService, ComicsPageResult } from '../network/ApiService';
 import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, BikaComment } from '../models/Comic';
 import { NetImage } from '../components/NetImage';
@@ -51,10 +52,184 @@ struct HomePage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
   @StorageProp('avatarUrl') avatarUrl: string = '';
+  /** 频道自定义：顺序与隐藏 */
+  @State channelOrder: string[] = [];
+  @State channelHidden: string[] = [];
+  @State showChannelEdit: boolean = false;
+  /** 频道按压效果 */
+  @State pressedChannel: string = '';
+  private cache: CacheManager | null = null;
 
   /** 跳转个人中心（由 IndexPage 切换 tab） */
   onGotoProfile(): void {
     AppStorage.set('bika_goto_profile', Date.now());
+  }
+
+  aboutToAppear(): void {
+    CacheManager.getInstance().then(cache => {
+      this.cache = cache;
+      this.channelOrder = cache.loadChannelsOrder();
+      this.channelHidden = cache.loadChannelsHidden();
+    });
+  }
+
+  /** 按自定义顺序与隐藏过滤后的频道 */
+  private visibleChannels(): BikaChannel[] {
+    let base = DEFAULT_CHANNELS.slice(0);
+    if (this.channelOrder.length > 0) {
+      base.sort((a: BikaChannel, b: BikaChannel) => {
+        let ia = this.channelOrder.indexOf(a.label);
+        let ib = this.channelOrder.indexOf(b.label);
+        if (ia < 0) {
+          ia = 999;
+        }
+        if (ib < 0) {
+          ib = 999;
+        }
+        return ia - ib;
+      });
+    }
+    return base.filter(c => this.channelHidden.indexOf(c.label) < 0);
+  }
+
+  /** 当前编辑顺序列表 */
+  private channelEditList(): string[] {
+    let labels = this.channelOrder.length > 0
+      ? this.channelOrder.slice(0)
+      : DEFAULT_CHANNELS.map(c => c.label);
+    return labels;
+  }
+
+  private persistChannels(): void {
+    if (this.cache) {
+      this.cache.saveChannelsCustom(this.channelOrder, this.channelHidden);
+    }
+  }
+
+  private moveChannel(index: number, delta: number): void {
+    let list = this.channelEditList();
+    let to = index + delta;
+    if (to < 0 || to >= list.length) {
+      return;
+    }
+    let tmp = list[index];
+    list[index] = list[to];
+    list[to] = tmp;
+    this.channelOrder = list;
+    this.persistChannels();
+  }
+
+  private toggleChannelHidden(label: string): void {
+    let arr = this.channelHidden.slice(0);
+    let idx = arr.indexOf(label);
+    if (idx >= 0) {
+      arr.splice(idx, 1);
+    } else {
+      arr.push(label);
+    }
+    this.channelHidden = arr;
+    this.persistChannels();
+  }
+
+  private resetChannels(): void {
+    this.channelOrder = [];
+    this.channelHidden = [];
+    this.persistChannels();
+  }
+
+  /** 频道编辑弹窗 */
+  @Builder
+  channelEditSheet() {
+    Column({ space: 0 }) {
+      Text('')
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(COLOR_TEXT_SECONDARY)
+        .opacity(0.32)
+        .margin({ top: 6, bottom: 4 })
+      Row() {
+        Text('编辑频道')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(COLOR_TEXT_TITLE)
+          .layoutWeight(1)
+        Text('恢复默认')
+          .fontSize(13)
+          .fontColor(COLOR_PRIMARY)
+          .onClick(() => this.resetChannels())
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+
+      Scroll() {
+        Column({ space: 0 }) {
+          ForEach(this.channelEditList(), (label: string, index: number) => {
+            Row({ space: 8 }) {
+              Image(DEFAULT_CHANNELS.find(c => c.label === label)?.icon ?? $r('app.media.ic_cat_index'))
+                .width(30)
+                .height(30)
+                .borderRadius(8)
+                .objectFit(ImageFit.Cover)
+                .backgroundColor(COLOR_PLACEHOLDER)
+              Text(label)
+                .fontSize(14)
+                .fontColor(this.channelHidden.indexOf(label) >= 0 ? COLOR_TEXT_HINT : COLOR_TEXT_TITLE)
+                .layoutWeight(1)
+              SymbolGlyph($r('sys.symbol.arrow_up'))
+                .fontSize(16)
+                .fontColor([index > 0 ? COLOR_TEXT_SECONDARY : COLOR_TEXT_DISABLED])
+                .padding(6)
+                .onClick(() => this.moveChannel(index, -1))
+              SymbolGlyph($r('sys.symbol.arrow_down'))
+                .fontSize(16)
+                .fontColor([index < this.channelEditList().length - 1 ? COLOR_TEXT_SECONDARY : COLOR_TEXT_DISABLED])
+                .padding(6)
+                .onClick(() => this.moveChannel(index, 1))
+              Toggle({ type: ToggleType.Switch, isOn: this.channelHidden.indexOf(label) < 0 })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((isOn: boolean) => {
+                  this.toggleChannelHidden(label);
+                })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
+          }, (label: string) => label)
+        }
+        .width('100%')
+        .padding({ bottom: this.bottomSafeHeight + 12 })
+      }
+      .width('100%')
+      .height(this.channelSheetHeight())
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    }
+    .width('100%')
+    .backgroundColor(COLOR_CARD)
+    .borderRadius({ topLeft: 20, topRight: 20 })
+  }
+
+  /** 频道编辑列表高度（屏幕 55%） */
+  private channelSheetHeight(): number {
+    return px2vp(display.getDefaultDisplaySync().height) * 0.55;
+  }
+
+  /** 频道按压缩放（受全局动画开关控制） */
+  private setChannelPressed(label: string, down: boolean): void {
+    let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
+    if (!animOn) {
+      return;
+    }
+    if (down) {
+      animateTo({ duration: 130, curve: Curve.EaseOut }, () => {
+        this.pressedChannel = label;
+      });
+    } else {
+      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.pressedChannel = '';
+      });
+    }
   }
 
   build() {
@@ -64,9 +239,9 @@ struct HomePage {
           // 顶部占位（浮层标题栏）
           Row().height(this.topSafeHeight + 56)
 
-          // 频道网格（方形图标 + 名称）
+          // 频道网格（方形图标 + 名称，按自定义顺序与隐藏过滤）
           Grid() {
-            ForEach(DEFAULT_CHANNELS, (ch: BikaChannel) => {
+            ForEach(this.visibleChannels(), (ch: BikaChannel) => {
               GridItem() {
                 Column({ space: 8 }) {
                   Image(ch.icon)
@@ -83,6 +258,14 @@ struct HomePage {
                     .textAlign(TextAlign.Center)
                 }
                 .width('100%')
+                .scale({ x: this.pressedChannel === ch.label ? 0.94 : 1, y: this.pressedChannel === ch.label ? 0.94 : 1 })
+                .onTouch((event: TouchEvent) => {
+                  if (event.type === TouchType.Down) {
+                    this.setChannelPressed(ch.label, true);
+                  } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                    this.setChannelPressed(ch.label, false);
+                  }
+                })
                 .onClick(() => {
                   if (ch.kind === 'board') {
                     promptAction.showToast({ message: '该功能已下线', duration: 1600 });
@@ -117,6 +300,13 @@ struct HomePage {
           .fontWeight(FontWeight.Bold)
           .fontColor(COLOR_TEXT_TITLE)
           .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.square_and_pencil'))
+          .fontSize(20)
+          .fontColor([COLOR_TEXT_TITLE])
+          .padding(6)
+          .onClick(() => {
+            this.showChannelEdit = true;
+          })
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(22)
           .fontColor([COLOR_TEXT_TITLE])
@@ -173,6 +363,16 @@ struct HomePage {
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_BG)
+    .bindSheet($$this.showChannelEdit, this.channelEditSheet(), {
+      detents: [SheetSize.FIT_CONTENT],
+      preferType: SheetType.BOTTOM,
+      showClose: false,
+      dragBar: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      onWillDismiss: (): void => {
+        this.showChannelEdit = false;
+      }
+    })
   }
 }
 
@@ -277,6 +477,30 @@ struct DownloadListView {
       return (bytes / 1024).toFixed(0) + ' KB';
     }
     return bytes + ' B';
+  }
+
+  /** 删除整部作品的下载（原生确认框） */
+  private confirmDeleteGroup(g: DownloadGroup): void {
+    promptAction.showDialog({
+      title: '删除下载',
+      message: '删除《' + g.title + '》的全部已下载章节？本地文件将一并删除，且不可恢复。',
+      buttons: [
+        { text: '取消', color: '#667085' },
+        { text: '删除', color: '#C62828' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        let manager = DownloadManager.getInstance();
+        for (let t of manager.getTasks()) {
+          if (t.comicId === g.comicId) {
+            manager.deleteTask(t.comicId, t.chapterOrder);
+          }
+        }
+        promptAction.showToast({ message: '已删除', duration: 1600 });
+      }
+    }).catch((err: Error) => {
+      console.warn('[DownloadListView] delete dialog failed: ' + JSON.stringify(err));
+    });
   }
 
   build() {
@@ -437,6 +661,15 @@ struct DownloadListView {
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
               .margin({ left: 12 })
+
+              SymbolGlyph($r('sys.symbol.trash'))
+                .fontSize(18)
+                .fontColor([COLOR_TEXT_HINT])
+                .padding(6)
+                .alignSelf(ItemAlign.Start)
+                .onClick(() => {
+                  this.confirmDeleteGroup(g);
+                })
             }
             .width('100%')
             .padding(12)
@@ -471,6 +704,34 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.3.0',
+    date: '2026-08-16',
+    items: [
+      '评论区：排序（最新/最早/最多赞）+ 分页加载',
+      '漫画分享：ShareKit 系统分享面板',
+      '阅读器：音量键翻页（音量上=下一页，音量下=上一页，设置可关）',
+      '图片缓存：新增 200MB 磁盘缓存（三级缓存）',
+      '图片拖拽：长按拖到中转站/其他应用（UDMF 系统拖拽）',
+      '导出作品：当前章节导出 PDF / 图片压缩包（系统保存对话框，自定义位置与文件名）',
+      '修复：下载弹窗与评论弹窗互相冲突失效'
+    ]
+  },
+  {
+    version: '1.2.0',
+    date: '2026-08-16',
+    items: [
+      '登录页重写：用户名 + 密码登录（不支持邮箱登录）',
+      '注册：用户名 + 昵称 + 密码 + 三道密保题',
+      '屏蔽标签：设置中按关键词屏蔽，频道与搜索结果生效',
+      '搜索历史：最近搜索记录与一键清空',
+      '频道自定义：首页频道排序 / 隐藏 / 恢复默认',
+      '资料编辑：个人签名修改',
+      '改密码：账号与安全子页，成功后重新登录',
+      '检查更新：对接 GitHub Release，可跳转下载',
+      '保存图片到相册：SaveButton 安全控件（1.3.0 起由系统拖拽替代）'
+    ]
+  },
+  {
     version: '1.1.0',
     date: '2026-08-16',
     items: [
@@ -495,10 +756,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
       '评论弹窗改用系统原生标题（关闭按钮不重叠）',
       '评论失败提示中文化（等级不足说明）',
       '修复进入章节页码错乱与单页模式手势翻页',
-      '离线场景翻话按钮按已下载任务计算话数',
-      '进入章节自动恢复上次阅读的页（页级进度）',
-      '显示模式/档位下拉改为原生菜单，即时同步',
-      '全部设置持久化：重启后保留（颜色模式/档位/签到/防截屏/下载/DNS）'
+      '离线场景翻话按钮按已下载任务计算话数'
     ]
   },
   {
@@ -670,6 +928,22 @@ struct ProfilePage {
   @State downloadSizeBytes: number = 0;
   @State cacheSizeBytes: number = 0;
   @State storageRefreshing: boolean = false;
+  /** 屏蔽标签 */
+  @State blockedTags: string[] = [];
+  @State keywordTags: string[] = [];
+  @State blockedLoading: boolean = false;
+  /** 资料编辑 */
+  @State editSlogan: string = '';
+  @State editBirthday: string = '2000-01-01';
+  @State editGender: string = 'm';
+  @State editSaving: boolean = false;
+  /** 改密码 */
+  @State oldPassword: string = '';
+  @State newPassword: string = '';
+  @State confirmNewPassword: string = '';
+  @State passwordSaving: boolean = false;
+  /** 检查更新 */
+  @State checkingUpdate: boolean = false;
   /** DNS 分流线路状态 */
   @State dnsLines: Map<string, DnsIpEntry[]> = new Map();
   @State dnsFetching: boolean = false;
@@ -689,6 +963,8 @@ struct ProfilePage {
   @State aboutSheetKind: number = 0;
   /** 沉浸光感档位（与 IndexPage 页签联动） */
   @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
+  /** 动画效果开关 */
+  @StorageLink('bika_animations') animationsEnabled: boolean = true;
 
   /** 菜单（点击进入子页面） */
   private menuItems: MenuItemData[] = [
@@ -732,6 +1008,9 @@ struct ProfilePage {
       this.userLevel = user.level ?? 0;
       this.userExp = user.exp ?? 0;
       this.slogan = user.slogan || '';
+      this.editSlogan = user.slogan || '';
+      this.editBirthday = user.birthday || '2000-01-01';
+      this.editGender = user.gender || 'm';
       this.punched = !!user.isPunched;
       if (user.avatar && user.avatar.path) {
         this.avatarUrl = buildImageUrl(user.avatar);
@@ -746,7 +1025,7 @@ struct ProfilePage {
     }
   }
 
-  /** 自动签到（bika 同款：开启后每天首次打开自动打卡，当天只签一次） */
+  /** 自动签到（开启后每天首次打开自动打卡，当天只签一次） */
   private async maybeAutoPunch(): Promise<void> {
     if (!this.autoPunch || this.punched || this.punching) {
       return;
@@ -923,7 +1202,7 @@ struct ProfilePage {
     promptAction.showToast({ message: 'DNS 选择已生效', duration: 1600 });
   }
 
-  /** 获取线路并测速（bika 同款：双源拉取 + TCP 握手测速） */
+  /** 获取线路并测速（双源拉取 + TCP 握手测速） */
   private async fetchAndTestDns(): Promise<void> {
     if (this.dnsFetching || this.dnsTesting) {
       return;
@@ -1159,7 +1438,7 @@ struct ProfilePage {
 
   /** 打开子页面：底部导航动画收缩隐藏 */
   private openSubpage(name: string): void {
-    if (!this.isLoggedIn && name !== 'settings' && name !== 'downloads' && name !== 'about' && name !== 'storage' && name !== 'dns') {
+    if (!this.isLoggedIn && name !== 'settings' && name !== 'downloads' && name !== 'about' && name !== 'storage' && name !== 'dns' && name !== 'blocked' && name !== 'profile_edit' && name !== 'account') {
       router.pushUrl({ url: 'pages/LoginPage' });
       return;
     }
@@ -1179,7 +1458,50 @@ struct ProfilePage {
       setTimeout(() => {
         DownloadManager.getInstance().notify();
       }, 60);
+    } else if (name === 'blocked') {
+      this.loadBlockedTags();
+      this.loadKeywordTags();
+    } else if (name === 'profile_edit') {
+      this.editSlogan = this.slogan;
     }
+  }
+
+  /** 读取屏蔽标签与候选关键词 */
+  private loadBlockedTags(): void {
+    CacheManager.getInstance().then(cache => {
+      this.cache = cache;
+      this.blockedTags = cache.loadBlockedTags();
+    });
+  }
+
+  private async loadKeywordTags(): Promise<void> {
+    if (this.blockedLoading) {
+      return;
+    }
+    this.blockedLoading = true;
+    try {
+      this.keywordTags = await this.apiService.getKeywords();
+    } catch (err) {
+      console.warn('[ProfilePage] keywords failed: ' + JSON.stringify(err));
+    } finally {
+      this.blockedLoading = false;
+    }
+  }
+
+  /** 切换屏蔽标签 */
+  private toggleBlockedTag(tag: string): void {
+    let arr = this.blockedTags.slice(0);
+    let idx = arr.indexOf(tag);
+    if (idx >= 0) {
+      arr.splice(idx, 1);
+    } else {
+      arr.push(tag);
+    }
+    this.blockedTags = arr;
+    AppStorage.set('bika_blocked_tags', JSON.stringify(arr));
+    CacheManager.getInstance().then(c => {
+      c.saveBlockedTags(arr);
+    });
   }
 
   private closeSubpage(): void {
@@ -1422,6 +1744,13 @@ struct ProfilePage {
         .alignItems(HorizontalAlign.Start)
         .margin({ left: 16 })
         .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.square_and_pencil'))
+          .fontSize(20)
+          .fontColor([COLOR_PRIMARY])
+          .padding(6)
+          .onClick(() => {
+            this.openSubpage('profile_edit');
+          })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -1453,9 +1782,31 @@ struct ProfilePage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      // 账号与安全（我的页顶部账号区域）
+      Divider()
+        .margin({ top: 10, bottom: 2 })
+      Row() {
+        SymbolGlyph($r('sys.symbol.lock'))
+          .fontSize(18)
+          .fontColor([COLOR_TEXT_SECONDARY])
+        Text('账号与安全')
+          .fontSize(14)
+          .fontColor(COLOR_TEXT_TITLE)
+          .margin({ left: 10 })
+          .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([COLOR_TEXT_DISABLED])
+      }
+      .width('100%')
+      .height(44)
+      .onClick(() => {
+        this.openSubpage('account');
+      })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .padding({ left: 16, right: 16, top: 14, bottom: 6 })
     .backgroundColor(Color.Transparent)
     .borderRadius(18)
     .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
@@ -1644,6 +1995,12 @@ struct ProfilePage {
       this.storageDestination()
     } else if (name === 'dns') {
       this.dnsDestination()
+    } else if (name === 'blocked') {
+      this.blockedTagsDestination()
+    } else if (name === 'profile_edit') {
+      this.profileEditDestination()
+    } else if (name === 'account') {
+      this.accountDestination()
     }
   }
 
@@ -2084,6 +2441,36 @@ struct ProfilePage {
             .margin({ top: 4 })
           Column({ space: 0 }) {
             Row() {
+              SymbolGlyph($r('sys.symbol.wand_and_stars'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('动画效果')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('按钮动效、卡片按压、阅读器过渡等')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.animationsEnabled })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((checked: boolean) => {
+                  this.animationsEnabled = checked;
+                  AppStorage.setOrCreate('bika_animations', checked);
+                  CacheManager.getInstance().then(c => c.saveSetting('animations', checked ? 'true' : 'false'));
+                })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+
+            Divider().margin({ left: 16, right: 16 })
+
+            Row() {
               SymbolGlyph($r('sys.symbol.calendar'))
                 .fontSize(20)
                 .fontColor([this.accentColor])
@@ -2229,6 +2616,60 @@ struct ProfilePage {
             .height(58)
             .padding({ left: 16, right: 16 })
             .onClick(() => this.openSubpage('dns'))
+
+            Divider().margin({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.nosign'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('屏蔽标签')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('隐藏含指定标签的漫画')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.openSubpage('blocked'))
+
+            Divider().margin({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.lock'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('账号与安全')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('修改登录密码')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.openSubpage('account'))
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
@@ -2314,7 +2755,39 @@ struct ProfilePage {
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
 
-          Column() {
+          Text('应用')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+            .margin({ top: 4 })
+          Column({ space: 0 }) {
+            Row() {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('检查更新')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text(this.checkingUpdate ? '正在检查…' : '检测 GitHub Release 新版本')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Text('›')
+                .fontSize(26)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => this.checkUpdate())
+
+            Divider().margin({ left: 16, right: 16 })
+
             Row() {
               SymbolGlyph($r('sys.symbol.questionmark_circle'))
                 .fontSize(20)
@@ -2338,15 +2811,15 @@ struct ProfilePage {
             .width('100%')
             .height(58)
             .padding({ left: 16, right: 16 })
-            .backgroundColor(Color.Transparent)
-            .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
             .onClick(() => {
               this.openSubpage('about');
             })
             .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.985 })
           }
           .width('100%')
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 40 })
@@ -2463,6 +2936,40 @@ struct ProfilePage {
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
           .onClick(() => {
             this.openPrivacyPolicy();
+          })
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.985 })
+
+          Text('开源')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+            .margin({ top: 8 })
+          Row({ space: 12 }) {
+            SymbolGlyph($r('sys.symbol.link'))
+              .fontSize(20)
+              .fontColor([this.accentColor])
+            Column({ space: 3 }) {
+              Text('GitHub 项目主页')
+                .fontSize(17)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(COLOR_TEXT_TITLE)
+              Text('github.com/LoMoCatAp/Bika-HarmonyOS')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            Text('›')
+              .fontSize(26)
+              .fontColor(COLOR_TEXT_SECONDARY)
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .onClick(() => {
+            this.openExternalLink('https://github.com/LoMoCatAp/Bika-HarmonyOS');
           })
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.985 })
         }
@@ -2846,6 +3353,409 @@ struct ProfilePage {
     })
   }
 
+  /** 屏蔽标签子页 */
+  @Builder
+  blockedTagsDestination() {
+    HdsNavDestination() {
+      Column() {
+        this.subpageHeader('屏蔽标签')
+        Scroll() {
+          Column({ space: 12 }) {
+            Column() {
+              Text('已屏蔽')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              if (this.blockedTags.length === 0) {
+                Text('暂无屏蔽标签')
+                  .fontSize(14)
+                  .fontColor(COLOR_TEXT_HINT)
+                  .width('100%')
+                  .padding({ left: 16, right: 16, bottom: 12 })
+              } else {
+                Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
+                  ForEach(this.blockedTags, (tag: string) => {
+                    Text(tag)
+                      .fontSize(13)
+                      .fontColor(COLOR_PRIMARY)
+                      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                      .backgroundColor(COLOR_PRIMARY_TINT)
+                      .border({ width: 1, color: COLOR_PRIMARY, radius: 15 })
+                      .margin({ left: 16, bottom: 8 })
+                      .onClick(() => this.toggleBlockedTag(tag))
+                  }, (tag: string) => tag)
+                }
+                .width('100%')
+                .padding({ bottom: 8 })
+              }
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+
+            Column() {
+              Text('可选标签')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              if (this.blockedLoading && this.keywordTags.length === 0) {
+                Row({ space: 8 }) {
+                  LoadingProgress()
+                    .width(16)
+                    .height(16)
+                    .color(COLOR_PRIMARY)
+                  Text('加载标签中…')
+                    .fontSize(13)
+                    .fontColor(COLOR_TEXT_HINT)
+                }
+                .width('100%')
+                .padding({ left: 16, bottom: 12 })
+              } else {
+                Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
+                  ForEach(this.keywordTags, (tag: string) => {
+                    Text(tag)
+                      .fontSize(13)
+                      .fontColor(this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY : COLOR_TEXT_TITLE)
+                      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                      .backgroundColor(this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY_TINT : COLOR_CARD)
+                      .border({
+                        width: 1,
+                        color: this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY : COLOR_DIVIDER,
+                        radius: 15
+                      })
+                      .margin({ left: 16, bottom: 8 })
+                      .onClick(() => this.toggleBlockedTag(tag))
+                  }, (tag: string) => tag)
+                }
+                .width('100%')
+                .padding({ bottom: 8 })
+              }
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+
+            Text('屏蔽后，频道列表与搜索结果将不再显示含该标签的漫画。')
+              .fontSize(12)
+              .lineHeight(18)
+              .fontColor(COLOR_TEXT_HINT)
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4 })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_BG)
+    }
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .onBackPressed((): boolean => {
+      this.closeSubpage();
+      return true;
+    })
+  }
+
+  /** 资料编辑子页 */
+  @Builder
+  profileEditDestination() {
+    HdsNavDestination() {
+      Column() {
+        this.subpageHeader('编辑资料')
+        Scroll() {
+          Column({ space: 12 }) {
+            Column() {
+              Text('签名')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              TextInput({ placeholder: '写点什么介绍自己…', text: this.editSlogan })
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .placeholderColor(COLOR_PLACEHOLDER)
+                .backgroundColor(COLOR_INPUT_BG)
+                .borderRadius(14)
+                .height(46)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16 })
+                .onChange((v: string) => {
+                  this.editSlogan = v;
+                })
+
+              Button(this.editSaving ? '保存中…' : '保存', { type: ButtonType.Normal })
+                .fontSize(15)
+                .fontColor(COLOR_WHITE)
+                .backgroundColor(this.editSaving ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+                .borderRadius(22)
+                .height(44)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16, top: 20 })
+                .enabled(!this.editSaving)
+                .onClick(() => {
+                  this.saveProfileEdit();
+                })
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .padding({ bottom: 16 })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_BG)
+    }
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .onBackPressed((): boolean => {
+      this.closeSubpage();
+      return true;
+    })
+  }
+
+  /** 账号与安全子页（改密码） */
+  @Builder
+  accountDestination() {
+    HdsNavDestination() {
+      Column() {
+        this.subpageHeader('账号与安全')
+        Scroll() {
+          Column({ space: 12 }) {
+            Column() {
+              Text('当前密码')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              TextInput({ placeholder: '请输入当前密码', text: this.oldPassword })
+                .type(InputType.Password)
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .placeholderColor(COLOR_PLACEHOLDER)
+                .backgroundColor(COLOR_INPUT_BG)
+                .borderRadius(14)
+                .height(46)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16 })
+                .onChange((v: string) => {
+                  this.oldPassword = v;
+                })
+              Text('新密码')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              TextInput({ placeholder: '5-20 位，需包含数字、字母与符号', text: this.newPassword })
+                .type(InputType.Password)
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .placeholderColor(COLOR_PLACEHOLDER)
+                .backgroundColor(COLOR_INPUT_BG)
+                .borderRadius(14)
+                .height(46)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16 })
+                .onChange((v: string) => {
+                  this.newPassword = v;
+                })
+              Text('确认新密码')
+                .fontSize(13)
+                .fontColor(COLOR_TEXT_HINT)
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+              TextInput({ placeholder: '再次输入新密码', text: this.confirmNewPassword })
+                .type(InputType.Password)
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .placeholderColor(COLOR_PLACEHOLDER)
+                .backgroundColor(COLOR_INPUT_BG)
+                .borderRadius(14)
+                .height(46)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16 })
+                .onChange((v: string) => {
+                  this.confirmNewPassword = v;
+                })
+              Button(this.passwordSaving ? '提交中…' : '修改密码', { type: ButtonType.Normal })
+                .fontSize(15)
+                .fontColor(COLOR_WHITE)
+                .backgroundColor(this.passwordSaving ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+                .borderRadius(22)
+                .height(44)
+                .width('calc(100% - 32vp)')
+                .margin({ left: 16, right: 16, top: 20 })
+                .enabled(!this.passwordSaving)
+                .onClick(() => {
+                  this.submitPasswordChange();
+                })
+            }
+            .width('100%')
+            .backgroundColor(Color.Transparent)
+            .borderRadius(18)
+            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .padding({ bottom: 16 })
+
+            Text('修改成功后需要重新登录。')
+              .fontSize(12)
+              .fontColor(COLOR_TEXT_HINT)
+              .width('100%')
+              .padding({ left: 16, right: 16 })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_BG)
+    }
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .onBackPressed((): boolean => {
+      this.closeSubpage();
+      return true;
+    })
+  }
+
+  /** 保存资料编辑 */
+  private async saveProfileEdit(): Promise<void> {
+    if (this.editSaving) {
+      return;
+    }
+    this.editSaving = true;
+    try {
+      await this.apiService.updateProfile(this.editSlogan);
+      this.slogan = this.editSlogan;
+      promptAction.showToast({ message: '资料已更新', duration: 1600 });
+    } catch (err) {
+      promptAction.showToast({ message: (err as Error).message || '保存失败', duration: 2000 });
+    } finally {
+      this.editSaving = false;
+    }
+  }
+
+  /** 提交修改密码 */
+  private async submitPasswordChange(): Promise<void> {
+    if (this.oldPassword.length === 0) {
+      promptAction.showToast({ message: '请输入当前密码', duration: 1600 });
+      return;
+    }
+    if (this.newPassword.length < 5 || this.newPassword.length > 20) {
+      promptAction.showToast({ message: '新密码需 5-20 位', duration: 1600 });
+      return;
+    }
+    if (!/[0-9]/.test(this.newPassword) || !/[a-zA-Z]/.test(this.newPassword) || !/[^0-9a-zA-Z]/.test(this.newPassword)) {
+      promptAction.showToast({ message: '新密码需包含数字、字母与符号', duration: 2000 });
+      return;
+    }
+    if (this.newPassword !== this.confirmNewPassword) {
+      promptAction.showToast({ message: '两次输入的新密码不一致', duration: 1600 });
+      return;
+    }
+    if (this.passwordSaving) {
+      return;
+    }
+    this.passwordSaving = true;
+    try {
+      await this.apiService.changePassword(this.oldPassword, this.newPassword);
+      promptAction.showToast({ message: '密码已修改，请重新登录', duration: 2000 });
+      this.apiService.logout();
+      this.isLoggedIn = false;
+      router.pushUrl({ url: 'pages/LoginPage' });
+    } catch (err) {
+      promptAction.showToast({ message: (err as Error).message || '修改失败', duration: 2000 });
+    } finally {
+      this.passwordSaving = false;
+    }
+  }
+
+  /** 检查更新（GitHub Release） */
+  private async checkUpdate(): Promise<void> {
+    if (this.checkingUpdate) {
+      return;
+    }
+    this.checkingUpdate = true;
+    let request = http.createHttp();
+    try {
+      let response = await request.request(
+        'https://api.github.com/repos/LoMoCatAp/Bika-HarmonyOS/releases/latest', {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 10000,
+        readTimeout: 10000
+      });
+      if (response.responseCode !== 200) {
+        promptAction.showToast({ message: '检查更新失败 (HTTP ' + response.responseCode + ')', duration: 2000 });
+        return;
+      }
+      let data = JSON.parse(response.result as string) as Record<string, Object>;
+      let tag = String(data['tag_name'] ?? '');
+      let version = tag.startsWith('v') ? tag.substring(1) : tag;
+      let current = AppStorage.get<string>('bika_current_version') ?? '1.1.0';
+      if (version.length > 0 && version !== current) {
+        let bodyText = String(data['body'] ?? '');
+        let htmlUrl = String(data['html_url'] ?? '');
+        promptAction.showDialog({
+          title: '发现新版本 v' + version,
+          message: bodyText.length > 0 ? bodyText.substring(0, 300) : '点击「去下载」前往 Release 页面',
+          buttons: [
+            { text: '取消', color: '#666666' },
+            { text: '去下载', color: '#FF7CA8' }
+          ]
+        }).then((res: promptAction.ShowDialogSuccessResponse) => {
+          if (res.index === 1 && htmlUrl.length > 0) {
+            this.openExternalLink(htmlUrl);
+          }
+        }).catch((err: Error) => {
+          console.warn('[ProfilePage] update dialog failed: ' + JSON.stringify(err));
+        });
+      } else {
+        promptAction.showToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
+      }
+    } catch (err) {
+      promptAction.showToast({ message: '检查更新失败：' + (err as Error).message, duration: 2000 });
+    } finally {
+      request.destroy();
+      this.checkingUpdate = false;
+    }
+  }
+
+  /** 打开外部链接 */
+  private openExternalLink(url: string): void {
+    try {
+      let context = getContext(this) as common.UIAbilityContext;
+      context.openLink(url);
+    } catch (err) {
+      promptAction.showToast({ message: '无法打开链接', duration: 1600 });
+    }
+  }
+
   /** 打开更新日志弹窗 */
   private openChangelog(): void {
     this.expandedAboutVersion = CHANGELOG_ENTRIES[0].version;
@@ -3073,28 +3983,6 @@ struct ProfilePage {
     .width('100%')
     .padding({ left: 20, right: 20, top: 8, bottom: 20 })
   }
-
-  /** 外观模式单选行（保留给后续扩展使用，当前设置页改用统一下拉框） */
-  @Builder
-  colorModeRow(mode: string, label: string) {
-    Row({ space: 12 }) {
-      Text(label)
-        .fontSize(15)
-        .fontColor(COLOR_TEXT_TITLE)
-        .layoutWeight(1)
-      if (this.colorMode === mode) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(17)
-          .fontColor([COLOR_PRIMARY])
-      }
-    }
-    .width('100%')
-    .height(48)
-    .padding({ left: 16, right: 16 })
-    .onClick(() => {
-      this.setColorMode(mode);
-    })
-  }
 }
 
 /**
@@ -3107,6 +3995,7 @@ struct IndexPage {
   @StorageLink('bika_subpage_open') @Watch('onSubpageChanged') subpageOpen: boolean = false;
   @StorageLink('bika_goto_profile') @Watch('onGotoProfile') gotoProfile: number = 0;
   @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageLink('bika_animations') animationsEnabled: boolean = true;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
   private tabsController: HdsTabsController = new HdsTabsController();

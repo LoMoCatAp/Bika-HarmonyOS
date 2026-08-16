@@ -43,6 +43,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   '1004': '账号或密码错误，请检查后重试',
   '1005': '登录已过期，请重新登录',
   '1007': '数据不存在或已被删除',
+  '1008': '该邮箱已被注册',
+  '1009': '用户名已被占用',
   '1014': '该漫画暂时无法查看（审核中）',
   '1019': '等级不足或评论权限受限，无法发表评论',
   '1031': '等级不足，无法发表评论'
@@ -52,6 +54,27 @@ const ERROR_MESSAGES: Record<string, string> = {
 export interface ComicsPageResult {
   comics: BikaComicSummary[];
   pages: number;
+}
+
+/** 评论分页结果 */
+export interface CommentPageResult {
+  docs: BikaComment[];
+  pages: number;
+}
+
+/** 注册请求体 */
+interface RegisterBody {
+  email: string;
+  name: string;
+  password: string;
+  birthday: string;
+  gender: string;
+  question1: string;
+  question2: string;
+  question3: string;
+  answer1: string;
+  answer2: string;
+  answer3: string;
 }
 
 export class ApiService {
@@ -250,16 +273,59 @@ export class ApiService {
 
   /**
    * 漫画评论（BIKA getComments）
-   * GET comics/{id}/comments?page= → data.comments.docs[]
+   * GET comics/{id}/comments?page= → data.comments{docs,pages}
    */
-  async getComicComments(comicId: string, page: number): Promise<BikaComment[]> {
+  async getComicComments(comicId: string, page: number): Promise<CommentPageResult> {
     let data = await this.request<Record<string, Object>>(
       'comics/' + comicId + '/comments?page=' + page, 'GET', null, true);
     let comments = data['comments'] as Record<string, Object>;
     if (comments && comments['docs']) {
-      return comments['docs'] as BikaComment[];
+      return {
+        docs: comments['docs'] as BikaComment[],
+        pages: comments['pages'] as number ?? 1
+      };
     }
-    return [];
+    return { docs: [], pages: 1 };
+  }
+
+  /**
+   * 注册新账号
+   * POST auth/register，body: email/name/password/birthday/gender/question1-3/answer1-3
+   */
+  async register(email: string, password: string, name: string, birthday: string, gender: string,
+    questions: string[], answers: string[]): Promise<void> {
+    let bodyObj: RegisterBody = {
+      email: email,
+      name: name,
+      password: password,
+      birthday: birthday,
+      gender: gender,
+      question1: questions[0],
+      question2: questions[1],
+      question3: questions[2],
+      answer1: answers[0],
+      answer2: answers[1],
+      answer3: answers[2]
+    };
+    await this.request<Record<string, Object>>('auth/register', 'POST', JSON.stringify(bodyObj), false);
+  }
+
+  /**
+   * 修改密码
+   * PUT users/password，body: {old_password, password}
+   */
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    await this.request<Record<string, Object>>(
+      'users/password', 'PUT', JSON.stringify({ old_password: oldPassword, password: newPassword }), true);
+  }
+
+  /**
+   * 更新个人签名（仅 slogan，与 bika 一致）
+   * PUT users/profile
+   */
+  async updateProfile(slogan: string): Promise<void> {
+    await this.request<Record<string, Object>>(
+      'users/profile', 'PUT', JSON.stringify({ slogan: slogan }), true);
   }
 
   /**
@@ -554,9 +620,13 @@ export class ApiService {
         for (let ip of candidates) {
           let url = 'https://' + ip + '/' + path;
           try {
-            resp = await (method === 'GET'
-              ? BikaHttpClient.get(url, headers, 1, BIKA_API_HOST)
-              : BikaHttpClient.post(url, body || '', headers, 1, BIKA_API_HOST));
+            if (method === 'GET') {
+              resp = await BikaHttpClient.get(url, headers, 1, BIKA_API_HOST);
+            } else if (method === 'PUT') {
+              resp = await BikaHttpClient.put(url, body || '', headers, 1, BIKA_API_HOST);
+            } else {
+              resp = await BikaHttpClient.post(url, body || '', headers, 1, BIKA_API_HOST);
+            }
             ApiService.lastTransport = 'ip-' + ip;
             break;
           } catch (err) {

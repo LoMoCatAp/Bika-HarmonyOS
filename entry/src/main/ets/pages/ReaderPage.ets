@@ -1,7 +1,13 @@
 import { router, promptAction, window, display } from '@kit.ArkUI';
+import { unifiedDataChannel } from '@kit.ArkData';
+import { inputConsumer, KeyCode } from '@kit.InputKit';
+import { common } from '@kit.AbilityKit';
+import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
+import { ImageLoader } from '../common/ImageLoader';
+import { exportImagesZip, exportImagesPdf } from '../common/ExportUtils';
 import { BikaPageDoc } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
 import { DownloadManager } from '../common/DownloadManager';
@@ -95,6 +101,20 @@ struct ReaderPage {
   @State zoomScale: number = 1.0;
   /** 阅读模式：0 左→右 1 右→左 2 上→下单页 3 条漫(有隙) 4 条漫(无缝，默认) */
   @State readingMode: number = 4;
+  /** 音量键翻页开关 */
+  @State volumeTurnEnabled: boolean = true;
+  /** 动画总开关 */
+  @StorageProp('bika_animations') animationsOn: boolean = true;
+  /** 页码胶囊提示 */
+  @State pageTipVisible: boolean = false;
+  @State pageTipText: string = '';
+  private pageTipTimer: number = -1;
+  /** 底部弹窗（单例，按类型分发：settings/saveImage/export/saveFile） */
+  @State showSheet: boolean = false;
+  @State sheetKind: string = '';
+  @State exporting: boolean = false;
+  @State exportFilePath: string = '';
+  @State exportFileName: string = '';
   /** 单页模式的当前页（切换模式时保留阅读位置） */
   @State swiperIndex: number = 0;
   /** 单页模式控制器（非受控 index，避免手势被状态回写打断） */
@@ -123,6 +143,9 @@ struct ReaderPage {
   private imageDataSource: ImageDataSource = new ImageDataSource();
 
   async aboutToAppear(): Promise<void> {
+    let cache = await CacheManager.getInstance();
+    this.volumeTurnEnabled = cache.getSetting('reader_volume_turn', 'true') === 'true';
+    this.registerVolumeKeys();
     let params = router.getParams() as ReaderRouterParams;
     if (params) {
       this.comicId = params.comicId;
@@ -241,7 +264,13 @@ struct ReaderPage {
   }
 
   toggleControls(): void {
-    this.showControls = !this.showControls;
+    if (this.animationsOn) {
+      animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+        this.showControls = !this.showControls;
+      });
+    } else {
+      this.showControls = !this.showControls;
+    }
   }
 
   private updateChapterButtons(): void {
@@ -319,10 +348,126 @@ struct ReaderPage {
     })
   }
 
+  /** 音量键回调（官方示例写法：具名回调，off 时精确移除） */
+  private volumeUpCallback = (): void => {
+    this.turnByVolume(1);
+  };
+  private volumeDownCallback = (): void => {
+    this.turnByVolume(-1);
+  };
+  /** 上一次音量翻页时间（防重复事件） */
+  private lastVolumeTurnAt: number = 0;
+
+  /** 音量键翻页（音量上=下一页，音量下=上一页；可在设置中关闭） */
+  private registerVolumeKeys(): void {
+    if (!this.volumeTurnEnabled) {
+      return;
+    }
+    try {
+      let upOptions: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_UP,
+        action: 1,
+        isRepeat: false
+      };
+      inputConsumer.on('keyPressed', upOptions, this.volumeUpCallback);
+      let downOptions: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_DOWN,
+        action: 1,
+        isRepeat: false
+      };
+      inputConsumer.on('keyPressed', downOptions, this.volumeDownCallback);
+    } catch (err) {
+      console.warn('[ReaderPage] volume key register failed: ' + JSON.stringify(err));
+    }
+  }
+
+  /** 切换音量键翻页开关 */
+  private toggleVolumeTurn(enabled: boolean): void {
+    this.volumeTurnEnabled = enabled;
+    CacheManager.getInstance().then(cache => {
+      cache.saveSetting('reader_volume_turn', enabled ? 'true' : 'false');
+    });
+    if (!enabled) {
+      this.unregisterVolumeKeys();
+    } else {
+      this.registerVolumeKeys();
+    }
+  }
+
+  private unregisterVolumeKeys(): void {
+    try {
+      inputConsumer.off('keyPressed', this.volumeUpCallback);
+      inputConsumer.off('keyPressed', this.volumeDownCallback);
+    } catch (err) {
+      console.warn('[ReaderPage] volume key unregister failed');
+    }
+  }
+
+  /** 按音量方向翻页（防抖 300ms，弹窗打开时不翻页） */
+  private turnByVolume(delta: number): void {
+    if (this.showSheet) {
+      return;
+    }
+    let now = Date.now();
+    if (now - this.lastVolumeTurnAt < 300) {
+      return;
+    }
+    this.lastVolumeTurnAt = now;
+    if (this.totalImages <= 0) {
+      return;
+    }
+    try {
+      let index = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+      let target = index + delta;
+      if (target < 0 || target >= this.totalImages) {
+        return;
+      }
+      if (this.readingMode <= 2) {
+        this.swiperIndex = target;
+        this.currentVisibleIndex = target;
+        setTimeout(() => {
+          try {
+            this.swiperController.changeIndex(target, false);
+          } catch (err) {
+            console.warn('[ReaderPage] changeIndex failed: ' + JSON.stringify(err));
+          }
+        }, 0);
+      } else {
+        this.listScroller.scrollToIndex(target, true, ScrollAlign.START);
+        this.currentVisibleIndex = target;
+      }
+      this.persistPageIndex();
+      this.showPageTip(target);
+    } catch (err) {
+      console.warn('[ReaderPage] volume turn failed: ' + JSON.stringify(err));
+    }
+  }
+
+  /** 页码胶囊（动画开关打开时淡入淡出） */
+  private showPageTip(page: number): void {
+    this.pageTipText = (page + 1) + ' / ' + this.totalImages;
+    if (this.pageTipTimer >= 0) {
+      clearTimeout(this.pageTipTimer);
+    }
+    if (!this.pageTipVisible) {
+      this.pageTipVisible = true;
+    }
+    this.pageTipTimer = setTimeout(() => {
+      if (this.animationsOn) {
+        animateTo({ duration: 260, curve: Curve.EaseIn }, () => {
+          this.pageTipVisible = false;
+        });
+      } else {
+        this.pageTipVisible = false;
+      }
+      this.pageTipTimer = -1;
+    }, 900);
+  }
+
   /** 切换阅读模式并保留当前阅读位置 */
   private switchReadingMode(mode: number): void {
     if (mode === this.readingMode) {
-      this.showSettings = false;
+      this.showSheet = false;
       return;
     }
     // 记录切换前所在页
@@ -331,14 +476,14 @@ struct ReaderPage {
     if (mode > 2) {
       // 切到连续滚动：重建 List 后定位到同一张图
       this.readingMode = mode;
-      this.showSettings = false;
+      this.showSheet = false;
       setTimeout(() => {
         this.listScroller.scrollToIndex(this.swiperIndex, true, ScrollAlign.START);
       }, 80);
     } else {
       // 切到单页：Swiper 渲染完成后跳到当前页（非受控，手势不受状态干扰）
       this.readingMode = mode;
-      this.showSettings = false;
+      this.showSheet = false;
       let target = this.swiperIndex;
       setTimeout(() => {
         this.swiperController.changeIndex(target, false);
@@ -412,6 +557,174 @@ struct ReaderPage {
     }
   }
 
+  /** 当前页可拖拽的图片本地路径（本地文件或磁盘缓存），供中转站拖拽 */
+  private dragImagePath(index: number): string {
+    let img = this.imageDataSource.getData(index);
+    if (!img || img.failed) {
+      return '';
+    }
+    if (img.url.startsWith('file://')) {
+      return img.url.substring(7);
+    }
+    return ImageLoader.diskFilePath(img.url);
+  }
+
+  /** 拖拽预览（优先用内存 PixelMap 按原图比例渲染；否则系统默认快照，均无白边） */
+  private dragPreviewInfo(index: number): DragItemInfo {
+    let img = this.imageDataSource.getData(index);
+    if (img && !img.failed) {
+      let pm = ImageLoader.getCached(img.url);
+      if (pm !== null) {
+        let info: DragItemInfo = { pixelMap: pm };
+        return info;
+      }
+    }
+    let info: DragItemInfo = {};
+    return info;
+  }
+
+  /** 图片拖拽开始：挂 UDM 图片数据（可拖到中转站/其他应用） */
+  private handleImageDragStart(event: DragEvent, index: number): void {
+    let path = this.dragImagePath(index);
+    if (path.length === 0) {
+      return;
+    }
+    try {
+      let uri = fileUri.getUriFromPath(path);
+      let record = new unifiedDataChannel.Image();
+      record.imageUri = uri;
+      let data = new unifiedDataChannel.UnifiedData(record);
+      event.setData(data);
+    } catch (err) {
+      console.warn('[ReaderPage] drag setData failed: ' + JSON.stringify(err));
+    }
+  }
+
+  /** 收集当前章节全部图片字节（本地文件直读，远程下载） */
+  private async collectChapterBytes(): Promise<ArrayBuffer[]> {
+    let list = this.imageDataSource.getAll();
+    let out: ArrayBuffer[] = [];
+    for (let img of list) {
+      if (img.url.startsWith('file://')) {
+        let path = img.url.substring(7);
+        try {
+          let stat = fs.statSync(path);
+          let buf = new ArrayBuffer(stat.size);
+          let file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+          fs.readSync(file.fd, buf);
+          fs.closeSync(file.fd);
+          out.push(buf);
+        } catch (err) {
+          throw new Error('读取本地图片失败');
+        }
+      } else {
+        out.push(await ImageLoader.downloadBytes([img.url]));
+      }
+    }
+    return out;
+  }
+
+  /** 文件名安全化（去掉系统不允许的字符） */
+  private safeFileName(name: string): string {
+    return name.replace(/[\\/:*?"<>|]/g, '_');
+  }
+
+  /** 导出当前章节（PDF / ZIP）→ 系统文件保存对话框（自定义位置 + 作品名） */
+  private async doExport(kind: string): Promise<void> {
+    if (this.exporting) {
+      return;
+    }
+    this.exporting = true;
+    this.showSheet = false;
+    promptAction.showToast({ message: '正在导出，请稍候…', duration: 1600 });
+    try {
+      let bytes = await this.collectChapterBytes();
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let dir = ctx.cacheDir + '/export';
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir);
+      }
+      let base = this.safeFileName(this.comicTitle) + '_第' + this.currentOrder + '话';
+      let ext = kind === 'pdf' ? '.pdf' : '.zip';
+      let tmpPath = dir + '/' + base + ext;
+      if (kind === 'pdf') {
+        await exportImagesPdf(bytes, tmpPath, this.comicTitle);
+      } else {
+        await exportImagesZip(bytes, tmpPath, base);
+      }
+      // 系统保存对话框：用户选择位置，默认文件名为作品名
+      let options = new picker.DocumentSaveOptions();
+      options.newFileNames = [base + ext];
+      options.fileSuffixChoices = kind === 'pdf' ? ['文档|.pdf'] : ['压缩包|.zip'];
+      let documentViewPicker = new picker.DocumentViewPicker(ctx);
+      let uris = await documentViewPicker.save(options);
+      if (uris.length > 0) {
+        // 官方文档写法：直接用 picker 返回的 URI 打开写入（READ_WRITE）
+        let src = fs.openSync(tmpPath, fs.OpenMode.READ_ONLY);
+        let stat = fs.statSync(tmpPath);
+        let buf = new ArrayBuffer(stat.size);
+        fs.readSync(src.fd, buf);
+        fs.closeSync(src);
+        let dest = fs.openSync(uris[0], fs.OpenMode.READ_WRITE);
+        fs.writeSync(dest.fd, buf);
+        fs.closeSync(dest);
+        promptAction.showToast({ message: '已保存', duration: 1600 });
+      }
+    } catch (err) {
+      promptAction.showToast({ message: '导出失败：' + (err as Error).message, duration: 2000 });
+    } finally {
+      this.exporting = false;
+    }
+  }
+
+  /** 导出选择弹窗 */
+  @Builder
+  exportSheet() {
+    Column({ space: 0 }) {
+      Text('')
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(COLOR_TEXT_SECONDARY)
+        .opacity(0.32)
+        .margin({ top: 6, bottom: 4 })
+      Text('导出当前章节')
+        .fontSize(17)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_TEXT_TITLE)
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 10 })
+      Row({ space: 12 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(22)
+          .fontColor([COLOR_PRIMARY])
+        Text('导出为 PDF')
+          .fontSize(15)
+          .fontColor(COLOR_TEXT_TITLE)
+      }
+      .width('100%')
+      .height(52)
+      .padding({ left: 16, right: 16 })
+      .onClick(() => this.doExport('pdf'))
+      Row({ space: 12 }) {
+        SymbolGlyph($r('sys.symbol.doc_zipper'))
+          .fontSize(22)
+          .fontColor([COLOR_PRIMARY])
+        Text('导出为图片压缩包（ZIP）')
+          .fontSize(15)
+          .fontColor(COLOR_TEXT_TITLE)
+      }
+      .width('100%')
+      .height(52)
+      .padding({ left: 16, right: 16 })
+      .onClick(() => this.doExport('zip'))
+    }
+    .width('100%')
+    .padding({ bottom: this.bottomSafeHeight + 12 })
+    .backgroundColor(COLOR_CARD)
+    .borderRadius({ topLeft: 20, topRight: 20 })
+  }
+
   /** 保存当前页级进度（单页模式用 swiperIndex，滚动模式用当前可见页） */
   private persistPageIndex(): void {
     let page = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
@@ -424,7 +737,8 @@ struct ReaderPage {
   }
 
   aboutToDisappear(): void {
-    // 退出阅读器：保存页级进度 + 恢复系统亮度与方向
+    // 退出阅读器：注销音量键 + 保存页级进度 + 恢复系统亮度与方向
+    this.unregisterVolumeKeys();
     this.persistPageIndex();
     let context = getContext(this);
     window.getLastWindow(context).then((win: window.Window) => {
@@ -498,6 +812,11 @@ struct ReaderPage {
               })
                 .width('100%')
                 .height('100%')
+                .draggable(true)
+                .onDragStart((event: DragEvent) => {
+                  this.handleImageDragStart(event, index);
+                  return this.dragPreviewInfo(index);
+                })
             }, (img: ReaderImage, index: number) => String(index) + '_' + img.url)
           }
           .vertical(this.readingMode === 2)
@@ -542,6 +861,11 @@ struct ReaderPage {
                     })
                       .width('100%')
                       .backgroundColor(COLOR_CARD)
+                      .draggable(true)
+                      .onDragStart((event: DragEvent) => {
+                        this.handleImageDragStart(event, index);
+                        return this.dragPreviewInfo(index);
+                      })
                   }
                 }
                 .width('100%')
@@ -598,17 +922,29 @@ struct ReaderPage {
             .layoutWeight(1)
             .margin({ left: 8, right: 8 })
 
+          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            .fontSize(24)
+            .fontColor([COLOR_WHITE])
+            .margin({ right: 14 })
+            .onClick(() => {
+              this.sheetKind = 'export';
+              this.showSheet = true;
+            })
           SymbolGlyph($r('sys.symbol.gearshape'))
             .fontSize(24)
             .fontColor([COLOR_WHITE])
             .onClick(() => {
-              this.showSettings = true;
+              this.sheetKind = 'settings';
+              this.showSheet = true;
             })
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: this.topSafeHeight + 8, bottom: 8 })
         .backgroundColor(COLOR_READER_TOOLBAR_BG)
         .backdropBlur(20)
+        .transition(this.animationsOn
+          ? TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+          : TransitionEffect.IDENTITY)
 
         // ── 悬浮底部工具栏（position+offset 悬浮，无 markAnchor） ──
         Row() {
@@ -646,21 +982,47 @@ struct ReaderPage {
         .backgroundColor(COLOR_READER_TOOLBAR_BG)
         .backdropBlur(20)
         .justifyContent(FlexAlign.SpaceBetween)
+        .transition(this.animationsOn
+          ? TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+          : TransitionEffect.IDENTITY)
+      }
+
+      // ── 页码胶囊提示（音量键/手势翻页时浮现） ──
+      if (this.pageTipVisible) {
+        Text(this.pageTipText)
+          .fontSize(13)
+          .fontColor(Color.White)
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .backgroundColor('#66000000')
+          .borderRadius(18)
+          .position({ x: '50%', y: '50%' })
+          .markAnchor({ x: '50%', y: '50%' })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 180 }))
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_READER_BG)
-    .bindSheet($$this.showSettings, this.readerSettingsSheet(), {
+    .bindSheet($$this.showSheet, this.unifiedSheet(), {
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
-      showClose: true,
+      showClose: false,
       dragBar: false,
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
       onWillDismiss: (): void => {
-        this.showSettings = false;
+        this.showSheet = false;
       }
     })
+  }
+
+  /** 底部弹窗统一分发（单 bindSheet 避免多实例互相顶掉） */
+  @Builder
+  unifiedSheet() {
+    if (this.sheetKind === 'settings') {
+      this.readerSettingsSheet()
+    } else if (this.sheetKind === 'export') {
+      this.exportSheet()
+    }
   }
 
   /** 阅读设置弹窗（系统 bindSheet 样式） */
@@ -697,6 +1059,27 @@ struct ReaderPage {
           this.OrientationRow('system', '跟随系统')
           this.OrientationRow('portrait', '锁定竖屏')
           this.OrientationRow('landscape', '锁定横屏')
+
+          Text('音量键翻页')
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_TEXT_TITLE)
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
+          Row() {
+            Text('音量上=下一页，音量下=上一页')
+              .fontSize(13)
+              .fontColor(COLOR_TEXT_SECONDARY)
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.volumeTurnEnabled })
+              .selectedColor(COLOR_PRIMARY)
+              .onChange((checked: boolean) => {
+                this.toggleVolumeTurn(checked);
+              })
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: 20, right: 20 })
 
           Text('亮度')
             .fontSize(15)

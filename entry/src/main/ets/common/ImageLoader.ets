@@ -1,24 +1,162 @@
 import { image } from '@kit.ImageKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
 import { BikaHttpClient } from '../network/BikaHttpClient';
+
+/** 磁盘缓存条目 */
+interface DiskEntry {
+  path: string;
+  mtime: number;
+  size: number;
+}
 
 /**
  * 图片加载器：
  * 1. 用自己的网络栈下载图片字节（UA okhttp/3.8.1，go2778 镜像域名直连），
  *    不再依赖 ArkUI Image 组件的系统网络栈（其 TLS/DNS 行为不可控，导致读图失败）；
  * 2. 字节解码为 PixelMap 供 Image 组件显示；
- * 3. 内存 LRU 缓存 + 单飞去重；
- * 4. 多候选 URL 顺序尝试（镜像回退语义）。
+ * 3. 三级缓存：内存 LRU（160 张）→ 磁盘文件缓存（200MB LRU）→ 网络；
+ * 4. 单飞去重 + 多候选 URL 顺序尝试（镜像回退语义）。
  */
 export class ImageLoader {
   private static readonly MAX_CACHE: number = 160;
+  /** 磁盘缓存上限（字节） */
+  private static readonly MAX_DISK_BYTES: number = 200 * 1024 * 1024;
   private static cache: Map<string, PixelMap> = new Map();
   private static order: string[] = [];
   private static pending: Map<string, Promise<PixelMap>> = new Map();
   /** DNS 优化选中的图片直连 IP（空 = 默认系统解析） */
   private static customImageIps: string[] = [];
+  /** 磁盘缓存目录 */
+  private static diskDir: string = '';
+  private static diskReady: boolean = false;
 
   static setCustomImageIps(ips: string[]): void {
     ImageLoader.customImageIps = ips.slice(0);
+  }
+
+  /** 初始化磁盘缓存目录（EntryAbility 注入应用上下文） */
+  static initDiskCache(ctx: common.UIAbilityContext): void {
+    try {
+      let dir = ctx.cacheDir + '/imgcache';
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir);
+      }
+      ImageLoader.diskDir = dir;
+      ImageLoader.diskReady = true;
+      ImageLoader.evictDiskIfNeeded();
+    } catch (err) {
+      console.warn('[ImageLoader] initDiskCache failed: ' + JSON.stringify(err));
+    }
+  }
+
+  private static hashOf(url: string): string {
+    let h = 5381;
+    for (let i = 0; i < url.length; i++) {
+      h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+    }
+    return h.toString(16);
+  }
+
+  private static diskPath(url: string): string {
+    return ImageLoader.diskDir + '/' + ImageLoader.hashOf(url);
+  }
+
+  /** 图片是否已有磁盘缓存文件（拖拽分享用） */
+  static diskFilePath(url: string): string {
+    if (!ImageLoader.diskReady || url.length === 0) {
+      return '';
+    }
+    let path = ImageLoader.diskPath(url);
+    try {
+      return fs.accessSync(path) ? path : '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /** 从磁盘缓存读字节（未命中返回 null） */
+  private static readDisk(url: string): ArrayBuffer | null {
+    if (!ImageLoader.diskReady) {
+      return null;
+    }
+    let path = ImageLoader.diskPath(url);
+    try {
+      if (!fs.accessSync(path)) {
+        return null;
+      }
+      let stat = fs.statSync(path);
+      let buf = new ArrayBuffer(stat.size);
+      let file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      fs.readSync(file.fd, buf);
+      fs.closeSync(file.fd);
+      return buf;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** 写磁盘缓存（后台尽力而为，不阻塞显示） */
+  private static writeDisk(url: string, bytes: ArrayBuffer): void {
+    if (!ImageLoader.diskReady) {
+      return;
+    }
+    let path = ImageLoader.diskPath(url);
+    try {
+      if (!fs.accessSync(path)) {
+        let file = fs.openSync(path, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE);
+        fs.writeSync(file.fd, bytes);
+        fs.closeSync(file.fd);
+        ImageLoader.evictDiskIfNeeded();
+      }
+    } catch (err) {
+      // 磁盘缓存失败不影响显示
+    }
+  }
+
+  /** 超出上限时按修改时间淘汰最旧文件 */
+  private static evictDiskIfNeeded(): void {
+    if (!ImageLoader.diskReady) {
+      return;
+    }
+    try {
+      let files = fs.listFileSync(ImageLoader.diskDir);
+      let entries: DiskEntry[] = [];
+      let total = 0;
+      for (let name of files) {
+        let path = ImageLoader.diskDir + '/' + name;
+        let stat = fs.statSync(path);
+        entries.push({ path: path, mtime: stat.mtime, size: stat.size });
+        total += stat.size;
+      }
+      entries.sort((a, b) => a.mtime - b.mtime);
+      for (let e of entries) {
+        if (total <= ImageLoader.MAX_DISK_BYTES) {
+          break;
+        }
+        fs.unlinkSync(e.path);
+        total -= e.size;
+      }
+    } catch (err) {
+      // 忽略淘汰失败
+    }
+  }
+
+  /** 磁盘缓存占用字节数 */
+  static diskCacheBytes(): number {
+    if (!ImageLoader.diskReady) {
+      return 0;
+    }
+    try {
+      let files = fs.listFileSync(ImageLoader.diskDir);
+      let total = 0;
+      for (let name of files) {
+        total += fs.statSync(ImageLoader.diskDir + '/' + name).size;
+      }
+      return total;
+    } catch (err) {
+      return 0;
+    }
   }
 
   static getCustomImageIps(): string[] {
@@ -74,6 +212,18 @@ export class ImageLoader {
       if (cached !== undefined) {
         ImageLoader.touch(url);
         return cached;
+      }
+      // 磁盘缓存命中：直接解码
+      let diskBytes = ImageLoader.readDisk(url);
+      if (diskBytes !== null) {
+        try {
+          let source = image.createImageSource(diskBytes);
+          let pm = await source.createPixelMap();
+          ImageLoader.put(url, pm);
+          return pm;
+        } catch (err) {
+          console.warn('[ImageLoader] 磁盘缓存解码失败 ' + url);
+        }
       }
       let pending = ImageLoader.pending.get(url);
       if (pending !== undefined) {
@@ -136,6 +286,8 @@ export class ImageLoader {
           headers['Host'] = host;
         }
         let bytes = await BikaHttpClient.downloadBinary(candidate, headers, isIpDirect ? host : '');
+        // 成功字节先落盘（失败不影响显示）
+        ImageLoader.writeDisk(url, bytes);
         let source = image.createImageSource(bytes);
         return await source.createPixelMap();
       } catch (err) {
@@ -169,9 +321,19 @@ export class ImageLoader {
     return ImageLoader.cache.size;
   }
 
-  /** 清空内存图片缓存 */
+  /** 清空内存 + 磁盘图片缓存 */
   static clearCache(): void {
     ImageLoader.cache.clear();
     ImageLoader.order = [];
+    if (ImageLoader.diskReady) {
+      try {
+        let files = fs.listFileSync(ImageLoader.diskDir);
+        for (let name of files) {
+          fs.unlinkSync(ImageLoader.diskDir + '/' + name);
+        }
+      } catch (err) {
+        console.warn('[ImageLoader] clearDisk failed');
+      }
+    }
   }
 }

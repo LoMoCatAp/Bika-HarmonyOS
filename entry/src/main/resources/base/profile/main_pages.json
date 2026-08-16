@@ -2,9 +2,11 @@
   "src": [
     "pages/IndexPage",
     "pages/LoginPage",
+    "pages/RegisterPage",
     "pages/ComicDetailPage",
     "pages/ReaderPage",
     "pages/ChannelListPage",
-    "pages/SearchPage"
+    "pages/SearchPage",
+    "pages/SearchResultPage"
   ]
 }

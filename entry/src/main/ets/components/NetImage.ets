@@ -22,14 +22,28 @@ export struct NetImage {
   @State failed: boolean = false;
   @State errorText: string = '';
   @State loading: boolean = false;
+  /** 占位呼吸动画 */
+  @State pulse: number = 0.5;
   private retryCount: number = 0;
   private timer: number = -1;
 
   aboutToAppear(): void {
+    let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
+    if (animOn) {
+      animateTo({
+        duration: 900,
+        curve: Curve.EaseInOut,
+        iterations: -1,
+        playMode: PlayMode.Alternate
+      }, () => {
+        this.pulse = 0.9;
+      });
+    }
     this.load();
   }
 
   aboutToDisappear(): void {
+    this.pulse = 0.5;
     if (this.timer >= 0) {
       clearTimeout(this.timer);
       this.timer = -1;
@@ -91,6 +105,7 @@ export struct NetImage {
         Image(this.src)
           .width('100%')
           .height(this.fillParent ? '100%' : undefined)
+          .draggable(false)
           .objectFit(this.fit)
           .borderRadius(this.topRadius > 0
             ? { topLeft: this.topRadius, topRight: this.topRadius, bottomLeft: this.radius, bottomRight: this.radius }
@@ -99,6 +114,7 @@ export struct NetImage {
         Image(this.pixelMap)
           .width('100%')
           .height(this.fillParent ? '100%' : undefined)
+          .draggable(false)
           .objectFit(this.fit)
           .borderRadius(this.topRadius > 0
             ? { topLeft: this.topRadius, topRight: this.topRadius, bottomLeft: this.radius, bottomRight: this.radius }
@@ -134,6 +150,7 @@ export struct NetImage {
           .width('100%')
           .height(this.fillParent ? '100%' : 180)
           .backgroundColor(this.placeholderColor)
+          .opacity(this.pulse)
           .borderRadius(this.topRadius > 0
             ? { topLeft: this.topRadius, topRight: this.topRadius, bottomLeft: this.radius, bottomRight: this.radius }
             : this.radius)

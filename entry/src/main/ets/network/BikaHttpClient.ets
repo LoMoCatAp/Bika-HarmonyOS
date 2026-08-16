@@ -75,6 +75,18 @@ export class BikaHttpClient {
     return BikaHttpClient.requestWithRetry(url, http.RequestMethod.POST, body, headers, retries, sniHost, protocol);
   }
 
+  /** PUT 请求（改密码/更新资料等） */
+  static async put(
+    url: string,
+    body: string,
+    headers: Record<string, string>,
+    retries: number = DEFAULT_RETRY_TIMES,
+    sniHost: string = '',
+    protocol: http.HttpProtocol = http.HttpProtocol.HTTP2
+  ): Promise<BikaHttpResponse> {
+    return BikaHttpClient.requestWithRetry(url, http.RequestMethod.PUT, body, headers, retries, sniHost, protocol);
+  }
+
   /**
    * 带重试的请求（仅网络层错误重试；服务端 4xx/5xx 直接返回由上层处理）
    */
