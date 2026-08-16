@@ -29,7 +29,7 @@ export class BikaSigner {
 
   /**
    * 生成 nonce（32 位小写十六进制）。
-   * 对齐 haka_comic：固定值即可（服务端不查重），避免真机随机源异常引入差异。
+   * 固定值即可（服务端不查重），避免真机随机源异常引入差异。
    */
   static generateNonce(): string {
     return BIKA_FIXED_NONCE;

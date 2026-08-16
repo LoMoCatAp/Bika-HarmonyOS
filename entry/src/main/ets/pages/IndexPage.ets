@@ -161,9 +161,9 @@ struct HomePage {
           .onClick(() => router.pushUrl({ url: 'pages/LoginPage' }))
         }
       }
-      .position({ x: 0, y: 0 })
+      .position({ x: 0, y: this.topSafeHeight })
       .width('100%')
-      .padding({ left: 20, right: 20, top: this.topSafeHeight + 10, bottom: 10 })
+      .padding({ left: 20, right: 20, top: 6, bottom: 6 })
       .backgroundColor(COLOR_GLASS_TOP)
       .backdropBlur(20)
       .zIndex(10)
@@ -469,6 +469,16 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.0.6',
+    date: '2026-08-16',
+    items: [
+      '设置页统一规格重建：分区标题、图标、行高与字号全部一致',
+      '显示模式改为统一下拉框，沉浸光感/常规/下载卡片规范化',
+      '底部导航下移、顶部遮罩收窄、退出登录位置上移',
+      '修复设置内嵌套子页返回后导航栏提前出现的问题'
+    ]
+  },
+  {
     version: '1.0.5',
     date: '2026-08-16',
     items: [
@@ -483,7 +493,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     date: '2026-08-16',
     items: [
       '修复所有滚动页面内容垂直居中问题（内容改为从顶部排布）',
-      '首页/我的/收藏/搜索/频道/详情等页面的 Scroll 统一顶部对齐'
+      '首页/我的/收藏/搜索/频道/详情等页面内容统一从顶部排布'
     ]
   },
   {
@@ -549,6 +559,13 @@ const MATERIAL_OPTIONS: MaterialOption[] = [
   { value: 'GENTLE', label: '均衡（默认）' },
   { value: 'SMOOTH', label: '弱' },
   { value: 'ADAPTIVE', label: '系统自适应' }
+];
+
+/** 显示模式选项 */
+const COLOR_MODE_OPTIONS: MaterialOption[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
 ];
 
 @Component
@@ -858,7 +875,10 @@ struct ProfilePage {
 
   private closeSubpage(): void {
     this.stack.pop();
-    AppStorage.set('bika_subpage_open', false);
+    // 只有完全退出子页面栈才恢复底部导航（设置→存储→返回时仍停留在设置页，导航保持隐藏）
+    if (this.stack.size() === 0) {
+      AppStorage.set('bika_subpage_open', false);
+    }
   }
 
   // ── 子页面数据加载 ──
@@ -951,6 +971,32 @@ struct ProfilePage {
       return;
     }
     this.materialLevel = option.value;
+  }
+
+  private selectColorModeOption(index: number): void {
+    const option: MaterialOption | undefined = COLOR_MODE_OPTIONS[index];
+    if (option === undefined) {
+      return;
+    }
+    this.setColorMode(option.value);
+  }
+
+  /** 设置页统一下拉框 */
+  @Builder
+  settingSelect(options: MaterialOption[], currentValue: string, onSelect: (index: number) => void) {
+    Select(this.selectOptions(options))
+      .selected(this.optionIndex(options, currentValue))
+      .value(this.labels(options)[this.optionIndex(options, currentValue)])
+      .font({ size: 15 })
+      .fontColor(COLOR_PRIMARY)
+      .selectedOptionFont({ size: 15, weight: FontWeight.Medium })
+      .selectedOptionFontColor(COLOR_PRIMARY)
+      .optionFont({ size: 15 })
+      .optionFontColor(COLOR_TEXT_TITLE)
+      .optionBgColor(COLOR_CARD)
+      .onSelect((index: number): void => {
+        onSelect(index);
+      })
   }
 
   // ── 用户卡 ──
@@ -1141,7 +1187,7 @@ struct ProfilePage {
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .margin({ left: 16, right: 16, bottom: 12 })
+          .margin({ left: 16, right: 16, bottom: 62 })
           .onClick(() => this.onLogout())
         }
       }
@@ -1543,74 +1589,92 @@ struct ProfilePage {
       Column() {
         this.subpageHeader('设置')
         Scroll() {
-        Column({ space: 12 }) {
-          Column() {
-            Text('外观')
-              .fontSize(13)
-              .fontColor(COLOR_TEXT_HINT)
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 12, bottom: 6 })
-            this.colorModeRow('system', '跟随系统')
-            this.colorModeRow('light', '浅色')
-            this.colorModeRow('dark', '深色')
+        Column({ space: 14 }) {
+          Text('外观')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+          Column({ space: 0 }) {
+            Row({ space: 12 }) {
+              SymbolGlyph($r('sys.symbol.circle_grid_2x2'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('显示模式')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('跟随系统 / 浅色 / 深色')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              this.settingSelect(COLOR_MODE_OPTIONS, this.colorMode, (index: number): void => {
+                this.selectColorModeOption(index);
+              })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .padding({ bottom: 8 })
 
           Text('沉浸光感')
             .fontSize(14)
             .fontColor(COLOR_TEXT_SECONDARY)
             .width('100%')
-            .margin({ top: 2 })
-          Row({ space: 12 }) {
-            SymbolGlyph($r('sys.symbol.paintbrush'))
-              .fontSize(20)
-              .fontColor([this.accentColor])
-            Text('档位')
-              .fontSize(17)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(COLOR_TEXT_TITLE)
+            .margin({ top: 4 })
+          Column({ space: 0 }) {
+            Row({ space: 12 }) {
+              SymbolGlyph($r('sys.symbol.paintbrush'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('档位')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('导航栏与卡片的材质强度')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
-            Select(this.selectOptions(MATERIAL_OPTIONS))
-              .selected(this.optionIndex(MATERIAL_OPTIONS, this.materialLevel))
-              .value(this.labels(MATERIAL_OPTIONS)[this.optionIndex(MATERIAL_OPTIONS, this.materialLevel)])
-              .font({ size: 15 })
-              .fontColor(COLOR_PRIMARY)
-              .selectedOptionFont({ size: 15, weight: FontWeight.Medium })
-              .selectedOptionFontColor(COLOR_PRIMARY)
-              .optionFont({ size: 15 })
-              .optionFontColor(COLOR_TEXT_TITLE)
-              .optionBgColor(COLOR_CARD)
-              .onSelect((index: number): void => {
+              this.settingSelect(MATERIAL_OPTIONS, this.materialLevel, (index: number): void => {
                 this.selectMaterial(index);
               })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
           }
           .width('100%')
-          .padding(16)
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
 
-          Column() {
-            Text('常规')
-              .fontSize(13)
-              .fontColor(COLOR_TEXT_HINT)
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+          Text('常规')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+            .margin({ top: 4 })
+          Column({ space: 0 }) {
             Row() {
               SymbolGlyph($r('sys.symbol.calendar'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
+                .fontColor([this.accentColor])
               Column({ space: 3 }) {
                 Text('自动签到')
-                  .fontSize(15)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
                 Text('每天首次打开自动打卡')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
               .alignItems(HorizontalAlign.Start)
               .margin({ left: 12 })
@@ -1629,17 +1693,20 @@ struct ProfilePage {
             .height(58)
             .padding({ left: 16, right: 16 })
 
+            Divider().margin({ left: 16, right: 16 })
+
             Row() {
               SymbolGlyph($r('sys.symbol.eye_slash'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
+                .fontColor([this.accentColor])
               Column({ space: 3 }) {
                 Text('防截屏')
-                  .fontSize(15)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
                 Text('截屏与录屏时隐藏内容')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
               .alignItems(HorizontalAlign.Start)
               .margin({ left: 12 })
@@ -1656,17 +1723,20 @@ struct ProfilePage {
             .height(58)
             .padding({ left: 16, right: 16 })
 
+            Divider().margin({ left: 16, right: 16 })
+
             Row() {
               SymbolGlyph($r('sys.symbol.trash'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
+                .fontColor([this.accentColor])
               Column({ space: 3 }) {
                 Text('清理图片缓存')
-                  .fontSize(15)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
                 Text('章节图片列表与列表页缓存')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
               .alignItems(HorizontalAlign.Start)
               .margin({ left: 12 })
@@ -1680,17 +1750,20 @@ struct ProfilePage {
             .padding({ left: 16, right: 16 })
             .onClick(() => this.confirmClearImageCache())
 
+            Divider().margin({ left: 16, right: 16 })
+
             Row() {
               SymbolGlyph($r('sys.symbol.externaldrive'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
+                .fontColor([this.accentColor])
               Column({ space: 3 }) {
                 Text('存储与空间')
-                  .fontSize(15)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
                 Text('下载、缓存占用与清理')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
               .alignItems(HorizontalAlign.Start)
               .margin({ left: 12 })
@@ -1704,17 +1777,20 @@ struct ProfilePage {
             .padding({ left: 16, right: 16 })
             .onClick(() => this.openSubpage('storage'))
 
+            Divider().margin({ left: 16, right: 16 })
+
             Row() {
               SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
+                .fontColor([this.accentColor])
               Column({ space: 3 }) {
                 Text('DNS 优化')
-                  .fontSize(15)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
                 Text('直连 IP 池管理与刷新')
-                  .fontSize(12)
-                  .fontColor(COLOR_TEXT_HINT)
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
               .alignItems(HorizontalAlign.Start)
               .margin({ left: 12 })
@@ -1732,23 +1808,29 @@ struct ProfilePage {
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .padding({ bottom: 8 })
 
-          Column() {
-            Text('下载')
-              .fontSize(13)
-              .fontColor(COLOR_TEXT_HINT)
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+          Text('下载')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+            .margin({ top: 4 })
+          Column({ space: 0 }) {
             Row() {
               SymbolGlyph($r('sys.symbol.wifi'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
-              Text('仅 WiFi 下载')
-                .fontSize(15)
-                .fontColor(COLOR_TEXT_TITLE)
-                .margin({ left: 12 })
-                .layoutWeight(1)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('仅 WiFi 下载')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('非 WiFi 时任务自动排队')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
               Toggle({ type: ToggleType.Switch, isOn: this.downloadWifiOnly })
                 .selectedColor(COLOR_PRIMARY)
                 .onChange((isOn: boolean) => {
@@ -1760,18 +1842,27 @@ struct ProfilePage {
                 })
             }
             .width('100%')
-            .height(52)
+            .height(58)
             .padding({ left: 16, right: 16 })
+
+            Divider().margin({ left: 16, right: 16 })
 
             Row() {
               SymbolGlyph($r('sys.symbol.arrow_down_circle'))
                 .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
-              Text('最大并发数')
-                .fontSize(15)
-                .fontColor(COLOR_TEXT_TITLE)
-                .margin({ left: 12 })
-                .layoutWeight(1)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('最大并发数')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('同时下载的章节数')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
               ForEach([1, 2, 3, 5], (n: number) => {
                 Text('' + n)
                   .fontSize(13)
@@ -1789,14 +1880,13 @@ struct ProfilePage {
               }, (n: number) => '' + n)
             }
             .width('100%')
-            .height(52)
+            .height(58)
             .padding({ left: 16, right: 16 })
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
           .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .padding({ bottom: 8 })
 
           Column() {
             Row() {
@@ -1820,7 +1910,8 @@ struct ProfilePage {
                 .fontColor(COLOR_TEXT_SECONDARY)
             }
             .width('100%')
-            .padding(16)
+            .height(58)
+            .padding({ left: 16, right: 16 })
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
             .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
@@ -2435,7 +2526,7 @@ struct ProfilePage {
     .padding({ left: 20, right: 20, top: 8, bottom: 20 })
   }
 
-  /** 外观模式单选行 */
+  /** 外观模式单选行（保留给后续扩展使用，当前设置页改用统一下拉框） */
   @Builder
   colorModeRow(mode: string, label: string) {
     Row({ space: 12 }) {
@@ -2556,8 +2647,8 @@ struct IndexPage {
     .barPosition(BarPosition.End)
     .divider({ mode: DividerMode.NONE })
     .barFloatingStyle({
-      // 全屏窗口下抬起至手势条上方，再向下 5vp
-      barBottomMargin: Math.max(0, this.bottomSafeHeight - 1),
+      // 全屏窗口下抬起至手势条上方，再向下 10vp
+      barBottomMargin: Math.max(0, this.bottomSafeHeight - 6),
       adaptToHandedness: true,
       lightColor: '#FF7CA8',
       systemMaterialEffect: {

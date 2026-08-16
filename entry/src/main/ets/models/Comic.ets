@@ -263,7 +263,7 @@ export function buildImageUrl(media: BikaMedia, preferMirror: boolean = false): 
     if (server.endsWith('/')) {
       server = server.substring(0, server.length - 1);
     }
-    // 复刻 haka_comic：go2778 线路下图片域名 picacomic → go2778（官方国内镜像，
+    // go2778 线路下图片域名 picacomic → go2778（官方国内镜像，
     // s3.go2778.com / storage-b.go2778.com 等，绕开旧域名 DNS 污染）
     server = server.replace('picacomic', 'go2778');
   }

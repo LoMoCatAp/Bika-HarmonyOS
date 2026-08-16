@@ -208,7 +208,7 @@ export class ApiService {
   // ═══════════════ 业务接口 ═══════════════
 
   /**
-   * 获取用户资料（对齐 BIKA fetchUserProfile）
+   * 获取用户资料
    * GET users/profile → data.user
    */
   async getUserProfile(): Promise<BikaUserProfile> {
@@ -495,10 +495,10 @@ export class ApiService {
   // ═══════════════ 核心请求 ═══════════════
 
   /**
-   * 发起带签名的 API 请求并解信封 —— 完整复刻 BIKA 网络行为：
+   * 发起带签名的 API 请求并解信封：
    * - 签名头与 BIKA BikaSignatureAuth 逐字段一致（Host 头指回真实域名）
-   * - 一次请求内按 IP 池顺序逐个直连尝试（复刻 okhttp 自定义 DNS 的 route 尝试）
-   * - 连接失败整体重试一次（复刻 okhttp retryOnConnectionFailure）
+   * - 一次请求内按 IP 池顺序逐个直连尝试
+   * - 连接失败整体重试一次
    * - 401 时 TokenAuthenticator 语义：重登一次并重放请求（sign-in 自身不重登）
    * @param path 请求路径（GET 需含查询串）
    * @param method GET | POST | PUT
@@ -511,7 +511,7 @@ export class ApiService {
     body: string | null,
     allowRelogin: boolean
   ): Promise<T> {
-    // 默认直连池立即可用；init 引导后台异步刷新（复刻 BIKA SyncWorker，非阻塞）
+    // 默认直连池立即可用；init 引导后台异步刷新（非阻塞）
     ApiRouteManager.getInstance().ensureInitialized();
 
     // 频控熔断：冷却期内不再发请求，避免反复重试延长服务端封锁

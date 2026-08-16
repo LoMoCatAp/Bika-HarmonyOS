@@ -2,7 +2,7 @@ import { ImageLoader } from '../common/ImageLoader';
 import { IMAGE_HOST_POOL } from '../common/Constants';
 
 /**
- * 网络图片组件 —— 复刻 BIKA RetryableAsyncImage：
+ * 网络图片组件：
  * - 通过 ImageLoader（自有网络栈）加载并缓存 PixelMap；
  * - 临时失败自动退避重试（2s 起倍增、30s 封顶）；
  * - 全部候选失败后显示点击重试占位；

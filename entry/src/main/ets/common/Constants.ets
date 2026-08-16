@@ -5,7 +5,7 @@
 
 // ═══════════════════════ 哔咔 API 常量 ═══════════════════════
 
-/** API 基础地址：哔咔官方国内反代线路（与 haka_comic 同款，国内 DNS 正常解析） */
+/** API 基础地址：哔咔官方国内反代线路（国内 DNS 正常解析） */
 export const BIKA_API_BASE: string = 'https://picaapi.go2778.com';
 
 /** API 主域名（Host 头用） */
@@ -14,7 +14,7 @@ export const BIKA_API_HOST: string = 'picaapi.picacomic.com';
 /** 引导接口主机（BIKA 同款 BOOTSTRAP_HOST，先 HTTPS 再 HTTP 回退） */
 export const BIKA_INIT_HOST: string = '68.183.234.72';
 
-/** 默认直连 IP 池（完整复刻 BIKA DirectDns 的 DEFAULT_DNS_IP：104.21.20.188）。
+/** 默认直连 IP 池（首项 104.21.20.188）。
  *  init 引导在后台异步刷新后追加新地址；默认池本身立即可用，不依赖 init。 */
 export const BIKA_FALLBACK_IPS: string[] = ['104.21.20.188'];
 
@@ -35,13 +35,13 @@ export const SIGN_ENCODING: string = 'hex';
 export const BIKA_ACCEPT: string = 'application/vnd.picacomic.com.v1+json';
 
 /** 伪装的客户端版本信息。
- *  对齐 haka_comic（当前服务端接受的值）：哔咔对旧版本头 2.2.1.2.3.3 的请求
- *  以 1023 话术拒绝（bika 因 okhttp 指纹豁免），必须用新版本号。 */
+ *  当前服务端接受的值：哔咔对旧版本头 2.2.1.2.3.3 的请求
+ *  以 1023 话术拒绝，必须用新版本号。 */
 export const APP_CHANNEL: string = '1'; // 1=电信 2=联通 3=移动
 export const APP_VERSION: string = '2.2.1.3.3.4';
 export const APP_BUILD_VERSION: string = '45';
 
-/** 固定 nonce（对齐 haka_comic，服务端不查重） */
+/** 固定 nonce（服务端不查重） */
 export const BIKA_FIXED_NONCE: string = '4ce7a7aa759b40f794d189a88b84aba8';
 export const APP_PLATFORM: string = 'android';
 export const APP_UUID: string = 'defaultUuid';
@@ -52,7 +52,7 @@ export const DEFAULT_RETRY_TIMES: number = 3;
 
 // ═══════════════════════ 图片服务器 ═══════════════════════
 
-/** 图片镜像服务器池（go2778 官方国内镜像优先，haka_comic 同款规则） */
+/** 图片镜像服务器池（go2778 官方国内镜像优先） */
 export const IMAGE_HOST_POOL: string[] = [
   'https://s3.go2778.com',
   'https://storage-b.go2778.com',

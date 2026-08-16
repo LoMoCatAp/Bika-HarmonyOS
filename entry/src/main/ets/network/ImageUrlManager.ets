@@ -64,7 +64,7 @@ export class ImageUrlManager {
     while (s.endsWith('/')) {
       s = s.substring(0, s.length - 1);
     }
-    // 复刻 haka_comic：go2778 官方国内镜像（picacomic → go2778）
+    // go2778 官方国内镜像（picacomic → go2778）
     s = s.replace('picacomic', 'go2778');
     return s;
   }

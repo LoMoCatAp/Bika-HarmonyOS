@@ -2,12 +2,12 @@ import { image } from '@kit.ImageKit';
 import { BikaHttpClient } from '../network/BikaHttpClient';
 
 /**
- * 图片加载器 —— 严格复刻 BIKA 的 Coil + OkHttp 链路：
- * 1. 用自己的网络栈下载图片字节（UA okhttp/3.8.1 与 BIKA 一致，go2778 镜像域名直连），
+ * 图片加载器：
+ * 1. 用自己的网络栈下载图片字节（UA okhttp/3.8.1，go2778 镜像域名直连），
  *    不再依赖 ArkUI Image 组件的系统网络栈（其 TLS/DNS 行为不可控，导致读图失败）；
  * 2. 字节解码为 PixelMap 供 Image 组件显示；
  * 3. 内存 LRU 缓存 + 单飞去重；
- * 4. 多候选 URL 顺序尝试（BIKA DomainFallbackInterceptor 的镜像回退语义）。
+ * 4. 多候选 URL 顺序尝试（镜像回退语义）。
  */
 export class ImageLoader {
   private static readonly MAX_CACHE: number = 160;

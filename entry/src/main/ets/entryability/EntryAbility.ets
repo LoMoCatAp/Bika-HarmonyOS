@@ -67,7 +67,7 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'BikaTag', `topSafeHeight=${topHeight}, bottomSafeHeight=${bottomHeight}`);
     });
 
-    // 复刻 BIKA startUpSyncWork：启动即后台刷新直连 IP 池（非阻塞，默认池已可用）
+    // 启动即后台刷新直连 IP 池（非阻塞，默认池已可用）
     ApiRouteManager.getInstance().ensureInitialized();
 
     windowStage.loadContent('pages/IndexPage', (err) => {

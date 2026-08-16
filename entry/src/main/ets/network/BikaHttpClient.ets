@@ -14,7 +14,7 @@ export interface BikaHttpResponse {
  * 封装 @ohos.net.http，提供超时与网络错误重试
  */
 export class BikaHttpClient {
-  /** 全局单例 httpRequest：复刻 okhttp 连接池行为。
+  /** 全局单例 httpRequest：连接池复用。
    *  哔咔按「新 TLS 连接速率」限流（1023 too many requests）——
    *  每请求新建连接（原实现 createHttp+destroy）会把握手速率打满；
    *  单例 + HTTP/2 多路复用后所有请求走同一条连接，握手速率趋近于零。 */
@@ -122,7 +122,7 @@ export class BikaHttpClient {
       method: method,
       header: headers,
       expectDataType: http.HttpDataType.STRING,
-      // 对齐 BIKA okhttp 默认超时：connect 10s / read 10s
+      // 默认超时：connect 10s / read 10s
       connectTimeout: 10000,
       readTimeout: 10000,
       usingProtocol: protocol
