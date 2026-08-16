@@ -163,9 +163,9 @@ struct HomePage {
           .onClick(() => router.pushUrl({ url: 'pages/LoginPage' }))
         }
       }
-      .position({ x: 0, y: this.topSafeHeight })
+      .position({ x: 0, y: 0 })
       .width('100%')
-      .padding({ left: 20, right: 20, top: 6, bottom: 6 })
+      .padding({ left: 20, right: 20, top: this.topSafeHeight + 8, bottom: 6 })
       .backgroundColor(COLOR_GLASS_TOP)
       .backdropBlur(20)
       .zIndex(10)
@@ -470,6 +470,14 @@ interface ChangelogEntry {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.0.8',
+    date: '2026-08-16',
+    items: [
+      '首页顶部遮罩恢复整层覆盖（状态栏区域也带玻璃遮罩）',
+      '退出登录改为紧贴菜单卡下方，与上部卡片平齐'
+    ]
+  },
   {
     version: '1.0.7',
     date: '2026-08-16',
@@ -1418,9 +1426,30 @@ struct ProfilePage {
             }
 
             this.menuList()
+
+            // 退出登录：紧跟菜单卡下方，与上部平齐
+            if (this.isLoggedIn) {
+              Row() {
+                SymbolGlyph($r('sys.symbol.rectangle_portrait_on_rectangle_portrait'))
+                  .fontSize(20)
+                  .fontColor([COLOR_TEXT_SECONDARY])
+                Text('退出登录')
+                  .fontSize(15)
+                  .fontColor('#C62828')
+                  .margin({ left: 12 })
+                  .layoutWeight(1)
+              }
+              .width('100%')
+              .height(52)
+              .padding({ left: 16, right: 16 })
+              .backgroundColor(Color.Transparent)
+              .borderRadius(18)
+              .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+              .onClick(() => this.onLogout())
+            }
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 16 })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 40 })
         }
         .width('100%')
         .layoutWeight(1)
@@ -1428,23 +1457,6 @@ struct ProfilePage {
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .backgroundColor(COLOR_BG)
-
-        // 退出登录固定在页面底部
-        if (this.isLoggedIn) {
-          Row() {
-            Text('退出登录')
-              .fontSize(15)
-              .fontColor('#C62828')
-          }
-          .width('100%')
-          .height(48)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(Color.Transparent)
-          .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
-          .margin({ left: 16, right: 16, bottom: this.bottomSafeHeight + 72 })
-          .onClick(() => this.onLogout())
-        }
       }
       .width('100%')
       .height('100%')
