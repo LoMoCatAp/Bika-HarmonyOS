@@ -18,6 +18,9 @@
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.PRIVACY_WINDOW"
       }
     ],
     "abilities": [

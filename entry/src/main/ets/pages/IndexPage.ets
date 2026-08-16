@@ -471,6 +471,14 @@ interface ChangelogEntry {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.0.9',
+    date: '2026-08-16',
+    items: [
+      '防截屏修复：补声明 ohos.permission.PRIVACY_WINDOW 权限（安装即授予）',
+      '阅读器设置面板改为系统 bindSheet 弹窗样式'
+    ]
+  },
+  {
     version: '1.0.8',
     date: '2026-08-16',
     items: [

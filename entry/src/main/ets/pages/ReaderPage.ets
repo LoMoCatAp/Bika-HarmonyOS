@@ -1,4 +1,4 @@
-import { router, promptAction, window } from '@kit.ArkUI';
+import { router, promptAction, window, display } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
@@ -571,103 +571,108 @@ struct ReaderPage {
         .justifyContent(FlexAlign.SpaceBetween)
       }
 
-      // ── 阅读设置面板 ──
-      if (this.showSettings) {
-        Column() {
-          Scroll() {
-            Column({ space: 0 }) {
-            Text('阅读模式')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(COLOR_TEXT_TITLE)
-              .width('100%')
-              .padding({ left: 20, right: 20, top: 16, bottom: 10 })
-            this.ModeRow(0, '单页式（从左到右）')
-            this.ModeRow(1, '单页式（从右到左）')
-            this.ModeRow(2, '单页式（从上到下）')
-            this.ModeRow(3, '条漫（页间有空隙）')
-            this.ModeRow(4, '条漫')
-
-            Text('屏幕方向')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(COLOR_TEXT_TITLE)
-              .width('100%')
-              .padding({ left: 20, right: 20, top: 12, bottom: 10 })
-            this.OrientationRow('system', '跟随系统')
-            this.OrientationRow('portrait', '锁定竖屏')
-            this.OrientationRow('landscape', '锁定横屏')
-
-            Text('亮度')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(COLOR_TEXT_TITLE)
-              .width('100%')
-              .padding({ left: 20, right: 20, top: 12, bottom: 6 })
-            Row({ space: 10 }) {
-              SymbolGlyph($r('sys.symbol.sun_min'))
-                .fontSize(18)
-                .fontColor([COLOR_TEXT_SECONDARY])
-              Slider({
-                value: this.readerBrightness < 0 ? 0.5 : this.readerBrightness,
-                min: 0.1,
-                max: 1.0,
-                step: 0.01,
-                style: SliderStyle.OutSet
-              })
-                .layoutWeight(1)
-                .trackColor(COLOR_PRIMARY_TINT)
-                .selectedColor(COLOR_PRIMARY)
-                .showTips(false)
-                .onChange((value: number, mode: SliderChangeMode) => {
-                  this.readerBrightness = value;
-                  if (mode === SliderChangeMode.End) {
-                    this.applyBrightness();
-                  }
-                })
-              SymbolGlyph($r('sys.symbol.sun_max'))
-                .fontSize(20)
-                .fontColor([COLOR_TEXT_SECONDARY])
-            }
-            .width('100%')
-            .height(40)
-            .padding({ left: 20, right: 20 })
-            Row() {
-              Button('关闭', { type: ButtonType.Normal })
-                .width('100%')
-                .height(44)
-                .fontSize(15)
-                .fontColor(COLOR_PRIMARY)
-                .backgroundColor(COLOR_PRIMARY_TINT)
-                .borderRadius(22)
-                .onClick(() => {
-                  this.showSettings = false;
-                })
-            }
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 12 })
-            }
-            .width('100%')
-            .backgroundColor(COLOR_CARD)
-            .borderRadius({ topLeft: 20, topRight: 20 })
-          }
-          .width('100%')
-          .constraintSize({ maxHeight: '82%' })
-          .align(Alignment.Top)
-          .scrollBar(BarState.Off)
-          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.End)
-        .backgroundColor('#66000000')
-        .onClick(() => {
-          this.showSettings = false;
-        })
-      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_READER_BG)
+    .bindSheet($$this.showSettings, this.readerSettingsSheet(), {
+      detents: [SheetSize.FIT_CONTENT],
+      preferType: SheetType.BOTTOM,
+      showClose: true,
+      dragBar: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      onWillDismiss: (): void => {
+        this.showSettings = false;
+      }
+    })
+  }
+
+  /** 阅读设置弹窗（系统 bindSheet 样式） */
+  @Builder
+  readerSettingsSheet() {
+    Column({ space: 0 }) {
+      Text('')
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(COLOR_TEXT_SECONDARY)
+        .opacity(0.32)
+        .margin({ top: 6, bottom: 4 })
+      Scroll() {
+        Column({ space: 0 }) {
+          Text('阅读模式')
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_TEXT_TITLE)
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
+          this.ModeRow(0, '单页式（从左到右）')
+          this.ModeRow(1, '单页式（从右到左）')
+          this.ModeRow(2, '单页式（从上到下）')
+          this.ModeRow(3, '条漫（页间有空隙）')
+          this.ModeRow(4, '条漫')
+
+          Text('屏幕方向')
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_TEXT_TITLE)
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
+          this.OrientationRow('system', '跟随系统')
+          this.OrientationRow('portrait', '锁定竖屏')
+          this.OrientationRow('landscape', '锁定横屏')
+
+          Text('亮度')
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_TEXT_TITLE)
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 12, bottom: 6 })
+          Row({ space: 10 }) {
+            SymbolGlyph($r('sys.symbol.sun_min'))
+              .fontSize(18)
+              .fontColor([COLOR_TEXT_SECONDARY])
+            Slider({
+              value: this.readerBrightness < 0 ? 0.5 : this.readerBrightness,
+              min: 0.1,
+              max: 1.0,
+              step: 0.01,
+              style: SliderStyle.OutSet
+            })
+              .layoutWeight(1)
+              .trackColor(COLOR_PRIMARY_TINT)
+              .selectedColor(COLOR_PRIMARY)
+              .showTips(false)
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.readerBrightness = value;
+                if (mode === SliderChangeMode.End) {
+                  this.applyBrightness();
+                }
+              })
+            SymbolGlyph($r('sys.symbol.sun_max'))
+              .fontSize(20)
+              .fontColor([COLOR_TEXT_SECONDARY])
+          }
+          .width('100%')
+          .height(40)
+          .padding({ left: 20, right: 20 })
+        }
+        .width('100%')
+        .padding({ bottom: this.bottomSafeHeight + 12 })
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: this.readerSheetMaxHeight() })
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    }
+    .width('100%')
+    .backgroundColor(COLOR_CARD)
+    .borderRadius({ topLeft: 20, topRight: 20 })
+  }
+
+  /** 弹窗最大高度（屏幕 82%） */
+  private readerSheetMaxHeight(): number {
+    return px2vp(display.getDefaultDisplaySync().height) * 0.82;
   }
 }
