@@ -1,21 +1,16 @@
 import { router } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, DividerShowType, hdsMaterial } from '@kit.UIDesignKit';
+import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
 import { ApiService } from '../network/ApiService';
-import { ComicViewModel, BikaComicSummary } from '../models/Comic';
-import { ComicCard } from '../components/ComicCard';
+import { CacheManager } from '../common/CacheManager';
 import {
   COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_BG,
   COLOR_CARD,
   COLOR_DIVIDER,
   COLOR_INPUT_BG,
   COLOR_TEXT_TITLE,
   COLOR_TEXT_HINT,
-  COLOR_TEXT_SECONDARY,
-  COLOR_WHITE,
-  SORT_OPTIONS,
-  SortOption
+  COLOR_WHITE
 } from '../common/Constants';
 
 /**
@@ -26,19 +21,38 @@ import {
 struct SearchPage {
   @State keyword: string = '';
   @State keywords: string[] = [];
-  @State results: ComicViewModel[] = [];
-  @State isLoading: boolean = false;
-  @State errorMsg: string = '';
-  @State hasSearched: boolean = false;
-  @State currentPage: number = 1;
-  @State hasMore: boolean = false;
-  @State currentSort: string = 'dd';
+  @State searchHistory: string[] = [];
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private stack: NavPathStack = new NavPathStack();
 
   aboutToAppear(): void {
     this.loadKeywords();
+    this.loadSearchHistory();
+  }
+
+  private loadSearchHistory(): void {
+    CacheManager.getInstance().then(cache => {
+      this.searchHistory = cache.loadSearchHistory();
+    });
+  }
+
+  private saveSearchKeyword(): void {
+    let kw = this.keyword.trim();
+    if (kw.length === 0) {
+      return;
+    }
+    CacheManager.getInstance().then(cache => {
+      cache.saveSearchHistory(kw);
+      this.searchHistory = cache.loadSearchHistory();
+    });
+  }
+
+  private clearSearchHistory(): void {
+    CacheManager.getInstance().then(cache => {
+      cache.clearSearchHistory();
+      this.searchHistory = [];
+    });
   }
 
   private async loadKeywords(): Promise<void> {
@@ -49,42 +63,29 @@ struct SearchPage {
     }
   }
 
-  private async doSearch(reset: boolean): Promise<void> {
-    if (this.keyword.trim().length === 0) {
+  /** 执行搜索：保存历史并跳转独立的搜索结果页 */
+  private goSearch(kw: string): void {
+    let keyword = kw.trim();
+    if (keyword.length === 0) {
       return;
     }
-    if (this.isLoading) {
-      return;
-    }
-    this.isLoading = true;
-    this.errorMsg = '';
-    if (reset) {
-      this.currentPage = 1;
-    }
-    try {
-      let result = await this.apiService.advancedSearch(this.keyword.trim(), this.currentSort, this.currentPage);
-      let vms = result.comics.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
-      this.results = reset ? vms : this.results.concat(vms);
-      this.hasMore = this.currentPage < result.pages;
-      this.hasSearched = true;
-    } catch (err) {
-      this.errorMsg = (err as Error).message || '搜索失败';
-      console.error('[SearchPage] search failed: ' + this.errorMsg);
-    } finally {
-      this.isLoading = false;
-    }
+    this.keyword = keyword;
+    CacheManager.getInstance().then(cache => {
+      cache.saveSearchHistory(keyword);
+      this.searchHistory = cache.loadSearchHistory();
+    });
+    router.pushUrl({
+      url: 'pages/SearchResultPage',
+      params: { keyword: keyword }
+    });
   }
 
   private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
     return {
-      content: {
-        title: { mainTitle: title },
-        divider: { showType: DividerShowType.OFF }
-      },
+      content: { title: { mainTitle: title } },
       enableComponentSafeArea: true,
       avoidLayoutSafeArea: true,
       style: {
-        scrollEffectOpts: { enableScrollEffect: false },
         originalStyle: {
           backgroundStyle: {
             backgroundColor: $r('app.color.bika_bg')
@@ -95,8 +96,8 @@ struct SearchPage {
           }
         },
         systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.IMMERSIVE,
-          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         }
       }
     };
@@ -116,7 +117,7 @@ struct SearchPage {
             .onChange((value: string) => {
               this.keyword = value;
             })
-            .onSubmit(() => this.doSearch(true))
+            .onSubmit(() => this.goSearch(this.keyword))
           Button('搜索', { type: ButtonType.Normal })
             .fontSize(14)
             .fontColor(COLOR_WHITE)
@@ -124,14 +125,49 @@ struct SearchPage {
             .borderRadius(20)
             .height(40)
             .padding({ left: 18, right: 18 })
-            .onClick(() => this.doSearch(true))
+            .onClick(() => this.goSearch(this.keyword))
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 10, bottom: 10 })
 
-        if (!this.hasSearched) {
-          // 关键词推荐
-          Column() {
+        // 搜索历史
+        if (this.searchHistory.length > 0) {
+            Column() {
+              Row() {
+                Text('最近搜索')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_HINT)
+                  .layoutWeight(1)
+                Text('清空')
+                  .fontSize(13)
+                  .fontColor(COLOR_PRIMARY)
+                  .onClick(() => this.clearSearchHistory())
+              }
+              .width('100%')
+              .margin({ bottom: 10 })
+              Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
+                ForEach(this.searchHistory, (kw: string) => {
+                  Text(kw)
+                    .fontSize(13)
+                    .fontColor(COLOR_TEXT_TITLE)
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .backgroundColor(COLOR_CARD)
+                    .border({ width: 1, color: COLOR_DIVIDER, radius: 15 })
+                    .margin({ right: 8, bottom: 8 })
+                    .onClick(() => {
+                      this.goSearch(kw);
+                    })
+                }, (kw: string) => kw)
+              }
+              .width('100%')
+            }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding({ left: 16, right: 16, top: 8 })
+        }
+
+        // 关键词推荐
+        Column() {
             Text('热门搜索')
               .fontSize(13)
               .fontColor(COLOR_TEXT_HINT)
@@ -147,86 +183,15 @@ struct SearchPage {
                   .border({ width: 1, color: COLOR_DIVIDER, radius: 15 })
                   .margin({ right: 8, bottom: 8 })
                   .onClick(() => {
-                    this.keyword = kw;
-                    this.doSearch(true);
+                    this.goSearch(kw);
                   })
               }, (kw: string) => kw)
             }
             .width('100%')
           }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding({ left: 16, right: 16, top: 8 })
-        } else {
-          // 排序 chips
-          Row() {
-            ForEach(SORT_OPTIONS, (item: SortOption) => {
-              Text(item.label)
-                .fontSize(13)
-                .fontColor(this.currentSort === item.key ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-                .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                .backgroundColor(this.currentSort === item.key ? COLOR_PRIMARY : COLOR_CARD)
-                .borderRadius(15)
-                .margin({ right: 8 })
-                .onClick(() => {
-                  if (this.currentSort !== item.key) {
-                    this.currentSort = item.key;
-                    this.doSearch(true);
-                  }
-                })
-            }, (item: SortOption) => item.key)
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.Start)
-          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-
-          if (this.errorMsg.length > 0) {
-            Text(this.errorMsg)
-              .fontSize(14)
-              .fontColor(COLOR_TEXT_HINT)
-              .textAlign(TextAlign.Center)
-              .width('100%')
-              .margin({ top: 40 })
-          } else if (this.results.length === 0 && !this.isLoading) {
-            Text('没有找到相关漫画')
-              .fontSize(14)
-              .fontColor(COLOR_TEXT_HINT)
-              .textAlign(TextAlign.Center)
-              .width('100%')
-              .margin({ top: 40 })
-          } else {
-            Scroll() {
-              Grid() {
-                ForEach(this.results, (comic: ComicViewModel) => {
-                  GridItem() {
-                    ComicCard({ comic: comic })
-                  }
-                  .onClick(() => {
-                    router.pushUrl({
-                      url: 'pages/ComicDetailPage',
-                      params: { comicId: comic.id, comicTitle: comic.title }
-                    });
-                  })
-                }, (comic: ComicViewModel) => comic.id + '_' + this.currentSort)
-              }
-              .columnsTemplate('1fr 1fr')
-              .columnsGap(10)
-              .rowsGap(12)
-              .padding({ left: 12, right: 12, top: 8, bottom: 24 })
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .align(Alignment.Top)
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-            .onReachEnd(() => {
-              if (this.hasMore && !this.isLoading) {
-                this.currentPage++;
-                this.doSearch(false);
-              }
-            })
-          }
-        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .padding({ left: 16, right: 16, top: 8 })
       }
       .width('100%')
       .height('100%')

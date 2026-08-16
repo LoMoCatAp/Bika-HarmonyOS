@@ -1,4 +1,4 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, bundleManager, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -6,6 +6,8 @@ import { ApiRouteManager } from '../network/ApiRouteManager';
 import { BikaHttpClient } from '../network/BikaHttpClient';
 import { WindowHelper } from '../common/WindowHelper';
 import { CacheManager } from '../common/CacheManager';
+import { ImageLoader } from '../common/ImageLoader';
+import { ApiService } from '../network/ApiService';
 
 const DOMAIN = 0x0000;
 
@@ -20,6 +22,13 @@ export default class EntryAbility extends UIAbility {
     const systemMode: string = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
       ? 'dark' : 'light';
     AppStorage.setOrCreate('system_color_mode', systemMode);
+    // 记录当前版本号（检查更新对比用）
+    try {
+      let info = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      AppStorage.setOrCreate('bika_current_version', info.versionName);
+    } catch (e) {
+      hilog.error(DOMAIN, 'BikaTag', 'Failed to read version. Cause: %{public}s', JSON.stringify(e));
+    }
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onCreate');
   }
 
@@ -61,6 +70,7 @@ export default class EntryAbility extends UIAbility {
 
       // 从持久化恢复全部设置并应用（AppStorage 为内存态）
       // 显式传入 AbilityContext：getContext() 全局函数在非 UI 场景不可用
+      ImageLoader.initDiskCache(this.context as common.UIAbilityContext);
       CacheManager.getInstance(this.context).then(cache => {
         let colorMode = cache.getSetting('color_mode', 'system');
         AppStorage.setOrCreate('bika_color_mode', colorMode);
@@ -75,6 +85,13 @@ export default class EntryAbility extends UIAbility {
         AppStorage.set('bika_dns_api_ips', cache.getSetting('dns_api_ips', '[]'));
         AppStorage.setOrCreate('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
         AppStorage.set('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
+        AppStorage.setOrCreate('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
+        AppStorage.set('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
+        AppStorage.setOrCreate('bika_animations', cache.getSetting('animations', 'true') === 'true');
+        AppStorage.set('bika_animations', cache.getSetting('animations', 'true') === 'true');
+        let proxyOn = cache.getSetting('use_system_proxy', 'false') === 'true';
+        AppStorage.setOrCreate('bika_use_proxy', proxyOn);
+        ApiService.setUseSystemProxy(proxyOn);
 
         // 应用显示模式
         try {

@@ -15,6 +15,24 @@ import {
 export struct ComicCard {
   @Prop comic: ComicViewModel;
   @Prop showTitle: boolean = true;
+  @State pressed: boolean = false;
+
+  /** 按压缩放（受全局动画开关控制） */
+  private setPressed(down: boolean): void {
+    let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
+    if (!animOn) {
+      return;
+    }
+    if (down) {
+      animateTo({ duration: 130, curve: Curve.EaseOut }, () => {
+        this.pressed = true;
+      });
+    } else {
+      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.pressed = false;
+      });
+    }
+  }
 
   build() {
     Column() {
@@ -71,6 +89,14 @@ export struct ComicCard {
       color: '#120F1A33',
       offsetX: 0,
       offsetY: 4
+    })
+    .scale({ x: this.pressed ? 0.96 : 1, y: this.pressed ? 0.96 : 1 })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.setPressed(true);
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.setPressed(false);
+      }
     })
   }
 }

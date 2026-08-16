@@ -155,6 +155,29 @@ export class DownloadManager {
     this.startNext();
   }
 
+  /** 递归删除目录（rmdirSync 只能删空目录，章节目录含图片文件） */
+  private removeDirRecursive(dir: string): void {
+    try {
+      let files = fs.listFileSync(dir);
+      for (let name of files) {
+        let path = dir + '/' + name;
+        try {
+          let stat = fs.statSync(path);
+          if (stat.isDirectory()) {
+            this.removeDirRecursive(path);
+          } else {
+            fs.unlinkSync(path);
+          }
+        } catch (err) {
+          console.warn('[DownloadManager] remove failed: ' + path);
+        }
+      }
+      fs.rmdirSync(dir);
+    } catch (err) {
+      console.warn('[DownloadManager] removeDirRecursive failed: ' + JSON.stringify(err));
+    }
+  }
+
   /** 删除任务与本地文件 */
   deleteTask(comicId: string, order: number): void {
     let idx = this.tasks.findIndex(t => t.comicId === comicId && t.chapterOrder === order);
@@ -165,14 +188,10 @@ export class DownloadManager {
     this.tasks.splice(idx, 1);
     this.persist();
     this.notify();
-    try {
-      fs.rmdirSync(dir);
-    } catch (err) {
-      console.warn('[DownloadManager] rmdir failed: ' + JSON.stringify(err));
-    }
+    this.removeDirRecursive(dir);
   }
 
-  /** 队列泵：按最大并发数派发等待中的任务（bika 同款并发下载） */
+  /** 队列泵：按最大并发数派发等待中的任务 */
   private async startNext(): Promise<void> {
     if (this.dispatching) {
       return;
@@ -228,11 +247,7 @@ export class DownloadManager {
   /** 清空全部下载任务与本地文件 */
   clearAll(): void {
     for (let t of this.tasks) {
-      try {
-        fs.rmdirSync(t.dir);
-      } catch (err) {
-        console.warn('[DownloadManager] rmdir failed: ' + JSON.stringify(err));
-      }
+      this.removeDirRecursive(t.dir);
     }
     this.tasks = [];
     this.persist();

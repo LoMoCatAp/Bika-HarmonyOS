@@ -11,7 +11,7 @@ export const BIKA_API_BASE: string = 'https://picaapi.go2778.com';
 /** API 主域名（Host 头用） */
 export const BIKA_API_HOST: string = 'picaapi.picacomic.com';
 
-/** 引导接口主机（BIKA 同款 BOOTSTRAP_HOST，先 HTTPS 再 HTTP 回退） */
+/** 引导接口主机（先 HTTPS 再 HTTP 回退） */
 export const BIKA_INIT_HOST: string = '68.183.234.72';
 
 /** 默认直连 IP 池（首项 104.21.20.188）。
@@ -28,7 +28,7 @@ export const BIKA_API_KEY: string = 'C69BAF41DA5ABD1FFEDC6D2FEA56B';
 /** HMAC-SHA256 签名密钥 */
 export const BIKA_SECRET_KEY: string = '~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn';
 
-/** 签名输出编码：'hex'（BIKA 上线客户端同款）| 'base64'（社区广泛流传的签名方式） */
+/** 签名输出编码：'hex'| 'base64'（社区广泛流传的签名方式） */
 export const SIGN_ENCODING: string = 'hex';
 
 /** Accept 头（哔咔服务端强校验，不能是普通 application/json） */

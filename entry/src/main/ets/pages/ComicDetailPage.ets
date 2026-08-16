@@ -1,4 +1,6 @@
-import { router, promptAction } from '@kit.ArkUI';
+import { router, promptAction, curves } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { systemShare } from '@kit.ShareKit';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, DividerShowType, hdsMaterial } from '@kit.UIDesignKit';
 import { ApiService } from '../network/ApiService';
 import { ComicDetailViewModel, EpViewModel, ComicViewModel, BikaComicSummary, BikaComment, buildImageUrl } from '../models/Comic';
@@ -47,6 +49,10 @@ struct ComicDetailPage {
   @State chapters: EpViewModel[] = [];
   @State recommendations: ComicViewModel[] = [];
   @State comments: BikaComment[] = [];
+  @State commentPage: number = 1;
+  @State commentHasMore: boolean = false;
+  @State commentSort: string = 'dd';
+  @State commentsLoading: boolean = false;
   @State isLoading: boolean = true;
   @State errorMsg: string = '';
   @State comicTitle: string = '详情';
@@ -54,9 +60,15 @@ struct ComicDetailPage {
   @State isLiked: boolean = false;
   @State favLoading: boolean = false;
   @State currentTab: number = 0;
+  /** 收藏/点赞弹簧 */
+  @State favScale: number = 1;
+  @State likeScale: number = 1;
   /** 下载弹窗与勾选 */
   @State showDownloadSheet: boolean = false;
   @State downloadSelected: number[] = [];
+  /** 单例弹窗类型（download/comment），避免多个 bindSheet 互顶 */
+  @State detailSheetKind: string = '';
+  @State showDetailSheet: boolean = false;
   /** 评论交互 */
   @State showCommentSheet: boolean = false;
   @State commentInput: string = '';
@@ -119,12 +131,41 @@ struct ComicDetailPage {
     }
   }
 
-  async loadComments(): Promise<void> {
+  async loadComments(reset: boolean = true): Promise<void> {
+    if (this.commentsLoading) {
+      return;
+    }
+    this.commentsLoading = true;
     try {
-      this.comments = await this.apiService.getComicComments(this.comicId, 1);
+      if (reset) {
+        this.commentPage = 1;
+      }
+      let result = await this.apiService.getComicComments(this.comicId, this.commentPage);
+      this.comments = reset ? result.docs : this.comments.concat(result.docs);
+      this.commentHasMore = this.commentPage < result.pages;
+      if (reset) {
+        this.commentPage = 1;
+      }
     } catch (err) {
       console.warn('[ComicDetailPage] comments failed: ' + JSON.stringify(err));
+    } finally {
+      this.commentsLoading = false;
     }
+  }
+
+  /** 按排序方式返回评论列表（客户端排序：最新/最早/最多赞） */
+  sortedComments(): BikaComment[] {
+    let list = this.comments.slice(0);
+    if (this.commentSort === 'da') {
+      list.sort((a: BikaComment, b: BikaComment) =>
+        (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+    } else if (this.commentSort === 'ld') {
+      list.sort((a: BikaComment, b: BikaComment) => (b.likesCount ?? 0) - (a.likesCount ?? 0));
+    } else {
+      list.sort((a: BikaComment, b: BikaComment) =>
+        (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+    }
+    return list;
   }
 
   // ── 评论交互 ──
@@ -233,6 +274,8 @@ struct ComicDetailPage {
     this.replyTarget = replyTarget;
     this.commentInput = '';
     this.showCommentSheet = true;
+    this.detailSheetKind = 'comment';
+    this.showDetailSheet = true;
   }
 
   /** 发送评论/回复 */
@@ -285,6 +328,7 @@ struct ComicDetailPage {
         await this.loadComments();
       }
       this.showCommentSheet = false;
+      this.showDetailSheet = false;
     } catch (err) {
       promptAction.showToast({ message: (err as Error).message || '发送失败', duration: 2000 });
     } finally {
@@ -331,6 +375,31 @@ struct ComicDetailPage {
     });
   }
 
+  /** 收藏/点赞弹簧（动画开关关闭时直接复位） */
+  private springPop(which: number): void {
+    let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
+    if (!animOn) {
+      if (which === 0) {
+        this.favScale = 1;
+      } else {
+        this.likeScale = 1;
+      }
+      return;
+    }
+    if (which === 0) {
+      this.favScale = 1.35;
+    } else {
+      this.likeScale = 1.35;
+    }
+    animateTo({ curve: curves.springMotion(0.6, 0.9), duration: 600 }, () => {
+      if (which === 0) {
+        this.favScale = 1;
+      } else {
+        this.likeScale = 1;
+      }
+    });
+  }
+
   async onToggleFavourite(): Promise<void> {
     if (this.favLoading) {
       return;
@@ -339,6 +408,7 @@ struct ComicDetailPage {
     try {
       await this.apiService.toggleFavourite(this.comicId, this.isFavourited);
       this.isFavourited = !this.isFavourited;
+      this.springPop(0);
       promptAction.showToast({
         message: this.isFavourited ? '已收藏' : '已取消收藏',
         duration: 2000
@@ -358,6 +428,7 @@ struct ComicDetailPage {
     try {
       await this.apiService.toggleLike(this.comicId);
       this.isLiked = !this.isLiked;
+      this.springPop(1);
       promptAction.showToast({ message: this.isLiked ? '已点赞' : '已取消点赞', duration: 2000 });
     } catch (err) {
       promptAction.showToast({ message: (err as Error).message || '操作失败', duration: 2000 });
@@ -367,6 +438,30 @@ struct ComicDetailPage {
   }
 
   /** HDS 系统沉浸光感标题栏（官方材质） */
+  /** 分享漫画：ShareKit systemShare 系统分享面板 */
+  private async shareComic(): Promise<void> {
+    let author = this.comic !== null && this.comic.author.length > 0 ? this.comic.author : '佚名';
+    let text = '【Bika】《' + this.comicTitle + '》（ID：' + this.comicId + '）作者：' + author +
+      ' https://www.picacomic.com';
+    let record: systemShare.SharedRecord = {
+      utd: 'general.text',
+      content: text,
+      title: '分享漫画《' + this.comicTitle + '》',
+      label: 'TEXT',
+      description: '哔咔漫画分享'
+    };
+    try {
+      let sharedData = new systemShare.SharedData(record);
+      let controller = new systemShare.ShareController(sharedData);
+      await controller.show(getContext(this) as common.UIAbilityContext, {
+        previewMode: systemShare.SharePreviewMode.DEFAULT
+      });
+    } catch (err) {
+      console.warn('[ComicDetailPage] share panel failed: ' + JSON.stringify(err));
+      promptAction.showToast({ message: '无法拉起分享面板', duration: 1600 });
+    }
+  }
+
   private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
     return {
       content: {
@@ -463,6 +558,7 @@ struct ComicDetailPage {
             .border({ width: 1, color: this.isFavourited ? COLOR_DIVIDER : COLOR_PRIMARY, radius: 22 })
             .layoutWeight(1)
             .height(44)
+            .scale({ x: this.favScale, y: this.favScale })
             .enabled(!this.favLoading)
             .onClick(() => this.onToggleFavourite())
 
@@ -475,8 +571,20 @@ struct ComicDetailPage {
             .border({ width: 1, color: this.isLiked ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 22 })
             .layoutWeight(1)
             .height(44)
+            .scale({ x: this.likeScale, y: this.likeScale })
             .enabled(!this.favLoading)
             .onClick(() => this.onToggleLike())
+
+            Button({ type: ButtonType.Normal }) {
+              SymbolGlyph($r('sys.symbol.share'))
+                .fontSize(18)
+                .fontColor([COLOR_TEXT_SECONDARY])
+            }
+            .backgroundColor(COLOR_CARD)
+            .border({ width: 1, color: COLOR_DIVIDER, radius: 22 })
+            .width(44)
+            .height(44)
+            .onClick(() => this.shareComic())
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 16 })
@@ -614,6 +722,8 @@ struct ComicDetailPage {
   private openDownloadSheet(): void {
     this.downloadSelected = [];
     this.showDownloadSheet = true;
+    this.detailSheetKind = 'download';
+    this.showDetailSheet = true;
   }
 
   /** 弹窗内勾选切换 */
@@ -657,6 +767,7 @@ struct ComicDetailPage {
       }
     }
     this.showDownloadSheet = false;
+    this.showDetailSheet = false;
     promptAction.showToast({ message: count > 0 ? '已加入 ' + count + ' 话到下载队列' : '所选章节已在队列中', duration: 2000 });
   }
 
@@ -746,6 +857,51 @@ struct ComicDetailPage {
   @Builder
   commentTab() {
     Column() {
+      // 排序 chips（最新/最早/最多赞）
+      Row({ space: 8 }) {
+        Text('最新')
+          .fontSize(12)
+          .fontColor(this.commentSort === 'dd' ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+          .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+          .backgroundColor(this.commentSort === 'dd' ? COLOR_PRIMARY : COLOR_CARD)
+          .borderRadius(13)
+          .onClick(() => {
+            if (this.commentSort !== 'dd') {
+              this.commentSort = 'dd';
+            }
+          })
+        Text('最早')
+          .fontSize(12)
+          .fontColor(this.commentSort === 'da' ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+          .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+          .backgroundColor(this.commentSort === 'da' ? COLOR_PRIMARY : COLOR_CARD)
+          .borderRadius(13)
+          .onClick(() => {
+            if (this.commentSort !== 'da') {
+              this.commentSort = 'da';
+            }
+          })
+        Text('最多赞')
+          .fontSize(12)
+          .fontColor(this.commentSort === 'ld' ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+          .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+          .backgroundColor(this.commentSort === 'ld' ? COLOR_PRIMARY : COLOR_CARD)
+          .borderRadius(13)
+          .onClick(() => {
+            if (this.commentSort !== 'ld') {
+              this.commentSort = 'ld';
+            }
+          })
+        Blank()
+        if (this.commentHasMore) {
+          Text('上拉加载更多')
+            .fontSize(11)
+            .fontColor(COLOR_TEXT_HINT)
+        }
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
       List({ scroller: this.commentScroller, space: 0 }) {
         if (this.comments.length === 0) {
           ListItem() {
@@ -762,16 +918,32 @@ struct ComicDetailPage {
             .justifyContent(FlexAlign.Center)
           }
         }
-        ForEach(this.comments, (comment: BikaComment, index: number) => {
+        ForEach(this.sortedComments(), (comment: BikaComment, index: number) => {
           ListItem() {
             this.commentItem(comment)
           }
-          if (index < this.comments.length - 1) {
+          if (index < this.sortedComments().length - 1) {
             ListItem() {
               Divider().height(1).color(COLOR_DIVIDER).margin({ left: 64 })
             }
           }
         }, (comment: BikaComment) => comment._id)
+        if (this.commentHasMore && !this.commentsLoading) {
+          ListItem() {
+            Row({ space: 6 }) {
+              LoadingProgress()
+                .width(14)
+                .height(14)
+                .color(COLOR_PRIMARY)
+              Text('加载中…')
+                .fontSize(12)
+                .fontColor(COLOR_TEXT_HINT)
+            }
+            .width('100%')
+            .padding({ top: 12, bottom: 12 })
+            .justifyContent(FlexAlign.Center)
+          }
+        }
       }
       .layoutWeight(1)
       .width('100%')
@@ -779,8 +951,14 @@ struct ComicDetailPage {
       .borderRadius(18)
       .border({ width: 1, color: COLOR_DIVIDER })
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .onReachEnd(() => {
+        if (this.commentHasMore && !this.commentsLoading) {
+          this.commentPage++;
+          this.loadComments(false);
+        }
+      })
 
-      // 底部输入栏（bika 同款假输入框 → 弹层输入）
+      // 底部输入栏（假输入框 → 弹层输入）
       Row({ space: 10 }) {
         Text('写下你的评论…')
           .fontSize(14)
@@ -986,30 +1164,31 @@ struct ComicDetailPage {
     .titleBar(this.immersiveTitleBar(this.comicTitle))
     .hideTitleBar(false)
     .hideBackButton(false)
-    .bindSheet($$this.showDownloadSheet, this.downloadSheet(), {
+    .bindSheet($$this.showDetailSheet, this.detailUnifiedSheet(), {
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
       showClose: false,
       dragBar: false,
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      title: { title: this.detailSheetKind === 'comment'
+        ? (this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论')
+        : '下载章节' },
       onWillDismiss: (): void => {
-        this.showDownloadSheet = false;
-      }
-    })
-    .bindSheet($$this.showCommentSheet, this.commentSheet(), {
-      detents: [SheetSize.FIT_CONTENT],
-      preferType: SheetType.BOTTOM,
-      showClose: true,
-      dragBar: false,
-      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
-      // 系统原生标题：关闭按钮自动避让，不与内容重叠
-      title: { title: this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论' },
-      onWillDismiss: (): void => {
-        this.showCommentSheet = false;
+        this.showDetailSheet = false;
       }
     })
     .width('100%')
     .height('100%')
+  }
+
+  /** 详情页弹窗统一分发（单 bindSheet 避免多实例互顶） */
+  @Builder
+  detailUnifiedSheet() {
+    if (this.detailSheetKind === 'download') {
+      this.downloadSheet()
+    } else if (this.detailSheetKind === 'comment') {
+      this.commentSheet()
+    }
   }
 
   /** 评论输入弹窗（发表评论 / 回复某人） */
@@ -1045,7 +1224,7 @@ struct ComicDetailPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /** 下载选择弹窗（bika 同款：全选/清除 + 3 列等宽章节网格 + 开始下载） */
+  /** 下载选择弹窗（全选/清除 + 3 列等宽章节网格 + 开始下载） */
   @Builder
   downloadSheet() {
     Column({ space: 14 }) {

@@ -139,6 +139,29 @@ export interface BikaUserProfile {
   avatar?: BikaMedia;
 }
 
+/** 漫画是否命中屏蔽标签（标签列表从 AppStorage 读取，实时生效） */
+export function isBlockedComic(tags: string[] | undefined): boolean {
+  if (!tags || tags.length === 0) {
+    return false;
+  }
+  let raw = AppStorage.get<string>('bika_blocked_tags') ?? '[]';
+  let blocked: string[] = [];
+  try {
+    blocked = JSON.parse(raw) as string[];
+  } catch {
+    blocked = [];
+  }
+  if (blocked.length === 0) {
+    return false;
+  }
+  for (let t of tags) {
+    if (blocked.indexOf(t) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ═══════════════════════ 视图模型 ═══════════════════════
 
 /**

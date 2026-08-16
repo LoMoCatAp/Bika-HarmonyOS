@@ -75,6 +75,66 @@ export class BikaHttpClient {
     return BikaHttpClient.requestWithRetry(url, http.RequestMethod.POST, body, headers, retries, sniHost, protocol);
   }
 
+  /** 走系统代理的请求（规则模式 VPN：Clash 等开启"系统代理"后按域名分流） */
+  static async requestViaSystemProxy(
+    url: string,
+    method: string,
+    headers: Record<string, string>,
+    body: string | null
+  ): Promise<BikaHttpResponse> {
+    let httpReq = http.createHttp();
+    try {
+      let options: http.HttpRequestOptions = {
+        method: method as http.RequestMethod,
+        header: headers,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 15000,
+        extraData: body ?? undefined,
+        usingProxy: true
+      };
+      let resp = await httpReq.request(url, options);
+      let text = typeof resp.result === 'string' ? resp.result : '';
+      return { responseCode: resp.responseCode, body: text };
+    } finally {
+      httpReq.destroy();
+    }
+  }
+
+  /** 走系统代理下载二进制（图片等） */
+  static async downloadBinaryViaProxy(url: string, headers: Record<string, string>): Promise<ArrayBuffer> {
+    let httpReq = http.createHttp();
+    try {
+      let options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        header: headers,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 15000,
+        readTimeout: 30000,
+        usingProxy: true
+      };
+      let resp = await httpReq.request(url, options);
+      if (resp.responseCode !== 200) {
+        throw new Error('HTTP ' + resp.responseCode);
+      }
+      return resp.result as ArrayBuffer;
+    } finally {
+      httpReq.destroy();
+    }
+  }
+
+  /** PUT 请求（改密码/更新资料等） */
+  static async put(
+    url: string,
+    body: string,
+    headers: Record<string, string>,
+    retries: number = DEFAULT_RETRY_TIMES,
+    sniHost: string = '',
+    protocol: http.HttpProtocol = http.HttpProtocol.HTTP2
+  ): Promise<BikaHttpResponse> {
+    return BikaHttpClient.requestWithRetry(url, http.RequestMethod.PUT, body, headers, retries, sniHost, protocol);
+  }
+
   /**
    * 带重试的请求（仅网络层错误重试；服务端 4xx/5xx 直接返回由上层处理）
    */
