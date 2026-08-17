@@ -7,9 +7,11 @@
   <img src="https://img.shields.io/badge/license-GPL--3.0-FF7CA8" alt="License">
 </p>
 
-哔咔漫画的 HarmonyOS 第三方客户端。项目使用 ArkTS 与 ArkUI 原生构建，内置沉浸光感材质、完整阅读体验与离线下载。
+## 声明
+本仓库的所有内容仅供学习交流使用。如果您认为该内容侵犯了您的权益，请在 issue 中与我们联系，我们将立即删除相关内容。
 
-本仓库由 [LoMoCatAp](https://github.com/LoMoCatAp) 维护，非官方客户端。
+## 简介
+哔咔漫画的 HarmonyOS 第三方客户端。项目使用 ArkTS 与 ArkUI 原生构建，内置沉浸光感材质、完整阅读体验与离线下载。
 
 ## 当前功能
 

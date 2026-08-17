@@ -19,6 +19,21 @@ function activeDarkMode(): boolean {
   return String(AppStorage.get('system_color_mode') ?? 'light') === 'dark';
 }
 
+/** 材质档位 → 点光强度（强/均衡/弱/自适应），切换档位时所有卡片材质即时变化 */
+function materialIntensity(): number {
+  const level: string = String(AppStorage.get('bika_material_level') ?? 'EXQUISITE');
+  if (level === 'SMOOTH') {
+    return 0.35;
+  }
+  if (level === 'GENTLE') {
+    return 0.18;
+  }
+  if (level === 'ADAPTIVE') {
+    return 0.45;
+  }
+  return 0.6;
+}
+
 export function supportsComponentImmersiveMaterial(): boolean {
   return deviceInfo.sdkApiVersion >= 26;
 }
@@ -49,7 +64,12 @@ export class CompatibleMaterialModifier extends CommonModifier {
           .pointLight({
             sourceType: hdsEffect.PointLightSourceType.SOFT,
             illuminatedType: hdsEffect.PointLightIlluminatedType.BORDER_CONTENT,
-            options: { color: this.accentColor, intensity: 0.55, height: 24, bloom: 0.12 }
+            options: {
+              color: this.accentColor,
+              intensity: materialIntensity(),
+              height: 24,
+              bloom: materialIntensity() * 0.2
+            }
           })
           .buildEffect();
         instance.visualEffect(effect);

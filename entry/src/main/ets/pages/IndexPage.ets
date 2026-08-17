@@ -52,6 +52,7 @@ struct HomePage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
   @StorageProp('avatarUrl') avatarUrl: string = '';
+  @StorageProp('bika_material_rev') materialRev: number = 0;
   /** 频道自定义：顺序与隐藏 */
   @State channelOrder: string[] = [];
   @State channelHidden: string[] = [];
@@ -404,6 +405,7 @@ interface DownloadGroup {
 @Component
 struct DownloadListView {
   @State tasks: DownloadTask[] = [];
+  @StorageProp('bika_material_rev') materialRev: number = 0;
   private cb: (tasks: DownloadTask[]) => void = (tasks: DownloadTask[]) => {
     this.tasks = tasks;
   };
@@ -694,11 +696,51 @@ struct DownloadListView {
   }
 }
 
+/** 沉浸光感档位直选胶囊（独立组件持 @StorageLink：NavDestination 内容不随父组件重建，组件自身状态可即时刷新） */
+@Component
+struct MaterialLevelRow {
+  @StorageLink('bika_material_level') level: string = 'EXQUISITE';
+  @StorageProp('bika_material_rev') rev: number = 0;
+
+  build() {
+    Row({ space: 8 }) {
+      ForEach(MATERIAL_OPTIONS, (opt: MaterialOption) => {
+        Text(opt.label)
+          .fontSize(14)
+          .fontColor(this.level === opt.value ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+          .textAlign(TextAlign.Center)
+          .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+          .backgroundColor(this.level === opt.value ? COLOR_PRIMARY : COLOR_INPUT_BG)
+          .borderRadius(15)
+          .onClick(() => {
+            this.level = opt.value;
+            CacheManager.getInstance().then(c => c.saveSetting('material_level', opt.value));
+            let r = AppStorage.get<number>('bika_material_rev') ?? 0;
+            AppStorage.setOrCreate('bika_material_rev', r + 1);
+          })
+      }, (opt: MaterialOption) => opt.value)
+    }
+    .width('100%')
+  }
+}
+
 /** 更新日志条目 */
 interface ChangelogEntry {
   version: string;
   date: string;
   items: string[];
+}
+
+/** 更新弹窗正文块 */
+interface UpdateBlock {
+  kind: string;
+  text: string;
+}
+
+/** 行内富文本段 */
+interface MdRun {
+  text: string;
+  bold: boolean;
 }
 
 /** 更新日志（可折叠列表） */
@@ -956,6 +998,9 @@ struct ProfilePage {
   @State passwordSaving: boolean = false;
   /** 检查更新 */
   @State checkingUpdate: boolean = false;
+  @State updateVersion: string = '';
+  @State updateBody: string = '';
+  @State updateUrl: string = '';
   /** DNS 分流线路状态 */
   @State dnsLines: Map<string, DnsIpEntry[]> = new Map();
   @State dnsFetching: boolean = false;
@@ -1671,13 +1716,21 @@ struct ProfilePage {
     return index < 0 ? 0 : index;
   }
 
+  /** 应用材质档位（与 setColorMode 同款机制：赋值即同步 AppStorage + 持久化 + 全局修订号驱动重渲染） */
+  private applyMaterialLevel(value: string): void {
+    this.materialLevel = value;
+    CacheManager.getInstance().then(c => c.saveSetting('material_level', value));
+    // 修订号 +1：所有监听组件（含 IndexPage 的 HdsTabs key）立即重建应用新档位
+    let rev = AppStorage.get<number>('bika_material_rev') ?? 0;
+    AppStorage.setOrCreate('bika_material_rev', rev + 1);
+  }
+
   private selectMaterial(index: number): void {
     const option: MaterialOption | undefined = MATERIAL_OPTIONS[index];
     if (option === undefined) {
       return;
     }
-    this.materialLevel = option.value;
-    CacheManager.getInstance().then(c => c.saveSetting('material_level', option.value));
+    this.applyMaterialLevel(option.value);
   }
 
   private selectColorModeOption(index: number): void {
@@ -1945,7 +1998,7 @@ struct ProfilePage {
     .navDestination(this.pageMap)
     .width('100%')
     .height('100%')
-    .bindSheet($$this.showAboutSheet, this.aboutSheet(), {
+    .bindSheet($$this.showAboutSheet, this.profileBottomSheet(), {
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
       showClose: true,
@@ -1957,6 +2010,16 @@ struct ProfilePage {
         this.aboutSheetKind = 0;
       }
     })
+  }
+
+  /** 底部弹窗统一分发（单 bindSheet 避免多实例互顶）：aboutSheetKind 0=更新 1=更新日志 2=隐私政策 */
+  @Builder
+  profileBottomSheet() {
+    if (this.aboutSheetKind === 0) {
+      this.updateSheet()
+    } else {
+      this.aboutSheet()
+    }
   }
 
   /** 子页返回头：自绘返回键 + 大标题，内容从上往下排布 */
@@ -2420,28 +2483,29 @@ struct ProfilePage {
             .width('100%')
             .margin({ top: 4 })
           Column({ space: 0 }) {
-            Row({ space: 12 }) {
-              SymbolGlyph($r('sys.symbol.paintbrush'))
-                .fontSize(20)
-                .fontColor([this.accentColor])
-              Column({ space: 3 }) {
-                Text('档位')
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(COLOR_TEXT_TITLE)
-                Text('导航栏与卡片的材质强度')
-                  .fontSize(13)
-                  .fontColor(COLOR_TEXT_SECONDARY)
+            Column({ space: 8 }) {
+              Row({ space: 12 }) {
+                SymbolGlyph($r('sys.symbol.paintbrush'))
+                  .fontSize(20)
+                  .fontColor([this.accentColor])
+                Column({ space: 3 }) {
+                  Text('档位')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(COLOR_TEXT_TITLE)
+                  Text('导航栏与卡片的材质强度')
+                    .fontSize(13)
+                    .fontColor(COLOR_TEXT_SECONDARY)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
               }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-              this.settingSelect(MATERIAL_OPTIONS, 'bika_material_level', 'EXQUISITE', (index: number): void => {
-                this.selectMaterial(index);
-              })
+              .width('100%')
+              MaterialLevelRow()
             }
             .width('100%')
-            .height(58)
-            .padding({ left: 16, right: 16 })
+            .alignItems(HorizontalAlign.Start)
+            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
@@ -3778,31 +3842,177 @@ struct ProfilePage {
       let version = tag.startsWith('v') ? tag.substring(1) : tag;
       let current = AppStorage.get<string>('bika_current_version') ?? '1.1.0';
       if (version.length > 0 && version !== current) {
-        let bodyText = String(data['body'] ?? '');
-        let htmlUrl = String(data['html_url'] ?? '');
-        promptAction.showDialog({
-          title: '发现新版本 v' + version,
-          message: bodyText.length > 0 ? bodyText.substring(0, 300) : '点击「去下载」前往 Release 页面',
-          buttons: [
-            { text: '取消', color: '#666666' },
-            { text: '去下载', color: '#FF7CA8' }
-          ]
-        }).then((res: promptAction.ShowDialogSuccessResponse) => {
-          if (res.index === 1 && htmlUrl.length > 0) {
-            this.openExternalLink(htmlUrl);
-          }
-        }).catch((err: Error) => {
-          console.warn('[ProfilePage] update dialog failed: ' + JSON.stringify(err));
-        });
-      } else {
+        this.updateVersion = version;
+        this.updateBody = String(data['body'] ?? '');
+        this.updateUrl = String(data['html_url'] ?? '');
+        this.aboutSheetKind = 0;
+        this.showAboutSheet = true;
+        } else {
         promptAction.showToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
       }
     } catch (err) {
       promptAction.showToast({ message: '检查更新失败：' + (err as Error).message, duration: 2000 });
     } finally {
-      request.destroy();
       this.checkingUpdate = false;
     }
+  }
+
+  /** Markdown 正文 → 纯文本块（原生无 Markdown 组件，做轻量转换） */
+  private markdownLines(): UpdateBlock[] {
+    let blocks: UpdateBlock[] = [];
+    let raw = this.updateBody.length > 0 ? this.updateBody : '点击「去下载」前往 Release 页面';
+    let lines = raw.split('\n');
+    for (let line of lines) {
+      let t = line.trim();
+      if (t.length === 0 || t === '---') {
+        continue;
+      }
+      if (t.startsWith('###')) {
+        blocks.push({ kind: 'h3', text: t.substring(3).trim() });
+      } else if (t.startsWith('##')) {
+        blocks.push({ kind: 'h2', text: t.substring(2).trim() });
+      } else if (t.startsWith('# ')) {
+        blocks.push({ kind: 'h1', text: t.substring(2).trim() });
+      } else if (t.startsWith('- ') || t.startsWith('* ')) {
+        blocks.push({ kind: 'bullet', text: t.substring(2).trim() });
+      } else {
+        blocks.push({ kind: 'text', text: t });
+      }
+    }
+    return blocks;
+  }
+
+  /** 行内 **加粗** 拆段 */
+  private boldRuns(text: string): MdRun[] {
+    let runs: MdRun[] = [];
+    let rest = text;
+    let bold = false;
+    while (rest.length > 0) {
+      let idx = rest.indexOf('**');
+      if (idx < 0) {
+        runs.push({ text: rest, bold: bold });
+        break;
+      }
+      if (idx > 0) {
+        runs.push({ text: rest.substring(0, idx), bold: bold });
+      }
+      rest = rest.substring(idx + 2);
+      bold = !bold;
+    }
+    return runs;
+  }
+
+  /** 更新弹窗（Markdown 适配渲染） */
+  @Builder
+  updateSheet() {
+    Column({ space: 0 }) {
+      Text('')
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(COLOR_TEXT_SECONDARY)
+        .opacity(0.32)
+        .margin({ top: 6, bottom: 4 })
+      Text('发现新版本 v' + this.updateVersion)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_TEXT_TITLE)
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 10 })
+      Scroll() {
+        Column({ space: 4 }) {
+          ForEach(this.markdownLines(), (block: UpdateBlock) => {
+            if (block.kind === 'h2') {
+              Text() {
+                ForEach(this.boldRuns(block.text), (run: MdRun) => {
+                  Span(run.text)
+                    .fontSize(15)
+                    .fontWeight(run.bold ? FontWeight.Bold : FontWeight.Bold)
+                    .fontColor(COLOR_TEXT_TITLE)
+                }, (run: MdRun) => run.text + '_' + (run.bold ? '1' : '0'))
+              }
+              .width('100%')
+              .margin({ top: 10, bottom: 2 })
+            } else if (block.kind === 'h3') {
+              Text(block.text)
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(COLOR_TEXT_TITLE)
+                .width('100%')
+                .margin({ top: 8, bottom: 2 })
+            } else if (block.kind === 'bullet') {
+              Row({ space: 6 }) {
+                Text('•')
+                  .fontSize(14)
+                  .fontColor(COLOR_PRIMARY)
+                Text() {
+                  ForEach(this.boldRuns(block.text), (run: MdRun) => {
+                    Span(run.text)
+                      .fontSize(14)
+                      .fontWeight(run.bold ? FontWeight.Bold : FontWeight.Normal)
+                      .fontColor(COLOR_TEXT_TITLE)
+                  }, (run: MdRun) => run.text + '_' + (run.bold ? '1' : '0'))
+                }
+                .layoutWeight(1)
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Top)
+              .margin({ top: 2, bottom: 2 })
+            } else {
+              Text() {
+                ForEach(this.boldRuns(block.text), (run: MdRun) => {
+                  Span(run.text)
+                    .fontSize(14)
+                    .fontWeight(run.bold ? FontWeight.Bold : FontWeight.Normal)
+                    .fontColor(COLOR_TEXT_SECONDARY)
+                }, (run: MdRun) => run.text + '_' + (run.bold ? '1' : '0'))
+              }
+              .width('100%')
+              .lineHeight(21)
+            }
+          }, (block: UpdateBlock, index: number) => index + '_' + block.kind + '_' + block.text)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: 320 })
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+
+      Row({ space: 12 }) {
+        Button('取消', { type: ButtonType.Normal })
+          .fontSize(15)
+          .fontColor(COLOR_TEXT_SECONDARY)
+          .backgroundColor(COLOR_INPUT_BG)
+          .borderRadius(22)
+          .layoutWeight(1)
+          .height(44)
+          .onClick(() => {
+            this.showAboutSheet = false;
+            this.aboutSheetKind = 0;
+          })
+        Button('去下载', { type: ButtonType.Normal })
+          .fontSize(15)
+          .fontColor(COLOR_WHITE)
+          .backgroundColor(COLOR_PRIMARY)
+          .borderRadius(22)
+          .layoutWeight(1)
+          .height(44)
+          .onClick(() => {
+            this.showAboutSheet = false;
+            this.aboutSheetKind = 0;
+            if (this.updateUrl.length > 0) {
+              this.openExternalLink(this.updateUrl);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 12 })
+    }
+    .width('100%')
+    .backgroundColor(COLOR_CARD)
+    .borderRadius({ topLeft: 20, topRight: 20 })
   }
 
   /** 打开外部链接 */
@@ -4054,6 +4264,7 @@ struct IndexPage {
   @StorageLink('bika_subpage_open') @Watch('onSubpageChanged') subpageOpen: boolean = false;
   @StorageLink('bika_goto_profile') @Watch('onGotoProfile') gotoProfile: number = 0;
   @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_rev') materialRev: number = 0;
   @StorageLink('bika_animations') animationsEnabled: boolean = true;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
@@ -4137,7 +4348,7 @@ struct IndexPage {
       }
       .tabBar(this.tabLabel(1, '我的', $r('sys.symbol.person')))
     }
-    .key('hds_tabs_' + this.materialLevel)
+    .key('hds_tabs_' + this.materialLevel + '_' + this.materialRev)
     .barOverlap(true)
     .animationDuration(0)
     .vertical(false)
