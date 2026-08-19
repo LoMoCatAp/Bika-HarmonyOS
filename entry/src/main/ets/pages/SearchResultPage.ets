@@ -13,7 +13,8 @@ import {
   COLOR_TEXT_SECONDARY,
   COLOR_WHITE,
   SORT_OPTIONS,
-  SortOption
+  SortOption,
+  adaptiveListColumns
 } from '../common/Constants';
 
 /**
@@ -150,7 +151,7 @@ struct SearchResultPage {
                 })
               }, (comic: ComicViewModel) => comic.id + '_' + this.currentSort)
             }
-            .columnsTemplate('1fr 1fr')
+            .columnsTemplate(adaptiveListColumns())
             .columnsGap(10)
             .rowsGap(12)
             .padding({ left: 12, right: 12, top: 8, bottom: 24 })

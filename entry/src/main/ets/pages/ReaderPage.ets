@@ -825,6 +825,8 @@ struct ReaderPage {
           .width('100%')
           .height('100%')
           .backgroundColor(COLOR_READER_BG)
+          // 平板限宽：图片两侧留黑，居中阅读
+          .constraintSize({ maxWidth: 780 })
           .key('swiper_' + this.comicId + '_' + this.currentOrder)
           .onChange((index: number) => {
             this.swiperIndex = index;
@@ -876,6 +878,7 @@ struct ReaderPage {
             .cachedCount(10)
             .width('100%')
             .height('100%')
+            .constraintSize({ maxWidth: 780 })
             .onScrollIndex((start: number, end: number, center: number) => {
               this.currentVisibleIndex = start;
               this.persistPageIndex();

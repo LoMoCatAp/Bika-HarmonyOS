@@ -1,4 +1,4 @@
-import { router, display, promptAction } from '@kit.ArkUI';
+import { router, display, promptAction, curves } from '@kit.ArkUI';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -32,7 +32,9 @@ import {
   DEFAULT_CHANNELS,
   SORT_OPTIONS,
   SortOption,
-  BikaChannel
+  BikaChannel,
+  adaptiveChannelColumns,
+  adaptiveListColumns
 } from '../common/Constants';
 import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination } from '@kit.UIDesignKit';
 
@@ -280,7 +282,7 @@ struct HomePage {
               }
             }, (ch: BikaChannel) => ch.label)
           }
-          .columnsTemplate('1fr 1fr 1fr')
+          .columnsTemplate(adaptiveChannelColumns())
           .columnsGap(14)
           .rowsGap(18)
           .padding({ left: 16, right: 16, top: 8, bottom: 24 })
@@ -696,31 +698,57 @@ struct DownloadListView {
   }
 }
 
-/** 沉浸光感档位直选胶囊（独立组件持 @StorageLink：NavDestination 内容不随父组件重建，组件自身状态可即时刷新） */
+/** 沉浸光感档位下拉（原样式；组件级 @StorageLink 保证在设置页内即时刷新） */
 @Component
-struct MaterialLevelRow {
+struct MaterialLevelSelect {
   @StorageLink('bika_material_level') level: string = 'EXQUISITE';
-  @StorageProp('bika_material_rev') rev: number = 0;
+  @State popScale: number = 1;
+
+  private label(): string {
+    for (let i = 0; i < MATERIAL_OPTIONS.length; i++) {
+      if (MATERIAL_OPTIONS[i].value === this.level) {
+        return MATERIAL_OPTIONS[i].label;
+      }
+    }
+    return '强';
+  }
 
   build() {
-    Row({ space: 8 }) {
-      ForEach(MATERIAL_OPTIONS, (opt: MaterialOption) => {
-        Text(opt.label)
-          .fontSize(14)
-          .fontColor(this.level === opt.value ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-          .textAlign(TextAlign.Center)
-          .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-          .backgroundColor(this.level === opt.value ? COLOR_PRIMARY : COLOR_INPUT_BG)
-          .borderRadius(15)
-          .onClick(() => {
+    Row({ space: 4 }) {
+      Text(this.label())
+        .fontSize(15)
+        .fontColor(COLOR_PRIMARY)
+      SymbolGlyph($r('sys.symbol.chevron_down'))
+        .fontSize(12)
+        .fontColor([COLOR_PRIMARY])
+    }
+    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+    .scale({ x: this.popScale, y: this.popScale })
+    .bindMenu(MATERIAL_OPTIONS.map((opt: MaterialOption): MenuElement => {
+      return {
+        value: opt.label,
+        action: (): void => {
+          // 与显示模式一致的动画过渡：先弹簧弹跳，再渐变应用新档位
+          let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
+          if (animOn) {
+            animateTo({ duration: 130, curve: Curve.EaseOut }, () => {
+              this.popScale = 1.12;
+            });
+            animateTo({ duration: 320, curve: curves.springMotion(0.55, 0.85) }, () => {
+              this.popScale = 1;
+              this.level = opt.value;
+              let r = AppStorage.get<number>('bika_material_rev') ?? 0;
+              AppStorage.setOrCreate('bika_material_rev', r + 1);
+            });
+          } else {
             this.level = opt.value;
-            CacheManager.getInstance().then(c => c.saveSetting('material_level', opt.value));
             let r = AppStorage.get<number>('bika_material_rev') ?? 0;
             AppStorage.setOrCreate('bika_material_rev', r + 1);
-          })
-      }, (opt: MaterialOption) => opt.value)
-    }
-    .width('100%')
+          }
+          CacheManager.getInstance().then(c => c.saveSetting('material_level', opt.value));
+        }
+      };
+    }))
   }
 }
 
@@ -746,8 +774,17 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.3.2',
+    date: '2026-08-19',
+    items: [
+      '修复：更新日志、隐私政策弹窗无法打开（多个底部弹窗互相冲突）',
+      '修复：沉浸光感档位切换不即时生效（档位恢复统一下拉样式，材质强度即时应用）',
+      '检查更新弹窗：更新说明适配 Markdown 排版（标题/列表/加粗）'
+    ]
+  },
+  {
     version: '1.3.1',
-    date: '2026-08-16',
+    date: '2026-08-18',
     items: [
       '动画：全局动画开关（设置→常规），按钮弹簧/卡片按压/图片占位呼吸/阅读器工具栏过渡/页码胶囊/频道按压',
       '沉浸光感档位切换即时生效（底部导航栏）',
@@ -759,7 +796,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.3.0',
-    date: '2026-08-16',
+    date: '2026-08-17',
     items: [
       '评论区：排序（最新/最早/最多赞）+ 分页加载',
       '漫画分享：ShareKit 系统分享面板',
@@ -772,7 +809,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.2.0',
-    date: '2026-08-16',
+    date: '2026-08-15',
     items: [
       '登录页重写：用户名 + 密码登录（不支持邮箱登录）',
       '注册：用户名 + 昵称 + 密码 + 三道密保题',
@@ -787,10 +824,11 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.1.0',
-    date: '2026-08-16',
+    date: '2026-08-13',
     items: [
       '浏览历史增强：封面缩略图、阅读时间显示',
       '浏览历史支持单条删除与一键清空（原生确认框）',
+      '浏览历史异步加载修复',
       '全部设置持久化：显示模式/档位/自动签到/防截屏/下载/DNS 重启保留',
       '设置下拉框改为原生菜单，选项即时同步',
       '进入章节自动恢复上次阅读页（页级进度）',
@@ -799,31 +837,30 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.10',
-    date: '2026-08-16',
+    date: '2026-08-12',
     items: [
-      '防截屏开关提示文案修正',
       '阅读模式切换保留当前阅读位置',
       '修复上一话/下一话按钮点击无效',
       '本地离线阅读同样保存进度与历史记录',
       '阅读器底部工具栏恢复悬浮毛玻璃（position+offset 定位）',
-      '浏览历史异步加载修复',
-      '评论弹窗改用系统原生标题（关闭按钮不重叠）',
-      '评论失败提示中文化（等级不足说明）',
       '修复进入章节页码错乱与单页模式手势翻页',
       '离线场景翻话按钮按已下载任务计算话数'
     ]
   },
   {
     version: '1.0.9',
-    date: '2026-08-16',
+    date: '2026-08-11',
     items: [
       '防截屏修复：补声明 ohos.permission.PRIVACY_WINDOW 权限（安装即授予）',
+      '防截屏开关提示文案修正',
+      '评论弹窗改用系统原生标题（关闭按钮不重叠）',
+      '评论失败提示中文化（等级不足说明）',
       '阅读器设置面板改为系统 bindSheet 弹窗样式'
     ]
   },
   {
     version: '1.0.8',
-    date: '2026-08-16',
+    date: '2026-08-10',
     items: [
       '首页顶部遮罩恢复整层覆盖（状态栏区域也带玻璃遮罩）',
       '退出登录改为紧贴菜单卡下方，与上部卡片平齐'
@@ -831,7 +868,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.7',
-    date: '2026-08-16',
+    date: '2026-08-09',
     items: [
       'DNS 优化全面升级：分流线路拉取 + IP 握手测速 + 应用最低延迟 + 线路点选',
       'DNS 选择实时生效（API 与图片各自直连所选 IP），支持重置默认',
@@ -841,7 +878,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.6',
-    date: '2026-08-16',
+    date: '2026-08-08',
     items: [
       '设置页统一规格重建：分区标题、图标、行高与字号全部一致',
       '显示模式改为统一下拉框，沉浸光感/常规/下载卡片规范化',
@@ -851,7 +888,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.5',
-    date: '2026-08-16',
+    date: '2026-08-07',
     items: [
       '设置新增常规项：自动签到 / 防截屏 / 清理图片缓存',
       '新增存储与空间管理（下载占用、缓存占用、一键清理）',
@@ -861,15 +898,15 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.4',
-    date: '2026-08-16',
+    date: '2026-08-06',
     items: [
-      '修复所有滚动页面内容垂直居中问题（内容改为从顶部排布）',
+      '修复所有滚动页面内容垂直居中问题',
       '首页/我的/收藏/搜索/频道/详情等页面内容统一从顶部排布'
     ]
   },
   {
     version: '1.0.3',
-    date: '2026-08-16',
+    date: '2026-08-06',
     items: [
       '设置子页全部改为从顶部排布',
       '底部导航与卡片全面接入沉浸光感材质（档位可调）',
@@ -881,7 +918,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.2',
-    date: '2026-08-16',
+    date: '2026-08-05',
     items: [
       '频道筛选：主题/排除主题/状态/话数/页数五组筛选',
       '签到状态记忆，防止重复签到',
@@ -892,7 +929,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.1',
-    date: '2026-08-16',
+    date: '2026-08-04',
     items: [
       '首页频道：推荐/排行榜/最近更新/随机本子等 45 个频道',
       '漫画详情：详情/章节/评论三 Tab + 相关推荐 + 收藏点赞',
@@ -903,7 +940,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
   {
     version: '1.0.0',
-    date: '2026-08-15',
+    date: '2026-08-04',
     items: [
       '初始版本',
       '账号登录与资料同步（头像/昵称/等级/签名）',
@@ -2123,7 +2160,7 @@ struct ProfilePage {
               })
             }, (comic: ComicViewModel) => comic.id + '_' + this.favSort)
           }
-          .columnsTemplate('1fr 1fr')
+          .columnsTemplate(adaptiveListColumns())
           .columnsGap(10)
           .rowsGap(12)
           .padding({ left: 12, right: 12, top: 8, bottom: 24 })
@@ -2483,29 +2520,26 @@ struct ProfilePage {
             .width('100%')
             .margin({ top: 4 })
           Column({ space: 0 }) {
-            Column({ space: 8 }) {
-              Row({ space: 12 }) {
-                SymbolGlyph($r('sys.symbol.paintbrush'))
-                  .fontSize(20)
-                  .fontColor([this.accentColor])
-                Column({ space: 3 }) {
-                  Text('档位')
-                    .fontSize(17)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(COLOR_TEXT_TITLE)
-                  Text('导航栏与卡片的材质强度')
-                    .fontSize(13)
-                    .fontColor(COLOR_TEXT_SECONDARY)
-                }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
+            Row({ space: 12 }) {
+              SymbolGlyph($r('sys.symbol.paintbrush'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('档位')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('导航栏与卡片的材质强度')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
               }
-              .width('100%')
-              MaterialLevelRow()
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              MaterialLevelSelect()
             }
             .width('100%')
-            .alignItems(HorizontalAlign.Start)
-            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+            .height(58)
+            .padding({ left: 16, right: 16 })
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
@@ -4348,7 +4382,8 @@ struct IndexPage {
       }
       .tabBar(this.tabLabel(1, '我的', $r('sys.symbol.person')))
     }
-    .key('hds_tabs_' + this.materialLevel + '_' + this.materialRev)
+    // 子页打开期间冻结 key：避免重建销毁当前页（设置页会被踢回），关闭子页后再应用新档位
+    .key(this.subpageOpen ? 'hds_tabs_stable' : ('hds_tabs_' + this.materialLevel + '_' + this.materialRev))
     .barOverlap(true)
     .animationDuration(0)
     .vertical(false)

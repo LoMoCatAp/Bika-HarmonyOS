@@ -2,6 +2,42 @@
  * 全局常量定义
  * 包含哔咔 API 常量、网络配置与设计语言颜色
  */
+import { display } from '@kit.ArkUI';
+
+/** 屏幕宽度（vp） */
+export function screenWidthVp(): number {
+  return px2vp(display.getDefaultDisplaySync().width);
+}
+
+/** 频道图标网格列数（平板更宽时一行塞入更多） */
+export function adaptiveChannelColumns(): string {
+  let w = screenWidthVp();
+  if (w >= 900) {
+    return '1fr 1fr 1fr 1fr 1fr 1fr';
+  }
+  if (w >= 700) {
+    return '1fr 1fr 1fr 1fr 1fr';
+  }
+  if (w >= 560) {
+    return '1fr 1fr 1fr 1fr';
+  }
+  return '1fr 1fr 1fr';
+}
+
+/** 作品卡片网格列数（平板更多列） */
+export function adaptiveListColumns(): string {
+  let w = screenWidthVp();
+  if (w >= 900) {
+    return '1fr 1fr 1fr 1fr 1fr';
+  }
+  if (w >= 700) {
+    return '1fr 1fr 1fr 1fr';
+  }
+  if (w >= 560) {
+    return '1fr 1fr 1fr';
+  }
+  return '1fr 1fr';
+}
 
 // ═══════════════════════ 哔咔 API 常量 ═══════════════════════
 

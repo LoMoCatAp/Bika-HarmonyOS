@@ -18,7 +18,8 @@ import {
   COLOR_BG,
   COLOR_CARD,
   COLOR_DIVIDER,
-  COLOR_WHITE
+  COLOR_WHITE,
+  adaptiveListColumns
 } from '../common/Constants';
 
 /**
@@ -656,7 +657,7 @@ struct ComicDetailPage {
                   })
                 }, (rec: ComicViewModel) => rec.id)
               }
-              .columnsTemplate('1fr 1fr 1fr')
+              .columnsTemplate(adaptiveListColumns())
               .columnsGap(10)
               .rowsGap(12)
             }
