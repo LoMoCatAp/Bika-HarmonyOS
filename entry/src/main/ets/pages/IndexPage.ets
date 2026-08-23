@@ -774,6 +774,14 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.3.3',
+    date: '2026-08-20',
+    items: [
+      '平板适配：首页频道网格与作品列表按屏幕宽度自适应列数（平板最多 6 列）',
+      '阅读器平板适配：内容限宽居中，两侧留黑不再撑满整屏'
+    ]
+  },
+  {
     version: '1.3.2',
     date: '2026-08-19',
     items: [
