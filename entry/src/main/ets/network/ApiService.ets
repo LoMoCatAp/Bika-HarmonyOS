@@ -478,6 +478,19 @@ export class ApiService {
   }
 
   /**
+   * 首页「推荐」分区（BIKA ToCollections）
+   * GET collections → 第一个合集的 comics[]
+   */
+  async getCollections(): Promise<BikaComicSummary[]> {
+    let data = await this.request<Record<string, Object>>('collections', 'GET', null, true);
+    let list = data['collections'] as Record<string, Object>[];
+    if (list && list.length > 0) {
+      return (list[0]['comics'] as BikaComicSummary[]) || [];
+    }
+    return [];
+  }
+
+  /**
    * 分页获取分类下的漫画列表
    * GET comics?page=&c=&s=
    * @param category 分类名（空串表示全部）
@@ -488,8 +501,10 @@ export class ApiService {
     if (category && category.length > 0) {
       query += `&c=${encodeURIComponent(category)}`;
     }
-    let data = await this.request<BikaPaged<BikaComicSummary>>(`comics?${query}`, 'GET', null, true);
-    let paged = data as BikaPaged<BikaComicSummary>;
+    // 分页对象在 data.comics 下（与 advancedSearch 同构）
+    console.info('[ApiService][getComics] ' + query);
+    let data = await this.request<Record<string, Object>>(`comics?${query}`, 'GET', null, true);
+    let paged = data['comics'] as BikaPaged<BikaComicSummary>;
     return {
       comics: paged.docs || [],
       pages: toNum(paged.pages)
