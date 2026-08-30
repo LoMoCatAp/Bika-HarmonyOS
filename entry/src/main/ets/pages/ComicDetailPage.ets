@@ -120,6 +120,11 @@ struct ComicDetailPage {
       this.loadReadStatus();
       try {
         let recs = await this.apiService.getRecommendationsFor(this.comicId);
+        if (recs.length === 0) {
+          // 推荐接口未返回时回退到「全部最新」列表，保证详情页始终有相关作品
+          let fallback = await this.apiService.getComics('', 'dd', 1);
+          recs = fallback.comics.slice(0, 10);
+        }
         this.recommendations = recs.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
       } catch (recErr) {
         console.warn('[ComicDetailPage] recommendations failed: ' + JSON.stringify(recErr));

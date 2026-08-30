@@ -285,7 +285,7 @@ struct HomePage {
           .columnsTemplate(adaptiveChannelColumns())
           .columnsGap(14)
           .rowsGap(18)
-          .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+          .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 76 })
         }
         .width('100%')
       }
@@ -773,6 +773,15 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.3.4',
+    date: '2026-08-21',
+    items: [
+      '修复：分类页（频道列表）内容加载失败时自动重试一次，补充空态与重试按钮',
+      '修复：主页/收藏页底部留白不足，频道被底部导航栏遮挡',
+      '详情页相关推荐接口未返回时回退「全部最新」列表'
+    ]
+  },
   {
     version: '1.3.3',
     date: '2026-08-20',
@@ -2171,7 +2180,7 @@ struct ProfilePage {
           .columnsTemplate(adaptiveListColumns())
           .columnsGap(10)
           .rowsGap(12)
-          .padding({ left: 12, right: 12, top: 8, bottom: 24 })
+          .padding({ left: 12, right: 12, top: 8, bottom: this.bottomSafeHeight + 76 })
         }
         .width('100%')
         .layoutWeight(1)

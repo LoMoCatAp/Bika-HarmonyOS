@@ -182,39 +182,49 @@ struct ChannelListPage {
       this.hasMore = false;
     }
     try {
-      let vms: ComicViewModel[] = [];
-      if (this.kind === 'leaderboard' && this.leaderboardTab === 3) {
-        this.knights = await this.apiService.getKnightLeaderboard();
-      } else if (this.kind === 'leaderboard') {
-        vms = (await this.apiService.getLeaderboard(LEADERBOARD_TABS[this.leaderboardTab]))
-          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
-          .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
-      } else if (this.kind === 'random') {
-        vms = (await this.apiService.getRandomComics())
-          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
-          .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
-      } else {
-        let topic = this.kind === 'recent' ? '' : this.label;
-        let result = await this.apiService.getComics(topic, this.currentSort, this.currentPage);
-        vms = result.comics
-          .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
-          .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
-        this.hasMore = this.currentPage < result.pages;
-      }
-      if (this.kind === 'recommend' || this.kind === 'recent' || this.kind === 'topic') {
-        vms = this.applyFilters(vms);
-      }
-      if (reset) {
-        this.comics = vms;
-      } else {
-        this.comics = this.comics.concat(vms);
-      }
+      await this.doLoad(reset);
     } catch (err) {
-      let msg = (err as Error).message || '加载失败';
-      this.errorMsg = msg;
-      console.error('[ChannelListPage] load failed: ' + msg);
+      // 首次失败自动重试一次（频控/网络抖动兜底）
+      console.warn('[ChannelListPage] 首次加载失败，自动重试: ' + (err as Error).message);
+      try {
+        await this.doLoad(reset);
+      } catch (err2) {
+        let msg = (err2 as Error).message || '加载失败';
+        this.errorMsg = msg;
+        console.error('[ChannelListPage] load failed: ' + msg);
+      }
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  private async doLoad(reset: boolean): Promise<void> {
+    let vms: ComicViewModel[] = [];
+    if (this.kind === 'leaderboard' && this.leaderboardTab === 3) {
+      this.knights = await this.apiService.getKnightLeaderboard();
+    } else if (this.kind === 'leaderboard') {
+      vms = (await this.apiService.getLeaderboard(LEADERBOARD_TABS[this.leaderboardTab]))
+        .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+        .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+    } else if (this.kind === 'random') {
+      vms = (await this.apiService.getRandomComics())
+        .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+        .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+    } else {
+      let topic = this.kind === 'recent' ? '' : this.label;
+      let result = await this.apiService.getComics(topic, this.currentSort, this.currentPage);
+      vms = result.comics
+        .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+        .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+      this.hasMore = this.currentPage < result.pages;
+    }
+    if (this.kind === 'recommend' || this.kind === 'recent' || this.kind === 'topic') {
+      vms = this.applyFilters(vms);
+    }
+    if (reset) {
+      this.comics = vms;
+    } else {
+      this.comics = this.comics.concat(vms);
     }
   }
 
@@ -386,6 +396,28 @@ struct ChannelListPage {
       }
       .width('100%')
       .padding({ top: 60 })
+      .alignItems(HorizontalAlign.Center)
+    } else if (this.comics.length === 0 && !this.isLoading) {
+      Column({ space: 10 }) {
+        SymbolGlyph($r('sys.symbol.square_grid_2x2'))
+          .fontSize(36)
+          .fontColor([COLOR_TEXT_DISABLED])
+        Text('该频道暂无内容')
+          .fontSize(14)
+          .fontColor(COLOR_TEXT_HINT)
+        Text('换个频道或稍后再来看看')
+          .fontSize(12)
+          .fontColor(COLOR_TEXT_HINT)
+        Button('重新加载', { type: ButtonType.Normal })
+          .fontSize(13)
+          .fontColor(COLOR_PRIMARY)
+          .backgroundColor(COLOR_PRIMARY_TINT)
+          .borderRadius(18)
+          .height(36)
+          .onClick(() => this.load(true))
+      }
+      .width('100%')
+      .padding({ top: 70 })
       .alignItems(HorizontalAlign.Center)
     } else {
       Scroll(this.listScroller) {
