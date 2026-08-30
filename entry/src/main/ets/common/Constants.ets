@@ -61,8 +61,23 @@ export const BIKA_DOH_URL: string = 'https://doh.pub/dns-query';
 /** API Key（哔咔官方客户端内置，所有第三方客户端通用） */
 export const BIKA_API_KEY: string = 'C69BAF41DA5ABD1FFEDC6D2FEA56B';
 
+/** HMAC-SHA256 签名密钥掩码（用于反混淆，避免明文密钥直接出现在代码/二进制中） */
+const BIKA_SECRET_KEY_MASK: number[] = [0x5a, 0x3c, 0x91, 0x17, 0x6b, 0x24];
+/** HMAC-SHA256 签名密钥（混淆存储，运行时按掩码异或还原） */
+const BIKA_SECRET_KEY_ENC: number[] = [
+  36, 88, 236, 51, 58, 19, 126, 89, 216, 121, 2, 25, 12, 21, 168, 75, 57, 111, 117, 108, 191, 69, 38, 16, 97, 5, 202,
+  32, 23, 100, 117, 127, 208, 106, 9, 90, 21, 107, 176, 36, 84, 97, 12, 92, 171, 43, 85, 105, 109, 76, 245, 115, 62,
+  102, 22, 9, 255, 107, 91, 11, 112, 127, 255
+];
+function decodeBikaSecretKey(): string {
+  let chars: string[] = [];
+  for (let i = 0; i < BIKA_SECRET_KEY_ENC.length; i++) {
+    chars.push(String.fromCharCode(BIKA_SECRET_KEY_ENC[i] ^ BIKA_SECRET_KEY_MASK[i % BIKA_SECRET_KEY_MASK.length]));
+  }
+  return chars.join('');
+}
 /** HMAC-SHA256 签名密钥 */
-export const BIKA_SECRET_KEY: string = '~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn';
+export const BIKA_SECRET_KEY: string = decodeBikaSecretKey();
 
 /** 签名输出编码：'hex'| 'base64'（社区广泛流传的签名方式） */
 export const SIGN_ENCODING: string = 'hex';
