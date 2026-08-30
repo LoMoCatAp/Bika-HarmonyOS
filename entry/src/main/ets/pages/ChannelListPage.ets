@@ -184,15 +184,9 @@ struct ChannelListPage {
     try {
       await this.doLoad(reset);
     } catch (err) {
-      // 首次失败自动重试一次（频控/网络抖动兜底）
-      console.warn('[ChannelListPage] 首次加载失败，自动重试: ' + (err as Error).message);
-      try {
-        await this.doLoad(reset);
-      } catch (err2) {
-        let msg = (err2 as Error).message || '加载失败';
-        this.errorMsg = msg;
-        console.error('[ChannelListPage] load failed: ' + msg);
-      }
+      let msg = (err as Error).message || '加载失败';
+      this.errorMsg = msg;
+      console.error('[ChannelListPage] load failed: ' + msg);
     } finally {
       this.isLoading = false;
     }
@@ -210,6 +204,13 @@ struct ChannelListPage {
       vms = (await this.apiService.getRandomComics())
         .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
         .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+    } else if (this.kind === 'recommend') {
+      // 「推荐」= 全部漫画按最新排序的分页流（comics?page=&s=dd），可无限下滑
+      let result = await this.apiService.getComics('', 'dd', this.currentPage);
+      vms = result.comics
+        .filter((c: BikaComicSummary) => !isBlockedComic(c.tags))
+        .map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+      this.hasMore = this.currentPage < result.pages;
     } else {
       let topic = this.kind === 'recent' ? '' : this.label;
       let result = await this.apiService.getComics(topic, this.currentSort, this.currentPage);
@@ -244,6 +245,28 @@ struct ChannelListPage {
     this.load(true);
   }
 
+  /** 是否支持排序（推荐/那年今天/大家都在看/官方都在看 等特色频道不支持） */
+  private isSortableChannel(): boolean {
+    if (this.kind === 'recent') {
+      return true;
+    }
+    if (this.kind === 'topic') {
+      return this.label !== '大家都在看' && this.label !== '官方都在看' && this.label !== '那年今天';
+    }
+    return false;
+  }
+
+  /** 是否支持筛选（推荐/那年今天 无筛选） */
+  private isFilterableChannel(): boolean {
+    if (this.kind === 'recent') {
+      return true;
+    }
+    if (this.kind === 'topic') {
+      return this.label !== '那年今天';
+    }
+    return false;
+  }
+
   @Builder
   filterBar() {
     Row() {
@@ -258,34 +281,39 @@ struct ChannelListPage {
             .margin({ right: 8 })
             .onClick(() => this.onLeaderboardTab(index))
         }, (tab: string) => tab)
-      } else if (this.kind === 'recommend' || this.kind === 'recent' || this.kind === 'topic') {
-        // 筛选按钮（最左）
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-            .fontSize(16)
-            .fontColor([this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
-          Text(this.hasFilter() ? '已筛选' : '筛选')
-            .fontSize(13)
-            .fontColor(this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+      } else {
+        // 筛选按钮（仅支持筛选的频道）
+        if (this.isFilterableChannel()) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+              .fontSize(16)
+              .fontColor([this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
+            Text(this.hasFilter() ? '已筛选' : '筛选')
+              .fontSize(13)
+              .fontColor(this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+          }
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .backgroundColor(COLOR_CARD)
+          .border({ width: 1, color: this.hasFilter() ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 15 })
+          .margin({ right: 8 })
+          .onClick(() => {
+            this.showFilter = true;
+          })
         }
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .backgroundColor(COLOR_CARD)
-        .border({ width: 1, color: this.hasFilter() ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 15 })
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.showFilter = true;
-        })
 
-        ForEach(SORT_OPTIONS, (item: SortOption) => {
-          Text(item.label)
-            .fontSize(13)
-            .fontColor(this.currentSort === item.key ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.currentSort === item.key ? COLOR_PRIMARY : COLOR_CARD)
-            .borderRadius(15)
-            .margin({ right: 8 })
-            .onClick(() => this.onSortChange(item.key))
-        }, (item: SortOption) => item.key)
+        // 排序（仅支持排序的频道）
+        if (this.isSortableChannel()) {
+          ForEach(SORT_OPTIONS, (item: SortOption) => {
+            Text(item.label)
+              .fontSize(13)
+              .fontColor(this.currentSort === item.key ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .backgroundColor(this.currentSort === item.key ? COLOR_PRIMARY : COLOR_CARD)
+              .borderRadius(15)
+              .margin({ right: 8 })
+              .onClick(() => this.onSortChange(item.key))
+          }, (item: SortOption) => item.key)
+        }
       }
     }
     .width('100%')

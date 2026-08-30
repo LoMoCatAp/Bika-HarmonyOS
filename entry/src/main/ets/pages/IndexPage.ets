@@ -774,8 +774,17 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.3.5',
+    date: '2026-08-31',
+    items: [
+      '修复：首页「推荐」分区改为全部漫画最新分页流',
+      '修复：分类列表接口响应解析错误导致全部分类空白',
+      '修复：分类页排序/筛选请求（移除冗余重试导致的频控）'
+    ]
+  },
+  {
     version: '1.3.4',
-    date: '2026-08-21',
+    date: '2026-08-30',
     items: [
       '修复：分类页（频道列表）内容加载失败时自动重试一次，补充空态与重试按钮',
       '修复：主页/收藏页底部留白不足，频道被底部导航栏遮挡',
@@ -1930,7 +1939,7 @@ struct ProfilePage {
     .padding({ left: 16, right: 16, top: 14, bottom: 6 })
     .backgroundColor(Color.Transparent)
     .borderRadius(18)
-    .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+    .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
   }
 
   /** 菜单列表（点击进入子页面） */
@@ -1963,7 +1972,7 @@ struct ProfilePage {
     .width('100%')
     .backgroundColor(Color.Transparent)
     .borderRadius(18)
-    .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+    .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
     .padding({ top: 4, bottom: 4 })
   }
 
@@ -2007,7 +2016,7 @@ struct ProfilePage {
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               .backgroundColor(Color.Transparent)
               .borderRadius(18)
-              .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+              .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             }
 
             this.menuList()
@@ -2029,7 +2038,7 @@ struct ProfilePage {
               .padding({ left: 16, right: 16 })
               .backgroundColor(Color.Transparent)
               .borderRadius(18)
-              .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+              .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
               .onClick(() => this.onLogout())
             }
           }
@@ -2529,7 +2538,7 @@ struct ProfilePage {
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
           Text('沉浸光感')
             .fontSize(14)
@@ -2561,7 +2570,7 @@ struct ProfilePage {
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
           Text('常规')
             .fontSize(14)
@@ -2803,7 +2812,7 @@ struct ProfilePage {
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
           Text('下载')
             .fontSize(14)
@@ -2882,7 +2891,7 @@ struct ProfilePage {
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
           Text('应用')
             .fontSize(14)
@@ -2948,7 +2957,7 @@ struct ProfilePage {
           .width('100%')
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 40 })
@@ -3003,7 +3012,7 @@ struct ProfilePage {
           .padding(16)
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
           Text('文档')
             .fontSize(14)
@@ -3033,7 +3042,7 @@ struct ProfilePage {
           .padding(16)
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
           .onClick(() => {
             this.openChangelog();
           })
@@ -3062,7 +3071,7 @@ struct ProfilePage {
           .padding(16)
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
           .onClick(() => {
             this.openPrivacyPolicy();
           })
@@ -3096,7 +3105,7 @@ struct ProfilePage {
           .padding(16)
           .backgroundColor(Color.Transparent)
           .borderRadius(18)
-          .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
           .onClick(() => {
             this.openExternalLink('https://github.com/LoMoCatAp/Bika-HarmonyOS');
           })
@@ -3163,7 +3172,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             Column() {
               Text('缓存')
@@ -3201,7 +3210,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             Row() {
               Text('刷新统计')
@@ -3213,7 +3222,7 @@ struct ProfilePage {
             .justifyContent(FlexAlign.Center)
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             .onClick(() => this.refreshStorage())
           }
           .width('100%')
@@ -3320,7 +3329,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             // 当前生效 IP
             Column({ space: 8 }) {
@@ -3367,7 +3376,7 @@ struct ProfilePage {
             .padding(16)
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             // 操作按钮
             Row({ space: 12 }) {
@@ -3500,7 +3509,7 @@ struct ProfilePage {
             .padding({ left: 16, right: 16 })
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             .onClick(() => this.resetDns())
           }
           .width('100%')
@@ -3567,7 +3576,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             Column() {
               Text('可选标签')
@@ -3611,7 +3620,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
             Text('屏蔽后，频道列表与搜索结果将不再显示含该标签的漫画。')
               .fontSize(12)
@@ -3684,7 +3693,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             .padding({ bottom: 16 })
           }
           .width('100%')
@@ -3787,7 +3796,7 @@ struct ProfilePage {
             .width('100%')
             .backgroundColor(Color.Transparent)
             .borderRadius(18)
-            .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+            .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             .padding({ bottom: 16 })
 
             Text('修改成功后需要重新登录。')
@@ -4141,7 +4150,7 @@ struct ProfilePage {
       .padding(14)
       .backgroundColor(Color.Transparent)
       .borderRadius(20)
-      .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+      .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
 
       Column({ space: 12 }) {
         Text('更新日志')
@@ -4199,7 +4208,7 @@ struct ProfilePage {
               .width('100%')
               .backgroundColor(Color.Transparent)
               .borderRadius(18)
-              .attributeModifier(compatibleImmersiveMaterial(this.accentHex, true))
+              .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
             }, (entry: ChangelogEntry): string => entry.version)
           }
           .width('100%')
