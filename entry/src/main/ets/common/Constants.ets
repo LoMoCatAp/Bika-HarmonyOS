@@ -225,3 +225,5 @@ export const COLOR_READER_TOOLBAR_DISABLED: Resource = $r('app.color.bika_reader
 export const COLOR_READER_TOOLBAR_ACTIVE: Resource = $r('app.color.bika_reader_toolbar_active');
 /** 阅读器弱文字 */
 export const COLOR_READER_TEXT_MUTED: Resource = $r('app.color.bika_reader_text_muted');
+/** 退出登录文字（浅色深红 / 深色浅珊瑚红） */
+export const COLOR_LOGOUT_TEXT: Resource = $r('app.color.bika_logout_text');

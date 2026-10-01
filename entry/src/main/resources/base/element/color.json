@@ -95,6 +95,10 @@
     {
       "name": "bika_reader_text_muted",
       "value": "#AAAAAA"
+    },
+    {
+      "name": "bika_logout_text",
+      "value": "#C74646"
     }
   ]
 }

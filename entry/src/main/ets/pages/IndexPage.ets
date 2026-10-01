@@ -29,6 +29,7 @@ import {
   COLOR_GLASS_TOP,
   COLOR_DIVIDER,
   COLOR_WHITE,
+  COLOR_LOGOUT_TEXT,
   DEFAULT_CHANNELS,
   SORT_OPTIONS,
   SortOption,
@@ -773,6 +774,17 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.3.6',
+    date: '2026-10-01',
+    items: [
+      '国庆节快乐 🎉',
+      '优化：调整「退出登录」文字配色，深浅色模式下分别采用更柔和的红色，降低视觉突兀感',
+      '官方接口已移除部分组件的沉浸光感材质，本版起页面卡片统一回退为常规列表',
+      '如需保留原有沉浸光感卡片效果，可继续使用 v1.3.5',
+      '后续功能更新将基于 v1.3.6 持续开发'
+    ]
+  },
   {
     version: '1.3.5',
     date: '2026-08-31',
@@ -2029,7 +2041,7 @@ struct ProfilePage {
                   .fontColor([COLOR_TEXT_SECONDARY])
                 Text('退出登录')
                   .fontSize(15)
-                  .fontColor('#C62828')
+                  .fontColor(COLOR_LOGOUT_TEXT)
                   .margin({ left: 12 })
                   .layoutWeight(1)
               }
@@ -3907,7 +3919,7 @@ struct ProfilePage {
         this.updateUrl = String(data['html_url'] ?? '');
         this.aboutSheetKind = 0;
         this.showAboutSheet = true;
-        } else {
+      } else {
         promptAction.showToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
       }
     } catch (err) {
