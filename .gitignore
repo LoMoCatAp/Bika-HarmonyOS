@@ -14,3 +14,7 @@
 /app-signed.hap
 /build-profile.json5
 /agent.md
+/.release*.mjs
+/.fetchDoc.mjs
+/lomocat-profile-README.md
+/Bika.png
