@@ -16,6 +16,22 @@
 哔咔漫画的 HarmonyOS NEXT 第三方客户端，使用 ArkTS 与 ArkUI 原生构建，不依赖任何跨平台运行时。
 从频道浏览、详情互动到阅读器与离线下载形成完整闭环，并针对手机与平板做了自适应适配。
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/screenshots/01-home.jpg" width="200" alt="首页频道">
+  &nbsp;
+  <img src="docs/screenshots/02-settings.jpg" width="200" alt="设置">
+  &nbsp;
+  <img src="docs/screenshots/03-about.jpg" width="200" alt="关于">
+  &nbsp;
+  <img src="docs/screenshots/04-changelog.jpg" width="200" alt="更新日志">
+</p>
+
+<p align="center">
+  <sub>首页频道 · 设置 · 关于 · 更新日志（深色模式）</sub>
+</p>
+
 ## 版本说明
 
 - **当前版本：v1.3.6**
