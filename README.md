@@ -1,7 +1,7 @@
 # Bika HarmonyOS
 
 <p align="center">
-  <img src="https://img.shields.io/badge/HarmonyOS-API%2024-0D8BFF?logo=harmonyos&logoColor=white" alt="HarmonyOS">
+  <img src="https://img.shields.io/badge/HarmonyOS-API%2026-0D8BFF?logo=harmonyos&logoColor=white" alt="HarmonyOS">
   <img src="https://img.shields.io/badge/ArkTS-5.0-0D8BFF" alt="ArkTS">
   <img src="https://img.shields.io/badge/ArkUI-Native-0D8BFF" alt="ArkUI">
   <img src="https://img.shields.io/badge/license-GPL--3.0-FF7CA8" alt="License">
@@ -31,10 +31,12 @@
 
 ## 版本说明
 
-- **当前版本：v1.3.6**
+- **当前版本：v1.3.7**
+- 目标版本升级至 **API 26**，Toast 与系统弹窗升级为沉浸光感材质，观感与系统风格保持一致。
+- 沉浸材质依赖设备能力，**需系统支持 HarmonyOS 7.0.0 及以上**；未升级系统的设备无需更新此版本（可继续使用 v1.3.6）。
 - 由于官方接口已移除部分组件的沉浸光感材质，**v1.3.6 起页面卡片统一回退为常规列表样式**（兼顾功耗表现）。
 - 如需保留原有的沉浸光感卡片效果，可继续使用 **v1.3.5**。
-- 后续功能更新均在 **v1.3.6** 基础上继续开发。
+- 后续功能更新均在 **v1.3.7** 基础上继续开发。
 
 完整更新内容见应用内「设置 → 关于 → 更新日志」，或仓库的 [Releases](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases)。
 
@@ -103,7 +105,8 @@
 
 | 版本 | 主要内容 |
 |---|---|
-| **v1.3.6** | 官方接口调整，页面卡片回退常规列表；优化「退出登录」文字配色 |
+| **v1.3.7** | 目标版本升级至 API 26；Toast 与系统弹窗升级为沉浸光感材质 |
+| v1.3.6 | 官方接口调整，页面卡片回退常规列表；优化「退出登录」文字配色 |
 | v1.3.5 | 分类列表响应解析修复；「推荐」改为全部最新分页流；特色频道排序筛选按接口区分 |
 | v1.3.4 | 分类页加载重试与空态；主页 / 收藏页底部留白；相关推荐空时回退 |
 | v1.3.3 | 平板自适应网格；阅读器限宽居中，两侧留黑 |
@@ -122,7 +125,7 @@
 
 ## 源码运行
 
-1. 安装 DevEco Studio，并在 SDK Manager 中安装 HarmonyOS SDK API 24 或更新版本。
+1. 安装 DevEco Studio，并在 SDK Manager 中安装 HarmonyOS SDK API 26 或更新版本。
 2. 将 `build-profile.json5.example` 复制为本机的 `build-profile.json5`，并在 DevEco Studio 中配置自己的签名材料；该文件已被 Git 忽略。
 3. 使用 DevEco Studio 打开项目根目录，选择 `entry` 模块和已连接设备或模拟器后运行。
 

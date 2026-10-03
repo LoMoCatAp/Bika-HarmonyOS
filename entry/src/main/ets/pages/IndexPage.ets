@@ -1,4 +1,5 @@
 import { router, display, promptAction, curves } from '@kit.ArkUI';
+import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -272,7 +273,7 @@ struct HomePage {
                 })
                 .onClick(() => {
                   if (ch.kind === 'board') {
-                    promptAction.showToast({ message: '该功能已下线', duration: 1600 });
+                    showImmersiveToast({ message: '该功能已下线', duration: 1600 });
                     return;
                   }
                   router.pushUrl({
@@ -486,7 +487,7 @@ struct DownloadListView {
 
   /** 删除整部作品的下载（原生确认框） */
   private confirmDeleteGroup(g: DownloadGroup): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '删除下载',
       message: '删除《' + g.title + '》的全部已下载章节？本地文件将一并删除，且不可恢复。',
       buttons: [
@@ -501,7 +502,7 @@ struct DownloadListView {
             manager.deleteTask(t.comicId, t.chapterOrder);
           }
         }
-        promptAction.showToast({ message: '已删除', duration: 1600 });
+        showImmersiveToast({ message: '已删除', duration: 1600 });
       }
     }).catch((err: Error) => {
       console.warn('[DownloadListView] delete dialog failed: ' + JSON.stringify(err));
@@ -774,6 +775,15 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.3.7',
+    date: '2026-10-03',
+    items: [
+      '目标版本升级至 API 26',
+      '优化：Toast 与系统弹窗升级为沉浸光感材质，观感与系统风格保持一致',
+      '注：沉浸材质依赖设备能力，需设备系统支持（HarmonyOS 7.0.0 及以上）；未升级系统的设备无需更新此版本'
+    ]
+  },
   {
     version: '1.3.6',
     date: '2026-10-01',
@@ -1174,7 +1184,7 @@ struct ProfilePage {
       await this.apiService.punchIn();
       this.punched = true;
       AppStorage.set('bika_last_punch_day', day);
-      promptAction.showToast({ message: '自动签到成功', duration: 1600 });
+      showImmersiveToast({ message: '自动签到成功', duration: 1600 });
     } catch (err) {
       console.warn('[ProfilePage] auto punch failed: ' + JSON.stringify(err));
     } finally {
@@ -1191,7 +1201,7 @@ struct ProfilePage {
 
   /** 清理图片缓存（原生确认对话框） */
   private confirmClearImageCache(): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '清理图片缓存',
       message: '将清除章节图片列表、列表页与分类缓存，不影响已下载的漫画。',
       buttons: [
@@ -1203,7 +1213,7 @@ struct ProfilePage {
         ImageLoader.clearCache();
         CacheManager.getInstance().then((cache: CacheManager) => {
           let count = cache.clearImageCache();
-          promptAction.showToast({ message: '已清除 ' + count + ' 项缓存', duration: 1600 });
+          showImmersiveToast({ message: '已清除 ' + count + ' 项缓存', duration: 1600 });
         });
       }
     }).catch((err: Error) => {
@@ -1233,7 +1243,7 @@ struct ProfilePage {
 
   /** 清空全部下载（原生确认对话框） */
   private confirmClearAllDownloads(): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '清空全部下载',
       message: '将删除所有已下载漫画的本地文件，且不可恢复。',
       buttons: [
@@ -1244,7 +1254,7 @@ struct ProfilePage {
       if (res.index === 1) {
         DownloadManager.getInstance().clearAll();
         this.refreshStorage();
-        promptAction.showToast({ message: '已清空全部下载', duration: 1600 });
+        showImmersiveToast({ message: '已清空全部下载', duration: 1600 });
       }
     }).catch((err: Error) => {
       console.warn('[ProfilePage] clear downloads dialog failed: ' + JSON.stringify(err));
@@ -1333,7 +1343,7 @@ struct ProfilePage {
       newMap.set(k, newList);
     }
     this.dnsLines = newMap;
-    promptAction.showToast({ message: 'DNS 选择已生效', duration: 1600 });
+    showImmersiveToast({ message: 'DNS 选择已生效', duration: 1600 });
   }
 
   /** 获取线路并测速（双源拉取 + TCP 握手测速） */
@@ -1510,7 +1520,7 @@ struct ProfilePage {
       newMap.set(k, newList);
     }
     this.dnsLines = newMap;
-    promptAction.showToast({ message: '已恢复默认 DNS', duration: 1600 });
+    showImmersiveToast({ message: '已恢复默认 DNS', duration: 1600 });
   }
 
   /** 延迟显示 */
@@ -1547,7 +1557,7 @@ struct ProfilePage {
     this.apiService.logout();
     this.isLoggedIn = false;
     try {
-      promptAction.showToast({ message: '已退出登录', duration: 2000 });
+      showImmersiveToast({ message: '已退出登录', duration: 2000 });
     } catch (e) {
       console.error('[ProfilePage] toast error:', JSON.stringify(e));
     }
@@ -1562,9 +1572,9 @@ struct ProfilePage {
     try {
       await this.apiService.punchIn();
       this.punched = true;
-      promptAction.showToast({ message: '签到成功', duration: 2000 });
+      showImmersiveToast({ message: '签到成功', duration: 2000 });
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '签到失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '签到失败', duration: 2000 });
     } finally {
       this.punching = false;
     }
@@ -1719,7 +1729,7 @@ struct ProfilePage {
 
   /** 删除单条历史（原生确认框） */
   private confirmDeleteHistory(item: HistoryItem): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '删除历史记录',
       message: '删除《' + item.title + '》的浏览记录？',
       buttons: [
@@ -1740,7 +1750,7 @@ struct ProfilePage {
 
   /** 清空全部历史（原生确认框） */
   private confirmClearHistory(): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '清空全部历史',
       message: '将删除所有浏览记录，且不可恢复。',
       buttons: [
@@ -2676,7 +2686,7 @@ struct ProfilePage {
                   AppStorage.setOrCreate('bika_secure_screen', isOn);
                   CacheManager.getInstance().then(c => c.saveSetting('secure_screen', isOn ? 'true' : 'false'));
                   this.applySecureScreen();
-                  promptAction.showToast({
+                  showImmersiveToast({
                     message: isOn ? '已开启防截屏，将禁止截屏/录屏功能' : '已关闭防截屏，恢复截屏/录屏功能',
                     duration: 1600
                   });
@@ -2854,7 +2864,7 @@ struct ProfilePage {
                   this.downloadWifiOnly = isOn;
                   DownloadManager.getInstance().setWifiOnly(isOn);
                   if (isOn && !DownloadManager.getInstance().isWifiNow()) {
-                    promptAction.showToast({ message: '当前非 WiFi 网络，任务将等待 WiFi', duration: 2000 });
+                    showImmersiveToast({ message: '当前非 WiFi 网络，任务将等待 WiFi', duration: 2000 });
                   }
                 })
             }
@@ -3322,7 +3332,7 @@ struct ProfilePage {
                     this.useProxy = checked;
                     ApiService.setUseSystemProxy(checked);
                     CacheManager.getInstance().then(c => c.saveSetting('use_system_proxy', checked ? 'true' : 'false'));
-                    promptAction.showToast({
+                    showImmersiveToast({
                       message: checked ? '已切换系统代理：请求由代理按域名分流' : '已切回应用内 DNS 直连',
                       duration: 2000
                     });
@@ -3847,9 +3857,9 @@ struct ProfilePage {
     try {
       await this.apiService.updateProfile(this.editSlogan);
       this.slogan = this.editSlogan;
-      promptAction.showToast({ message: '资料已更新', duration: 1600 });
+      showImmersiveToast({ message: '资料已更新', duration: 1600 });
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '保存失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '保存失败', duration: 2000 });
     } finally {
       this.editSaving = false;
     }
@@ -3858,19 +3868,19 @@ struct ProfilePage {
   /** 提交修改密码 */
   private async submitPasswordChange(): Promise<void> {
     if (this.oldPassword.length === 0) {
-      promptAction.showToast({ message: '请输入当前密码', duration: 1600 });
+      showImmersiveToast({ message: '请输入当前密码', duration: 1600 });
       return;
     }
     if (this.newPassword.length < 5 || this.newPassword.length > 20) {
-      promptAction.showToast({ message: '新密码需 5-20 位', duration: 1600 });
+      showImmersiveToast({ message: '新密码需 5-20 位', duration: 1600 });
       return;
     }
     if (!/[0-9]/.test(this.newPassword) || !/[a-zA-Z]/.test(this.newPassword) || !/[^0-9a-zA-Z]/.test(this.newPassword)) {
-      promptAction.showToast({ message: '新密码需包含数字、字母与符号', duration: 2000 });
+      showImmersiveToast({ message: '新密码需包含数字、字母与符号', duration: 2000 });
       return;
     }
     if (this.newPassword !== this.confirmNewPassword) {
-      promptAction.showToast({ message: '两次输入的新密码不一致', duration: 1600 });
+      showImmersiveToast({ message: '两次输入的新密码不一致', duration: 1600 });
       return;
     }
     if (this.passwordSaving) {
@@ -3879,12 +3889,12 @@ struct ProfilePage {
     this.passwordSaving = true;
     try {
       await this.apiService.changePassword(this.oldPassword, this.newPassword);
-      promptAction.showToast({ message: '密码已修改，请重新登录', duration: 2000 });
+      showImmersiveToast({ message: '密码已修改，请重新登录', duration: 2000 });
       this.apiService.logout();
       this.isLoggedIn = false;
       router.pushUrl({ url: 'pages/LoginPage' });
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '修改失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '修改失败', duration: 2000 });
     } finally {
       this.passwordSaving = false;
     }
@@ -3906,7 +3916,7 @@ struct ProfilePage {
         readTimeout: 10000
       });
       if (response.responseCode !== 200) {
-        promptAction.showToast({ message: '检查更新失败 (HTTP ' + response.responseCode + ')', duration: 2000 });
+        showImmersiveToast({ message: '检查更新失败 (HTTP ' + response.responseCode + ')', duration: 2000 });
         return;
       }
       let data = JSON.parse(response.result as string) as Record<string, Object>;
@@ -3920,10 +3930,10 @@ struct ProfilePage {
         this.aboutSheetKind = 0;
         this.showAboutSheet = true;
       } else {
-        promptAction.showToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
+        showImmersiveToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
       }
     } catch (err) {
-      promptAction.showToast({ message: '检查更新失败：' + (err as Error).message, duration: 2000 });
+      showImmersiveToast({ message: '检查更新失败：' + (err as Error).message, duration: 2000 });
     } finally {
       this.checkingUpdate = false;
     }
@@ -4093,7 +4103,7 @@ struct ProfilePage {
       let context = getContext(this) as common.UIAbilityContext;
       context.openLink(url);
     } catch (err) {
-      promptAction.showToast({ message: '无法打开链接', duration: 1600 });
+      showImmersiveToast({ message: '无法打开链接', duration: 1600 });
     }
   }
 

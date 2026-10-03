@@ -2,6 +2,7 @@ import { router, promptAction, curves } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, DividerShowType, hdsMaterial } from '@kit.UIDesignKit';
+import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import { ComicDetailViewModel, EpViewModel, ComicViewModel, BikaComicSummary, BikaComment, buildImageUrl } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
@@ -226,7 +227,7 @@ struct ComicDetailPage {
         }
       }
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '操作失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '操作失败', duration: 2000 });
     }
   }
 
@@ -288,7 +289,7 @@ struct ComicDetailPage {
   async sendComment(): Promise<void> {
     let content = this.commentInput.trim();
     if (content.length === 0) {
-      promptAction.showToast({ message: '内容不能为空', duration: 1600 });
+      showImmersiveToast({ message: '内容不能为空', duration: 1600 });
       return;
     }
     if (this.commentSending) {
@@ -298,7 +299,7 @@ struct ComicDetailPage {
     try {
       if (this.replyTarget) {
         await this.apiService.replyToComment(this.replyTarget._id, content);
-        promptAction.showToast({ message: '回复成功', duration: 1600 });
+        showImmersiveToast({ message: '回复成功', duration: 1600 });
         // 若该评论已展开子回复，刷新
         let parentId = this.replyTarget._id;
         if (this.expandedReplies.indexOf(parentId) >= 0) {
@@ -330,13 +331,13 @@ struct ComicDetailPage {
         }
       } else {
         await this.apiService.postComicComment(this.comicId, content);
-        promptAction.showToast({ message: '评论成功', duration: 1600 });
+        showImmersiveToast({ message: '评论成功', duration: 1600 });
         await this.loadComments();
       }
       this.showCommentSheet = false;
       this.showDetailSheet = false;
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '发送失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '发送失败', duration: 2000 });
     } finally {
       this.commentSending = false;
     }
@@ -415,12 +416,12 @@ struct ComicDetailPage {
       await this.apiService.toggleFavourite(this.comicId, this.isFavourited);
       this.isFavourited = !this.isFavourited;
       this.springPop(0);
-      promptAction.showToast({
+      showImmersiveToast({
         message: this.isFavourited ? '已收藏' : '已取消收藏',
         duration: 2000
       });
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '操作失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '操作失败', duration: 2000 });
     } finally {
       this.favLoading = false;
     }
@@ -435,9 +436,9 @@ struct ComicDetailPage {
       await this.apiService.toggleLike(this.comicId);
       this.isLiked = !this.isLiked;
       this.springPop(1);
-      promptAction.showToast({ message: this.isLiked ? '已点赞' : '已取消点赞', duration: 2000 });
+      showImmersiveToast({ message: this.isLiked ? '已点赞' : '已取消点赞', duration: 2000 });
     } catch (err) {
-      promptAction.showToast({ message: (err as Error).message || '操作失败', duration: 2000 });
+      showImmersiveToast({ message: (err as Error).message || '操作失败', duration: 2000 });
     } finally {
       this.favLoading = false;
     }
@@ -464,7 +465,7 @@ struct ComicDetailPage {
       });
     } catch (err) {
       console.warn('[ComicDetailPage] share panel failed: ' + JSON.stringify(err));
-      promptAction.showToast({ message: '无法拉起分享面板', duration: 1600 });
+      showImmersiveToast({ message: '无法拉起分享面板', duration: 1600 });
     }
   }
 
@@ -634,7 +635,7 @@ struct ComicDetailPage {
               let ep = this.chapters.find((e: EpViewModel) => e.order === target);
               this.onChapterClick(ep ?? this.chapters[0]);
             } else {
-              promptAction.showToast({ message: '暂无章节', duration: 1600 });
+              showImmersiveToast({ message: '暂无章节', duration: 1600 });
             }
           })
 
@@ -711,17 +712,17 @@ struct ComicDetailPage {
     }
     let existing = DownloadManager.getInstance().hasTask(this.comicId, ep.order);
     if (existing && existing.status === 'completed') {
-      promptAction.showToast({ message: '该话已下载', duration: 1600 });
+      showImmersiveToast({ message: '该话已下载', duration: 1600 });
       return;
     }
     if (existing && (existing.status === 'waiting' || existing.status === 'downloading')) {
-      promptAction.showToast({ message: '该话已在下载队列', duration: 1600 });
+      showImmersiveToast({ message: '该话已在下载队列', duration: 1600 });
       return;
     }
     DownloadManager.getInstance().addTask(
       this.comicId, this.comic.title, this.comic.coverUrl,
       this.comic.description, this.comic.author, ep.order, ep.title);
-    promptAction.showToast({ message: '已加入下载队列', duration: 1600 });
+    showImmersiveToast({ message: '已加入下载队列', duration: 1600 });
   }
 
   /** 打开下载选择弹窗 */
@@ -774,7 +775,7 @@ struct ComicDetailPage {
     }
     this.showDownloadSheet = false;
     this.showDetailSheet = false;
-    promptAction.showToast({ message: count > 0 ? '已加入 ' + count + ' 话到下载队列' : '所选章节已在队列中', duration: 2000 });
+    showImmersiveToast({ message: count > 0 ? '已加入 ' + count + ' 话到下载队列' : '所选章节已在队列中', duration: 2000 });
   }
 
   

@@ -1,5 +1,6 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
+import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import {
   COLOR_PRIMARY,
@@ -93,31 +94,31 @@ struct RegisterPage {
     // bika BasicInfo 校验顺序：昵称 → 用户名 → 密码
     let nickname = this.name.trim();
     if (nickname.length < 2) {
-      promptAction.showToast({ message: '昵称至少需要 2 个字符', duration: 1600 });
+      showImmersiveToast({ message: '昵称至少需要 2 个字符', duration: 1600 });
       return;
     }
     if (nickname.length > 50) {
-      promptAction.showToast({ message: '昵称不能超过 50 个字符', duration: 1600 });
+      showImmersiveToast({ message: '昵称不能超过 50 个字符', duration: 1600 });
       return;
     }
     let username = this.email.trim();
     if (username.length === 0) {
-      promptAction.showToast({ message: '请输入用户名', duration: 1600 });
+      showImmersiveToast({ message: '请输入用户名', duration: 1600 });
       return;
     }
     if (!/^[a-zA-Z0-9]+$/.test(username)) {
-      promptAction.showToast({ message: '用户名只能包含字母和数字', duration: 2000 });
+      showImmersiveToast({ message: '用户名只能包含字母和数字', duration: 2000 });
       return;
     }
     if (this.password.length < 8) {
-      promptAction.showToast({ message: '密码至少需要 8 个字符', duration: 1600 });
+      showImmersiveToast({ message: '密码至少需要 8 个字符', duration: 1600 });
       return;
     }
     let questions = [this.question1.trim(), this.question2.trim(), this.question3.trim()];
     let answers = [this.answer1.trim(), this.answer2.trim(), this.answer3.trim()];
     for (let i = 0; i < 3; i++) {
       if (questions[i].length === 0 || answers[i].length === 0) {
-        promptAction.showToast({ message: '请完整填写三道密保题', duration: 1600 });
+        showImmersiveToast({ message: '请完整填写三道密保题', duration: 1600 });
         return;
       }
     }
@@ -129,7 +130,7 @@ struct RegisterPage {
     try {
       await this.apiService.register(username, this.password, nickname,
         this.birthday, this.gender, questions, answers);
-      promptAction.showToast({ message: '注册成功，请登录', duration: 2000 });
+      showImmersiveToast({ message: '注册成功，请登录', duration: 2000 });
       AppStorage.set('reg_email', username);
       router.back();
     } catch (err) {
@@ -139,7 +140,7 @@ struct RegisterPage {
         msg = '注册失败：昵称可能已被占用，请换一个昵称；用户名只能包含字母和数字，密码至少 8 个字符';
       }
       this.registerError = msg;
-      promptAction.showToast({ message: msg, duration: 2400 });
+      showImmersiveToast({ message: msg, duration: 2400 });
     } finally {
       this.registering = false;
     }

@@ -15,6 +15,13 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // 应用级开启沉浸光感（弹窗类组件/接口全页面生效），需 targetSdkVersion >= 26.0.0
+    "metadata": [
+      {
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
+      }
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"

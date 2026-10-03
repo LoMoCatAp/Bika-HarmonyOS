@@ -1,6 +1,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
+import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
 import {
@@ -102,7 +103,7 @@ struct LoginPage {
     try {
       await this.apiService.signIn(this.email.trim(), this.password);
       console.info('[LoginPage] 登录成功');
-      promptAction.showToast({ message: '登录成功', duration: 2000 });
+      showImmersiveToast({ message: '登录成功', duration: 2000 });
       router.back();
     } catch (err) {
       let msg = (err as Error).message;
@@ -142,7 +143,7 @@ struct LoginPage {
 
   /** 忘记密码：哔咔通过官网处理密码找回（bika 原版亦为占位提示） */
   private showForgotPasswordDialog(): void {
-    promptAction.showDialog({
+    showImmersiveDialog({
       title: '找回密码',
       message: '密码找回需前往哔咔官网处理。是否打开官网？',
       buttons: [
@@ -155,7 +156,7 @@ struct LoginPage {
           let context = getContext(this) as common.UIAbilityContext;
           context.openLink('https://www.picacomic.com');
         } catch (err) {
-          promptAction.showToast({ message: '无法打开链接', duration: 1600 });
+          showImmersiveToast({ message: '无法打开链接', duration: 1600 });
         }
       }
     }).catch((err: Error) => {

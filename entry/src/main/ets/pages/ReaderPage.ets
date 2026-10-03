@@ -1,8 +1,9 @@
-import { router, promptAction, window, display } from '@kit.ArkUI';
+import { router, window, display } from '@kit.ArkUI';
 import { unifiedDataChannel } from '@kit.ArkData';
 import { inputConsumer, KeyCode } from '@kit.InputKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
+import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
@@ -636,7 +637,7 @@ struct ReaderPage {
     }
     this.exporting = true;
     this.showSheet = false;
-    promptAction.showToast({ message: '正在导出，请稍候…', duration: 1600 });
+    showImmersiveToast({ message: '正在导出，请稍候…', duration: 1600 });
     try {
       let bytes = await this.collectChapterBytes();
       let ctx = getContext(this) as common.UIAbilityContext;
@@ -668,10 +669,10 @@ struct ReaderPage {
         let dest = fs.openSync(uris[0], fs.OpenMode.READ_WRITE);
         fs.writeSync(dest.fd, buf);
         fs.closeSync(dest);
-        promptAction.showToast({ message: '已保存', duration: 1600 });
+        showImmersiveToast({ message: '已保存', duration: 1600 });
       }
     } catch (err) {
-      promptAction.showToast({ message: '导出失败：' + (err as Error).message, duration: 2000 });
+      showImmersiveToast({ message: '导出失败：' + (err as Error).message, duration: 2000 });
     } finally {
       this.exporting = false;
     }
