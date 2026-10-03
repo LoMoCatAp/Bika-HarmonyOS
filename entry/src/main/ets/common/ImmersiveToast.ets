@@ -3,7 +3,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 
 /**
  * 沉浸光感弹窗（Toast / Dialog）
- * - API 26+：为系统弹窗套用沉浸材质（systemMaterial），并关闭默认背景模糊让材质接管
+ * - API 26+：为系统弹窗套用沉浸材质（systemMaterial），保留系统默认背景模糊
  * - 旧设备：保持系统默认样式（不构造材质对象，避免低版本模块缺失）
  */
 
@@ -32,9 +32,10 @@ function popupMaterial(): uiMaterial.Material | undefined {
     return undefined;
   }
   try {
+    // 注意：materialColor 必须带透明度，完全不通明会彻底挡住材质效果
     return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-      materialColor: isDarkMode() ? '#1B2029' : '#FFFFFF',
+      style: uiMaterial.ImmersiveStyle.THIN,
+      materialColor: Color.Transparent,
       applyShadow: false,
       interactive: false,
       lightEffect: { color: ACCENT_HEX }
@@ -53,7 +54,6 @@ export function showImmersiveToast(options: promptAction.ShowToastOptions): void
   const material = popupMaterial();
   if (material !== undefined) {
     options.systemMaterial = material;
-    options.backgroundBlurStyle = BlurStyle.NONE;
     console.info('[ImmersiveToast] toast material applied, api=' + deviceInfo.sdkApiVersion);
   } else {
     console.info('[ImmersiveToast] fallback default toast, api=' + deviceInfo.sdkApiVersion);
@@ -71,7 +71,6 @@ export function showImmersiveDialog(
   const material = popupMaterial();
   if (material !== undefined) {
     options.systemMaterial = material;
-    options.backgroundBlurStyle = BlurStyle.NONE;
     console.info('[ImmersiveToast] dialog material applied, api=' + deviceInfo.sdkApiVersion);
   }
   return promptAction.showDialog(options);
