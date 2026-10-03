@@ -2,6 +2,7 @@ import { Context } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BikaHttpClient } from '../network/BikaHttpClient';
+import { IMAGE_HOST_POOL } from './Constants';
 
 const DOMAIN = 0x0000;
 const TAG = 'WidgetCover';
@@ -80,8 +81,14 @@ export class WidgetCover {
    * 见 AMS extension_running_timeout_monitor），所以这里取 4 让一批下完。
    */
   static readonly MAX_CONCURRENCY: number = 4;
-  /** 单张封面超时（毫秒）：必须给「取数 + 下载 + updateForm」留足余量 */
-  static readonly TIMEOUT_MS: number = 1500;
+  /** 单张封面的单次尝试超时（毫秒）：必须给「取数 + 下载 + updateForm」留足余量 */
+  static readonly TIMEOUT_MS: number = 1000;
+  /**
+   * 同一路径最多尝试几个镜像站。
+   * 实测不同接口给出的 fileServer 不一定都能直连（合辑/收藏返回的是裸文件名 + 另一个存储域），
+   * 必须像主应用 ImageLoader 那样按镜像池回退，否则封面永远下不来。
+   */
+  static readonly MAX_CANDIDATES: number = 2;
   /** 单张封面大小上限（官方单图 2MB，这里留安全余量） */
   static readonly MAX_BYTES: number = 1500 * 1024;
 
@@ -130,18 +137,24 @@ export class WidgetCover {
       if (req === undefined || req === null || req.url.length === 0) {
         continue;
       }
+      // 环节 2：按候选 URL 依次尝试（原地址 → 镜像池同路径），任一成功即用
+      let candidates: string[] = WidgetCover.candidatesOf(req.url);
       let bytes: ArrayBuffer | null = null;
-      try {
-        bytes = await WidgetCover.fetchWithTimeout(req.url, WidgetCover.TIMEOUT_MS);
-      } catch (firstErr) {
-        // 环节 2：下载失败（超时 / 非 200 / 网络不可达）→ 立刻重试一次（镜像站本身不稳）
+      for (let ci = 0; ci < candidates.length; ci++) {
         try {
-          bytes = await WidgetCover.fetchWithTimeout(req.url, WidgetCover.TIMEOUT_MS);
+          let buf: ArrayBuffer = await WidgetCover.fetchWithTimeout(candidates[ci], WidgetCover.TIMEOUT_MS);
+          if (buf.byteLength > 0) {
+            bytes = buf;
+            break;
+          }
         } catch (err) {
-          hilog.warn(DOMAIN, TAG, 'download failed biz=%{public}s url=%{public}s err=%{public}s',
-            req.bizKey, WidgetCover.hostOf(req.url), JSON.stringify(err));
-          continue;
+          // 该候选不可用，换下一个
         }
+      }
+      if (bytes === null) {
+        hilog.warn(DOMAIN, TAG, 'download failed biz=%{public}s tried=%{public}d primary=%{public}s',
+          req.bizKey, candidates.length, WidgetCover.hostOf(req.url));
+        continue;
       }
       if (bytes === null || bytes.byteLength === 0) {
         hilog.warn(DOMAIN, TAG, 'download empty biz=%{public}s url=%{public}s', req.bizKey, WidgetCover.hostOf(req.url));
@@ -159,17 +172,7 @@ export class WidgetCover {
         let path: string = dir + '/' + memKey;
         let file = fileIo.openSync(path,
           fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-        let written: number = fileIo.writeSync(file.fd, bytes);
-        // 环节 3：确认沙箱里真的落了盘、fd 有效
-        let size: number = -1;
-        try {
-          size = fileIo.statSync(path).size;
-        } catch (e) {
-          size = -1;
-        }
-        hilog.info(DOMAIN, TAG,
-          'cover ready biz=%{public}s bytes=%{public}d written=%{public}d fd=%{public}d size=%{public}d file=%{public}s',
-          req.bizKey, bytes.byteLength, written, file.fd, size, memKey);
+        fileIo.writeSync(file.fd, bytes);
         bundle.put(req.bizKey, memKey, file.fd, file);
       } catch (err) {
         hilog.error(DOMAIN, TAG, 'write failed biz=%{public}s err=%{public}s', req.bizKey, JSON.stringify(err));
@@ -275,6 +278,39 @@ export class WidgetCover {
     } catch (err) {
       // 目录不可读：忽略，不影响本次刷新
     }
+  }
+
+  /**
+   * 生成候选 URL：原地址优先，其后是镜像池里「同路径 + 换 host」的变体。
+   * 主应用 ImageLoader 就是这么做的；卡片侧原来只试一个地址，
+   * 一旦服务端给的 fileServer 不可直连，封面就永远出不来。
+   */
+  private static candidatesOf(url: string): string[] {
+    let out: string[] = [];
+    if (url.length === 0) {
+      return out;
+    }
+    out.push(url);
+    let schemeIdx: number = url.indexOf('://');
+    if (schemeIdx < 0) {
+      return out;
+    }
+    let hostStart: number = schemeIdx + 3;
+    let pathIdx: number = url.indexOf('/', hostStart);
+    if (pathIdx < 0) {
+      return out;
+    }
+    let path: string = url.substring(pathIdx);
+    for (let host of IMAGE_HOST_POOL) {
+      let cand: string = host + path;
+      if (out.indexOf(cand) < 0) {
+        out.push(cand);
+      }
+      if (out.length >= WidgetCover.MAX_CANDIDATES) {
+        break;
+      }
+    }
+    return out;
   }
 
   /** 只取 host，日志里不外泄完整图片地址 */

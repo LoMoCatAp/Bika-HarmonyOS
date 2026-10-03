@@ -14,8 +14,7 @@ import { WidgetData } from './WidgetData';
  * 真实数据来源（不写死任何示例数据）：
  * - 排行榜：ApiService.getLeaderboard('D7')      → GET comics/leaderboard?tt=D7&ct=VC
  * - 我的收藏：ApiService.getFavourites('dd', 1)  → GET users/favourite?page=1&s=dd（需登录）
- * - 为你推荐：ApiService.getCollections()        → GET collections（推荐分区）
- *              为空时回退 ApiService.getRandomComics() → GET comics/random
+ * - 为你推荐：ApiService.getRandomComics()       → GET comics/random（与排行榜同构的漫画列表）
  *
  * 统一约束：
  * - 所有网络请求 5 秒超时，超时立即返回安全默认值；
@@ -208,7 +207,7 @@ export class WidgetExtraData {
       }
       return WidgetExtraData.readCachedItems(cacheKey, ctx);
     } catch (err) {
-      console.info('[WidgetExtraData] network fallback to cache: ' + JSON.stringify(err));
+      console.debug('[WidgetExtraData] network fallback to cache: ' + JSON.stringify(err));
       return WidgetExtraData.readCachedItems(cacheKey, ctx);
     }
   }
@@ -225,16 +224,20 @@ export class WidgetExtraData {
     return WidgetExtraData.toItems(res.comics, false);
   }
 
+  /**
+   * 推荐取数：comics/random（与排行榜同构的漫画列表，thumb 可直接 buildImageUrl）。
+   *
+   * 注意：这里只发一次请求。卡片进程生命周期只有 10s，串多个网络兜底会被强杀，
+   * 失败交给 loadItems 走本地缓存。
+   */
   private static async fetchRecommend(): Promise<WidgetExtraItem[]> {
+    // 只发一次请求：comics/random 返回 data.comics[]（BikaComicSummary），
+    // 与已验证可用的排行榜完全同构，thumb 可直接 buildImageUrl。
+    //
+    // 注意：**不要在这里串多个网络兜底**（曾试过 random → leaderboard → collections 三连），
+    // 卡片进程生命周期只有 10s，三个请求串起来必然超时被强杀，结果就是
+    // 卡片只剩缓存里的标题、封面一张都下不来。失败就交给 loadItems 走本地缓存。
     let api = ApiService.getInstance();
-    try {
-      let collections = await api.getCollections();
-      if (collections && collections.length > 0) {
-        return WidgetExtraData.toItems(collections, false);
-      }
-    } catch (err) {
-      console.info('[WidgetExtraData] collections failed, try random: ' + JSON.stringify(err));
-    }
     let randoms = await api.getRandomComics();
     return WidgetExtraData.toItems(randoms, false);
   }
@@ -243,15 +246,8 @@ export class WidgetExtraData {
   private static toItems(comics: BikaComicSummary[], withRank: boolean): WidgetExtraItem[] {
     let list: WidgetExtraItem[] = [];
     if (!comics) {
-      console.info('[WidgetExtraData] api returned null list');
       return list;
     }
-    // 环节 1：确认接口确实返回了条目、且封面对应的原始字段取到了值
-    let firstThumb: string = '';
-    if (comics.length > 0 && comics[0] && comics[0].thumb) {
-      firstThumb = comics[0].thumb.path;
-    }
-    console.info('[WidgetExtraData] api items=' + comics.length + ' thumb.path=' + firstThumb);
     for (let i = 0; i < comics.length && list.length < WidgetExtraData.MAX_ITEMS; i++) {
       let c: BikaComicSummary = comics[i];
       if (!c || !c.title || c.title.length === 0) {
@@ -260,7 +256,13 @@ export class WidgetExtraData {
       let item = new WidgetExtraItem();
       item.id = c._id ? c._id : '';
       item.title = c.title;
-      item.cover = buildImageUrl(c.thumb);
+      // 结构不完整的条目（例如合辑内层对象没有 thumb）不能让整批取数失败，
+      // 只是这张没有封面，其余照常下发。
+      try {
+        item.cover = c.thumb ? buildImageUrl(c.thumb) : '';
+      } catch (err) {
+        item.cover = '';
+      }
       // 名次用原始榜单下标（跳过无标题项也保持真实排名）
       item.rank = withRank ? (i + 1) : 0;
       item.coverKey = '';
@@ -323,7 +325,7 @@ export class WidgetExtraData {
     let data = new WidgetRankFormData();
     try {
       let items = await WidgetExtraData.loadRankItems(ctx);
-      let bundle = await WidgetExtraData.prepareCovers(items, ctx);
+      let bundle = await WidgetExtraData.prepareCovers(items, 'rank', ctx);
       data.rankJson = WidgetExtraData.toCardJson(items);
       data.extraShowCover = WidgetExtraData.isCoverEnabled(ctx) ? 'true' : 'false';
       WidgetCover.attach(data, bundle);
@@ -338,7 +340,7 @@ export class WidgetExtraData {
     let data = new WidgetFavoritesFormData();
     try {
       let items = await WidgetExtraData.loadFavoriteItems(ctx);
-      let bundle = await WidgetExtraData.prepareCovers(items, ctx);
+      let bundle = await WidgetExtraData.prepareCovers(items, 'fav', ctx);
       data.favJson = WidgetExtraData.toCardJson(items);
       data.extraShowCover = WidgetExtraData.isCoverEnabled(ctx) ? 'true' : 'false';
       WidgetCover.attach(data, bundle);
@@ -353,7 +355,7 @@ export class WidgetExtraData {
     let data = new WidgetRecommendFormData();
     try {
       let items = await WidgetExtraData.loadRecommendItems(ctx);
-      let bundle = await WidgetExtraData.prepareCovers(items, ctx);
+      let bundle = await WidgetExtraData.prepareCovers(items, 'rec', ctx);
       data.recJson = WidgetExtraData.toCardJson(items);
       data.extraShowCover = WidgetExtraData.isCoverEnabled(ctx) ? 'true' : 'false';
       WidgetCover.attach(data, bundle);
@@ -377,14 +379,15 @@ export class WidgetExtraData {
       await WidgetExtraData.loadFavoriteItems(ctx);
       await WidgetExtraData.loadRecommendItems(ctx);
     } catch (err) {
-      console.info('[WidgetExtraData] bootstrapCache skipped: ' + JSON.stringify(err));
+      console.debug('[WidgetExtraData] bootstrapCache skipped: ' + JSON.stringify(err));
     }
   }
 
   // ═══════════════ 封面：交给 common/WidgetCover.ets 统一处理 ═══════════════
 
   /** 把列表项的 http 封面交给 WidgetCover 并发下载，并把 coverKey 写回列表项 */
-  private static async prepareCovers(items: WidgetExtraItem[], ctx?: Context): Promise<WidgetCoverBundle> {
+  private static async prepareCovers(items: WidgetExtraItem[], prefix: string,
+    ctx?: Context): Promise<WidgetCoverBundle> {
     for (let it of items) {
       it.coverKey = '';
     }
@@ -397,13 +400,13 @@ export class WidgetExtraData {
         continue;
       }
       let req = new WidgetCoverRequest();
-      req.bizKey = 'i' + i;
+      req.bizKey = prefix + '_' + i;
       req.url = items[i].cover;
       requests.push(req);
     }
     let bundle: WidgetCoverBundle = await WidgetCover.prepare(requests, ctx);
     for (let i = 0; i < items.length; i++) {
-      items[i].coverKey = bundle.coverKeyOf('i' + i);
+      items[i].coverKey = bundle.coverKeyOf(prefix + '_' + i);
     }
     return bundle;
   }

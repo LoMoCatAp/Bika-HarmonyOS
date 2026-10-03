@@ -52,28 +52,11 @@ struct RecommendCard {
     } catch (err) {
       rows = [];
     }
-    try {
-      console.info('[BikaWidget:RecommendCard] showCover=' + this.extraShowCover + ' rows=' + rows.length +
-        ' key0=' + (rows.length > 0 ? rows[0].coverKey : ''));
-    } catch (e) {
-    }
     return rows;
   }
 
   private canShowCover(coverKey: string): boolean {
     return this.extraShowCover !== 'false' && coverKey.length > 0;
-  }
-
-  private keyAt(rows: RecommendRow[], i: number): string {
-    return i < rows.length ? rows[i].coverKey : '';
-  }
-
-  private titleAt(rows: RecommendRow[], i: number): string {
-    return i < rows.length ? rows[i].title : '';
-  }
-
-  private idAt(rows: RecommendRow[], i: number): string {
-    return i < rows.length ? rows[i].id : '';
   }
 
   private openComic(id: string, title: string): void {
@@ -82,40 +65,6 @@ struct RecommendCard {
       abilityName: this.ABILITY_NAME,
       params: { action: 'open_comic', comicId: id, comicTitle: title }
     });
-  }
-
-  @Builder
-  coverCell(rows: RecommendRow[], index: number) {
-    Column() {
-      Stack() {
-        if (this.canShowCover(this.keyAt(rows, index))) {
-          Image('memory://' + this.keyAt(rows, index))
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-        } else {
-          Text('')
-            .width('100%')
-            .height('100%')
-            .backgroundColor($r('app.color.bika_placeholder'))
-        }
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .borderRadius(8)
-      .clip(true)
-
-      Text(this.titleAt(rows, index))
-        .fontSize(11)
-        .fontColor($r('app.color.bika_text_title'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 4 })
-    }
-    .layoutWeight(1)
-    .height('100%')
-    .margin({ left: 3, right: 3 })
-    .onClick((): void => this.openComic(this.idAt(rows, index), this.titleAt(rows, index)))
   }
 
   build() {
@@ -178,21 +127,79 @@ struct RecommendCard {
         .margin({ top: 8 })
       } else {
         Column() {
+          // key 必须带 coverKey：封面是二次刷新才下发的；key 不变时 ArkUI 会复用
+          // 「还是骨架色块」的旧节点，封面永远不出现（与排行榜 ForEach 同款修法）
           Row() {
-            this.coverCell(this.parseRows(), 0)
-            if (this.parseRows().length > 1) {
-              this.coverCell(this.parseRows(), 1)
-            }
+            ForEach(this.parseRows().slice(0, 2), (item: RecommendRow, idx: number) => {
+              Column() {
+                Stack() {
+                  if (this.canShowCover(item.coverKey)) {
+                    Image('memory://' + item.coverKey)
+                      .width('100%')
+                      .height('100%')
+                      .objectFit(ImageFit.Cover)
+                  } else {
+                    Text('')
+                      .width('100%')
+                      .height('100%')
+                      .backgroundColor($r('app.color.bika_placeholder'))
+                  }
+                }
+                .width('100%')
+                .layoutWeight(1)
+                .borderRadius(8)
+                .clip(true)
+
+                Text(item.title)
+                  .fontSize(11)
+                  .fontColor($r('app.color.bika_text_title'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .margin({ top: 4 })
+              }
+              .layoutWeight(1)
+              .height('100%')
+              .margin({ left: 3, right: 3 })
+              .onClick((): void => this.openComic(item.id, item.title))
+            }, (item: RecommendRow, idx: number) => 'r0_' + item.id + '_' + item.coverKey)
           }
           .width('100%')
           .layoutWeight(1)
 
           if (this.parseRows().length > 2) {
             Row() {
-              this.coverCell(this.parseRows(), 2)
-              if (this.parseRows().length > 3) {
-                this.coverCell(this.parseRows(), 3)
-              }
+              ForEach(this.parseRows().slice(2, 4), (item: RecommendRow, idx: number) => {
+                Column() {
+                  Stack() {
+                    if (this.canShowCover(item.coverKey)) {
+                      Image('memory://' + item.coverKey)
+                        .width('100%')
+                        .height('100%')
+                        .objectFit(ImageFit.Cover)
+                    } else {
+                      Text('')
+                        .width('100%')
+                        .height('100%')
+                        .backgroundColor($r('app.color.bika_placeholder'))
+                    }
+                  }
+                  .width('100%')
+                  .layoutWeight(1)
+                  .borderRadius(8)
+                  .clip(true)
+
+                  Text(item.title)
+                    .fontSize(11)
+                    .fontColor($r('app.color.bika_text_title'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 4 })
+                }
+                .layoutWeight(1)
+                .height('100%')
+                .margin({ left: 3, right: 3 })
+                .onClick((): void => this.openComic(item.id, item.title))
+              }, (item: RecommendRow, idx: number) => 'r1_' + item.id + '_' + item.coverKey)
             }
             .width('100%')
             .layoutWeight(1)

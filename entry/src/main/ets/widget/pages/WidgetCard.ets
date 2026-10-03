@@ -37,15 +37,6 @@ struct WidgetCard {
     });
   }
 
-  /** 排障：确认卡片侧真实收到的下发字段 */
-  private trace(): void {
-    try {
-      console.info('[BikaWidget:WidgetCard] showCover=' + this.showCover +
-        ' coverKey=' + this.continueCoverKey + ' title=' + this.continueTitle);
-    } catch (err) {
-    }
-  }
-
   build() {
     Column() {
       Row() {
@@ -131,6 +122,5 @@ struct WidgetCard {
     .backgroundColor($r('app.color.bika_card'))
     .borderRadius(16)
     .onClick((): void => this.openReader())
-    .onAppear((): void => this.trace())
   }
 }

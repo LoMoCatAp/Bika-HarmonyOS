@@ -28,3 +28,5 @@
 # agent 调试日志残渣
 /*.log
 /**/*.log
+/hilog-stream.txt
+/regress-verify/
