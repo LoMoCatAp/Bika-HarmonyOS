@@ -19,3 +19,12 @@
 /lomocat-profile-README.md
 /Bika.png
 /TASK-titlebar-immersive.md
+# 卡片/深链等阶段性验证截图与交接文档（本地保留，不入库）
+/WIDGET-PATCH-B.md
+/WIDGET-PATCH-C.md
+/widget-verify/
+/deep-link-verify/
+
+# agent 调试日志残渣
+/*.log
+/**/*.log

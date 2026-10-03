@@ -5,7 +5,7 @@ import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ConfigurationConstant, common } from '@kit.AbilityKit';
 import { ApiService, ComicsPageResult } from '../network/ApiService';
-import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, BikaComment } from '../models/Comic';
+import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, BikaComment, BikaComicDetail } from '../models/Comic';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
@@ -787,7 +787,10 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     date: '2026-10-04',
     items: [
       '新增：页面标题栏沉浸光感效果 —— 静止时完全透明，上滑时顶部渐显模糊，内容从标题栏下方穿过',
-      '覆盖「我的」全部 12 个子页：收藏 / 历史 / 下载 / 通知 / 我的评论 / 设置 / 关于 / 存储与空间 / DNS 优化 / 屏蔽标签 / 资料编辑 / 账号与安全'
+      '覆盖「我的」全部 12 个子页：收藏 / 历史 / 下载 / 通知 / 我的评论 / 设置 / 关于 / 存储与空间 / DNS 优化 / 屏蔽标签 / 资料编辑 / 账号与安全',
+      '新增：桌面小组件，共 5 张卡片 —— 继续阅读 / 最近更新 / 排行榜 / 我的收藏 / 为你推荐',
+      '卡片支持真实封面与内容，点击卡片可直达阅读器或作品详情页，并跟随系统深浅色',
+      '设置新增「桌面卡片」分组，可控制卡片是否显示真实内容与封面'
     ]
   },
   {
@@ -1093,6 +1096,9 @@ struct ProfilePage {
   /** 常规设置 */
   @State autoPunch: boolean = false;
   @State secureScreen: boolean = false;
+  /** 桌面卡片设置（与 CacheManager 的 setting_ 前缀约定一致） */
+  @State widgetShowRealData: boolean = false;
+  @State widgetShowCover: boolean = false;
   /** 存储占用（字节） */
   @State downloadSizeBytes: number = 0;
   @State cacheSizeBytes: number = 0;
@@ -1125,6 +1131,10 @@ struct ProfilePage {
   @State dnsImageIps: string[] = [];
   @State punching: boolean = false;
   @StorageLink('download_revision') @Watch('onDownloadChanged') downloadRevision: number = 0;
+  /** 桌面卡片深链转交的「打开子页面」信号（IndexPage → 本页 NavPathStack） */
+  @StorageLink('bika_open_subpage') @Watch('onSubpageSignalChanged') subpageSignal: string = '';
+  /** 已消费的子页面信号时间戳，保证同一信号只打开一次 */
+  private lastSubpageSignalTs: number = 0;
   @State downloadList: DownloadTask[] = [];
   @State punched: boolean = false;
   /** 关于弹窗（bindSheet） */
@@ -1162,7 +1172,11 @@ struct ProfilePage {
     }
     CacheManager.getInstance().then(cache => {
       this.cache = cache;
+      this.widgetShowRealData = cache.getSetting('widget_show_real_data', 'false') === 'true';
+      this.widgetShowCover = cache.getSetting('widget_show_cover', 'false') === 'true';
     });
+    // 冷启动时页面可能晚于信号创建，@Watch 不会补发，这里主动检查一次
+    this.consumeSubpageSignal();
   }
 
   /** 登录态变化：登录成功自动拉取资料 */
@@ -1227,6 +1241,14 @@ struct ProfilePage {
     WindowHelper.applyPrivacyMode(this.secureScreen).catch((err: Error) => {
       console.warn('[ProfilePage] privacy mode failed: ' + JSON.stringify(err));
     });
+  }
+
+  /**
+   * 桌面卡片设置变更：动态卡片会在下一次系统刷新或重新添加后生效。
+   * 主应用拿不到 formId，这里只提示用户，不盲目调用 updateForm。
+   */
+  private notifyWidgetRefresh(): void {
+    showImmersiveToast({ message: '设置已保存，请重新添加卡片或等待自动刷新', duration: 1800 });
   }
 
   /** 清理图片缓存（原生确认对话框） */
@@ -1684,6 +1706,37 @@ struct ProfilePage {
     if (this.stack.size() === 0) {
       AppStorage.set('bika_subpage_open', false);
     }
+  }
+
+  /** IndexPage 转交的子页面信号到达（桌面卡片深链：如 2*2 卡片无作品 id → 浏览历史） */
+  onSubpageSignalChanged(): void {
+    this.consumeSubpageSignal();
+  }
+
+  /** 打开 IndexPage 转交的子页面；同一 timestamp 只消费一次，避免与 aboutToAppear 重复 */
+  private consumeSubpageSignal(): void {
+    let raw: string = this.subpageSignal;
+    if (raw.length === 0) {
+      return;
+    }
+    let name: string = '';
+    let ts: number = 0;
+    try {
+      let signal = JSON.parse(raw) as SubpageOpenSignal;
+      name = signal.name ?? '';
+      ts = signal.timestamp ?? 0;
+    } catch (err) {
+      console.error('[ProfilePage] subpage signal parse failed: ' + JSON.stringify(err));
+      return;
+    }
+    if (name.length === 0 || ts <= this.lastSubpageSignalTs) {
+      return;
+    }
+    this.lastSubpageSignalTs = ts;
+    // 等页签切换与页面骨架渲染完成后再压栈
+    setTimeout((): void => {
+      this.openSubpage(name);
+    }, 160);
   }
 
   // ── 子页面数据加载 ──
@@ -2982,6 +3035,76 @@ struct ProfilePage {
             .width('100%')
             .height(58)
             .padding({ left: 16, right: 16 })
+          }
+          .width('100%')
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
+
+          Text('桌面卡片')
+            .fontSize(14)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .width('100%')
+            .margin({ top: 4 })
+          Column({ space: 0 }) {
+            Row() {
+              SymbolGlyph($r('sys.symbol.rectangle_portrait_on_rectangle_portrait'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('显示真实内容')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('卡片展示作品名与阅读进度')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.widgetShowRealData })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((isOn: boolean) => {
+                  this.widgetShowRealData = isOn;
+                  CacheManager.getInstance().then(c => c.saveSetting('widget_show_real_data', isOn ? 'true' : 'false'));
+                  this.notifyWidgetRefresh();
+                })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+
+            Divider().margin({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.doc_text'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('显示封面')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('卡片展示作品封面')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.widgetShowCover })
+                .selectedColor(COLOR_PRIMARY)
+                .onChange((isOn: boolean) => {
+                  this.widgetShowCover = isOn;
+                  CacheManager.getInstance().then(c => c.saveSetting('widget_show_cover', isOn ? 'true' : 'false'));
+                  this.notifyWidgetRefresh();
+                })
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 16, right: 16 })
+
           }
           .width('100%')
           .backgroundColor(Color.Transparent)
@@ -4471,6 +4594,20 @@ struct ProfilePage {
   }
 }
 
+/** 桌面卡片 FormLink 回传的动作参数（EntryAbility 解析后经 AppStorage 转入） */
+interface WidgetActionParams {
+  action?: string;
+  comicId?: string;
+  comicTitle?: string;
+  timestamp?: number;
+}
+
+/** 打开「我的」内子页面的信号（IndexPage → ProfilePage 转交） */
+interface SubpageOpenSignal {
+  name: string;
+  timestamp: number;
+}
+
 /**
  * 根容器 — HdsTabs 悬浮页签（首页 / 我的）
  * 沉浸光感页签 + 子页面打开时页签收起动画
@@ -4478,6 +4615,8 @@ struct ProfilePage {
 @Entry
 @Component
 struct IndexPage {
+  /** 桌面卡片点击深链：EntryAbility 每次写入都带新的 timestamp，用 @Watch 感知新事件 */
+  @StorageLink('bika_widget_action') @Watch('onWidgetActionChanged') widgetAction: string = '';
   @StorageLink('bika_subpage_open') @Watch('onSubpageChanged') subpageOpen: boolean = false;
   @StorageLink('bika_goto_profile') @Watch('onGotoProfile') gotoProfile: number = 0;
   @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
@@ -4486,6 +4625,7 @@ struct IndexPage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
   private tabsController: HdsTabsController = new HdsTabsController();
+  private apiService: ApiService = ApiService.getInstance();
 
   aboutToAppear(): void {
     AppStorage.setOrCreate('bika_material_level', this.materialLevel);
@@ -4518,8 +4658,173 @@ struct IndexPage {
     }
   }
 
+  // ══════════════ 桌面卡片点击深链 ══════════════
+  // 卡片的 FormLink 会带 params 拉起 EntryAbility，EntryAbility 解析后写入
+  // AppStorage('bika_widget_action')（JSON 字符串 + 自增 timestamp），本页消费并跳转。
+
+  /** 卡片事件到达（应用在前台/后台点击卡片时由 @Watch 触发） */
+  onWidgetActionChanged(): void {
+    // 稍等窗口回到前台，避免在后台 push 路由被丢弃
+    setTimeout((): void => {
+      this.consumeWidgetAction();
+    }, 150);
+  }
+
+  /**
+   * 消费桌面卡片事件并跳转。
+   * 两个入口：@Watch（onNewWant 热启动）与 onPageShow（onCreate 冷启动兜底）；
+   * 先把 AppStorage 里的值清空再跳转，保证同一事件只处理一次。
+   */
+  private consumeWidgetAction(): void {
+    let raw: string = this.widgetAction;
+    if (raw.length === 0) {
+      return;
+    }
+    // @StorageLink 赋值即写回 AppStorage：先消费掉，避免从子页返回首页时重复触发
+    this.widgetAction = '';
+    let action: string = '';
+    let comicId: string = '';
+    let comicTitle: string = '';
+    try {
+      let payload = JSON.parse(raw) as WidgetActionParams;
+      action = payload.action ?? '';
+      comicId = payload.comicId ?? '';
+      comicTitle = payload.comicTitle ?? '';
+    } catch (err) {
+      console.error('[IndexPage] widget action parse failed: ' + JSON.stringify(err));
+      return;
+    }
+    console.info('[IndexPage] widget action = ' + action + ', comicId = ' + comicId);
+    // 延后一帧，等页签/页面骨架就绪后再跳转
+    setTimeout((): void => {
+      if (action === 'continue_reading') {
+        if (comicId.length > 0) {
+          this.openWidgetReader(comicId, comicTitle);
+        } else {
+          // 无作品 id（卡片还没拿到历史数据）→ 打开「我的 → 浏览历史」
+          this.openProfileSubpage('history');
+        }
+      } else if (action === 'open_favourites') {
+        // 收藏卡片顶部 / 快捷入口「收藏」→ 我的 → 我的收藏
+        this.openProfileSubpage('favourites');
+      } else if (action === 'open_history') {
+        // 快捷入口「历史」→ 我的 → 浏览历史
+        this.openProfileSubpage('history');
+      } else if (action === 'open_recommend') {
+        // 快捷入口「推荐」→ 首页「推荐」频道页
+        router.pushUrl({
+          url: 'pages/ChannelListPage',
+          params: { label: '推荐', kind: 'recommend' }
+        });
+      } else if (action === 'open_leaderboard') {
+        // 排行榜卡片顶部 → 榜单频道页
+        router.pushUrl({
+          url: 'pages/ChannelListPage',
+          params: { label: '排行榜', kind: 'leaderboard' }
+        });
+      } else if (action === 'open_search') {
+        // 快捷入口「搜索」→ 搜索页
+        router.pushUrl({ url: 'pages/SearchPage' });
+      } else if (action === 'open_comic' || action === 'recent') {
+        if (comicId.length > 0) {
+          router.pushUrl({
+            url: 'pages/ComicDetailPage',
+            params: { comicId: comicId, comicTitle: comicTitle }
+          });
+        } else {
+          // 无作品 id → 打开「最近更新」频道页
+          router.pushUrl({
+            url: 'pages/ChannelListPage',
+            params: { label: '最近更新', kind: 'recent' }
+          });
+        }
+      }
+    }, 80);
+  }
+
+  /**
+   * 「继续阅读」：直接打开阅读器并定位到本地记录的上次阅读话数。
+   * epsCount 只用于阅读器内的「上一话 / 下一话」按钮，异步尽力获取，
+   * 超时或失败一律回退 1，绝不阻塞卡片跳转。
+   */
+  private async openWidgetReader(comicId: string, comicTitle: string): Promise<void> {
+    let order: number = 1;
+    let coverUrl: string = '';
+    try {
+      let cache = await CacheManager.getInstance();
+      let saved: number = cache.getReadProgress(comicId);
+      if (saved > 0) {
+        order = saved;
+      }
+      let items: HistoryItem[] = cache.loadHistory();
+      for (let item of items) {
+        if (item.comicId === comicId) {
+          coverUrl = item.coverUrl;
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn('[IndexPage] widget reader cache failed: ' + JSON.stringify(err));
+    }
+    let epsCount: number = await this.fetchEpsCount(comicId);
+    if (epsCount <= 0) {
+      epsCount = 1;
+    }
+    console.info('[IndexPage] open reader from widget: order = ' + order + ', epsCount = ' + epsCount);
+    router.pushUrl({
+      url: 'pages/ReaderPage',
+      params: {
+        comicId: comicId,
+        comicTitle: comicTitle,
+        epsCount: epsCount,
+        currentOrder: order,
+        coverUrl: coverUrl
+      }
+    });
+  }
+
+  /**
+   * 取作品总话数，超时（2.5s）或失败返回 0。
+   * 用单次详情请求（含 epsCount）而不是 getAllEps 翻页，减少请求数与频控风险。
+   */
+  private async fetchEpsCount(comicId: string): Promise<number> {
+    let timeout: Promise<number> = new Promise<number>((resolve: (value: number) => void) => {
+      setTimeout((): void => {
+        resolve(0);
+      }, 2500);
+    });
+    let request: Promise<number> = this.apiService.getComicDetail(comicId)
+      .then((detail: BikaComicDetail): number => {
+        let n = Number(detail.epsCount);
+        console.info('[IndexPage] widget epsCount = ' + n);
+        return isNaN(n) ? 0 : n;
+      })
+      .catch((err: Error): number => {
+        console.warn('[IndexPage] widget epsCount failed: ' + JSON.stringify(err));
+        return 0;
+      });
+    return Promise.race([request, timeout]);
+  }
+
+  /**
+   * 打开「我的」页内的子页面（如浏览历史）。
+   * NavPathStack 由 ProfilePage 持有，这里切到「我的」页签，再用 AppStorage 信号转交。
+   */
+  private openProfileSubpage(name: string): void {
+    this.tabsController.changeIndex(1);
+    this.currentTab = 1;
+    AppStorage.setOrCreate('bika_active_tab', 1);
+    let signal: SubpageOpenSignal = {
+      name: name,
+      timestamp: Date.now()
+    };
+    AppStorage.setOrCreate('bika_open_subpage', JSON.stringify(signal));
+  }
+
   onPageShow(): void {
     AppStorage.set('isLoggedIn', ApiService.getInstance().isLoggedIn());
+    // 冷启动时 onCreate 写入的卡片事件在此消费（此时页面与路由已就绪）
+    this.consumeWidgetAction();
   }
 
   /** 沉浸光感档位映射 */

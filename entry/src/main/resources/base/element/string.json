@@ -11,6 +11,62 @@
     {
       "name": "EntryAbility_label",
       "value": "Bika"
+    },
+    {
+      "name": "form_label",
+      "value": "阅读卡片"
+    },
+    {
+      "name": "widget_display_name",
+      "value": "继续阅读"
+    },
+    {
+      "name": "widget_desc",
+      "value": "继续上次阅读的漫画"
+    },
+    {
+      "name": "widget_continue_title",
+      "value": "打开 Bika"
+    },
+    {
+      "name": "widget_continue_subtitle",
+      "value": "继续上次阅读"
+    },
+    {
+      "name": "widget_continue_action",
+      "value": "继续阅读"
+    },
+    {
+      "name": "recent_card_display_name",
+      "value": "最近更新"
+    },
+    {
+      "name": "recent_card_desc",
+      "value": "查看最近更新的作品与继续阅读"
+    },
+    {
+      "name": "rank_card_display_name",
+      "value": "排行榜"
+    },
+    {
+      "name": "rank_card_desc",
+      "value": "本周人气榜单 Top 4，含封面与名次"
+    },
+    {
+      "name": "favorites_card_display_name",
+      "value": "我的收藏"
+    },
+    {
+      "name": "favorites_card_desc",
+      "value": "我的收藏最新 4 部作品"
+    },
+    {
+      "name": "recommend_card_display_name",
+      "value": "为你推荐"
+    },
+    {
+      "name": "recommend_card_desc",
+      "value": "推荐分区作品，含封面"
     }
   ]
 }

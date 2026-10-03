@@ -166,6 +166,19 @@ export class ApiService {
     return this.token;
   }
 
+  /**
+   * 显式注入登录令牌。
+   * 卡片进程（FormExtensionAbility）里全局 getContext() 不可用，
+   * 构造函数中的 CacheManager.getInstance() 会失败，导致 this.token 一直为空、
+   * 所有接口请求都拿不到数据。卡片侧取数前必须先注入。
+   */
+  injectToken(token: string): void {
+    if (token.length > 0 && this.token.length === 0) {
+      this.token = token;
+      console.info('[ApiService] token injected (widget process)');
+    }
+  }
+
   isLoggedIn(): boolean {
     return this.token.length > 0;
   }

@@ -8,8 +8,23 @@ import { WindowHelper } from '../common/WindowHelper';
 import { CacheManager } from '../common/CacheManager';
 import { ImageLoader } from '../common/ImageLoader';
 import { ApiService } from '../network/ApiService';
+import { WidgetData } from '../common/WidgetData';
+import { WidgetExtraData } from '../common/WidgetExtraData';
 
 const DOMAIN = 0x0000;
+
+/**
+ * 桌面卡片 FormLink 回传的参数载体。
+ * 卡片 params 约定：{ action, comicId, comicTitle }
+ *   - 2*2「继续阅读」卡片 与 4*4「最近更新」卡片顶部行：action = 'continue_reading'
+ *   - 4*4「最近更新」卡片列表行：action = 'open_comic'
+ */
+interface WidgetActionPayload {
+  action: string;
+  comicId: string;
+  comicTitle: string;
+  timestamp: number;
+}
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -29,7 +44,100 @@ export default class EntryAbility extends UIAbility {
     } catch (e) {
       hilog.error(DOMAIN, 'BikaTag', 'Failed to read version. Cause: %{public}s', JSON.stringify(e));
     }
+    // 冷启动路径：桌面卡片点击首次拉起应用时，参数只在 onCreate 的 want 里
+    this.parseWidgetWant(want);
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onCreate');
+  }
+
+  /** 从参数集合里安全取一个字符串值（缺失 / 类型异常一律返回空串） */
+  private static pickParam(bag: Record<string, Object>, key: string): string {
+    try {
+      let v = bag[key];
+      if (v === undefined || v === null) {
+        return '';
+      }
+      return String(v);
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /**
+   * 解析桌面卡片点击携带的参数并写入 AppStorage，交由 IndexPage 消费跳转。
+   * 值形如 '{"action":"continue_reading","comicId":"...","comicTitle":"...","timestamp":1700000000000}'，
+   * timestamp 每次都是新值，保证 IndexPage 的 @Watch 能感知到新事件。
+   * 缺字段一律补空串，全过程 try/catch，绝不抛异常。
+   */
+  private parseWidgetWant(want: Want): void {
+    try {
+      if (want === undefined || want === null) {
+        return;
+      }
+      let params = want.parameters;
+      // 卡片点击是否真的到达系统侧，全靠这条日志判定（onCreate / onNewWant 都会打）
+      hilog.info(DOMAIN, 'BikaTag', 'Widget want: %{public}s', JSON.stringify(want));
+      if (params === undefined || params === null) {
+        return;
+      }
+      let action: string = '';
+      let comicId: string = '';
+      let comicTitle: string = '';
+      // 卡片侧 postCardAction / FormLink 的 params 会以 JSON 字符串放在
+      // want.parameters.params 里（官方 arkts-ui-widget-event-router.md 示例同款），
+      // 这里两种形态都兼容：嵌套 params（JSON 字符串或对象）+ 平铺参数。
+      let bag: Record<string, Object> | null = null;
+      let nested = params['params'];
+      if (nested !== undefined && nested !== null) {
+        if (typeof nested === 'string') {
+          try {
+            bag = JSON.parse(nested as string) as Record<string, Object>;
+          } catch (e) {
+            bag = null;
+          }
+        } else {
+          bag = nested as Record<string, Object>;
+        }
+      }
+      if (bag !== null) {
+        action = EntryAbility.pickParam(bag, 'action');
+        comicId = EntryAbility.pickParam(bag, 'comicId');
+        comicTitle = EntryAbility.pickParam(bag, 'comicTitle');
+      }
+      if (action.length === 0) {
+        action = EntryAbility.pickParam(params, 'action');
+      }
+      if (comicId.length === 0) {
+        comicId = EntryAbility.pickParam(params, 'comicId');
+      }
+      if (comicTitle.length === 0) {
+        comicTitle = EntryAbility.pickParam(params, 'comicTitle');
+      }
+      // 非卡片来源的普通启动不带 action，不写信号，避免首页被误跳转
+      if (action.length === 0) {
+        return;
+      }
+      let payload: WidgetActionPayload = {
+        action: action,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        timestamp: Date.now()
+      };
+      AppStorage.setOrCreate('bika_widget_action', JSON.stringify(payload));
+      hilog.info(DOMAIN, 'BikaTag',
+        'Widget want parsed: action=%{public}s, hasComicId=%{public}s, hasTitle=%{public}s',
+        action, comicId.length > 0 ? 'true' : 'false', comicTitle.length > 0 ? 'true' : 'false');
+    } catch (err) {
+      hilog.error(DOMAIN, 'BikaTag', 'Failed to parse widget want. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /**
+   * 应用已在后台时点击桌面卡片走 onNewWant（不会再次触发 onCreate）。
+   * 复用同一份解析逻辑，保证热启动路径与冷启动一致。
+   */
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onNewWant');
+    this.parseWidgetWant(want);
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
@@ -105,6 +213,24 @@ export default class EntryAbility extends UIAbility {
           }
         } catch (e) {
           hilog.error(DOMAIN, 'BikaTag', 'Failed to apply color mode. Cause: %{public}s', JSON.stringify(e));
+        }
+
+        // 桌面卡片预热：在应用进程里把卡片要用的列表刷进本地缓存。
+        // 卡片进程（FormExtensionAbility）生命周期只有 10s，不能每次都指望它自己联网；
+        // 预热之后，卡片一挂上就能同步读到真实作品名。
+        try {
+          WidgetData.init(this.context);
+          WidgetExtraData.init(this.context);
+          if (this.context !== null) {
+            WidgetData.bootstrapCache(this.context).catch((e: Error) => {
+              hilog.info(DOMAIN, 'BikaTag', 'widget cache warmup failed: %{public}s', JSON.stringify(e));
+            });
+            WidgetExtraData.bootstrapCache(this.context).catch((e: Error) => {
+              hilog.info(DOMAIN, 'BikaTag', 'widget extra warmup failed: %{public}s', JSON.stringify(e));
+            });
+          }
+        } catch (e) {
+          hilog.error(DOMAIN, 'BikaTag', 'widget warmup init failed: %{public}s', JSON.stringify(e));
         }
 
         // 应用防截屏
