@@ -38,7 +38,7 @@ import {
   adaptiveChannelColumns,
   adaptiveListColumns
 } from '../common/Constants';
-import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
 
 /**
  * 主入口 — HdsTabs 悬浮页签（首页 / 我的）
@@ -408,6 +408,9 @@ interface DownloadGroup {
 /** 下载列表（独立组件：订阅 DownloadManager 实时刷新） */
 @Component
 struct DownloadListView {
+  scroller: Scroller = new Scroller();
+  @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State tasks: DownloadTask[] = [];
   @StorageProp('bika_material_rev') materialRev: number = 0;
   private cb: (tasks: DownloadTask[]) => void = (tasks: DownloadTask[]) => {
@@ -510,7 +513,9 @@ struct DownloadListView {
   }
 
   build() {
+    List({ space: 12, scroller: this.scroller }) {
     if (this.groups().length === 0) {
+      ListItem() {
       Column({ space: 8 }) {
         SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
           .fontSize(36)
@@ -523,12 +528,11 @@ struct DownloadListView {
           .fontColor(COLOR_TEXT_HINT)
       }
       .width('100%')
-      .layoutWeight(1)
       .padding({ top: 60 })
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(COLOR_BG)
+      }
     } else {
-      List({ space: 12 }) {
         ForEach(this.groups(), (g: DownloadGroup) => {
           ListItem() {
             Row() {
@@ -690,13 +694,16 @@ struct DownloadListView {
             })
           }
         }, (g: DownloadGroup) => g.comicId)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .padding({ left: 16, right: 16, top: 12, bottom: 24 })
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
+    }
+    .width('100%').height('100%')
+    .padding({ left: 16, right: 16 })
+    .contentStartOffset(this.topSafeHeight + 56 + 12)
+    .contentEndOffset(this.bottomSafeHeight + 24)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .cachedCount(3, true)
+    .clip(false)
   }
 }
 
@@ -775,6 +782,14 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.3.8',
+    date: '2026-10-04',
+    items: [
+      '新增：页面标题栏沉浸光感效果 —— 静止时完全透明，上滑时顶部渐显模糊，内容从标题栏下方穿过',
+      '覆盖「我的」全部 12 个子页：收藏 / 历史 / 下载 / 通知 / 我的评论 / 设置 / 关于 / 存储与空间 / DNS 优化 / 屏蔽标签 / 资料编辑 / 账号与安全'
+    ]
+  },
   {
     version: '1.3.7',
     date: '2026-10-03',
@@ -1044,6 +1059,21 @@ struct ProfilePage {
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
   private stack: NavPathStack = new NavPathStack();
+  private settingsScroller: Scroller = new Scroller();
+  private aboutScroller: Scroller = new Scroller();
+  private storageScroller: Scroller = new Scroller();
+  private dnsScroller: Scroller = new Scroller();
+  private blockedTagsScroller: Scroller = new Scroller();
+  private profileEditScroller: Scroller = new Scroller();
+  private accountScroller: Scroller = new Scroller();
+  private favouritesScroller: Scroller = new Scroller();
+  private historyScroller: Scroller = new Scroller();
+  private downloadsScroller: Scroller = new Scroller();
+  private notificationsScroller: Scroller = new Scroller();
+  private commentsScroller: Scroller = new Scroller();
+  // 保持全屏，由标题栏主动避让状态栏，使渐变模糊连续覆盖顶部安全区。
+  // 留白放在滚动内容内，首屏避开标题，滚动时仍可从标题栏下穿过。
+  private subpageContentTop: number = 56 + 8;
 
   // ── 子页面数据状态 ──
   @State favComics: ComicViewModel[] = [];
@@ -2107,35 +2137,6 @@ struct ProfilePage {
     }
   }
 
-  /** 子页返回头：自绘返回键 + 大标题，内容从上往下排布 */
-  @Builder
-  subpageHeader(title: string) {
-    Column() {
-      Row({ space: 10 }) {
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(20)
-            .fontColor([this.accentColor])
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
-        .attributeModifier(compatibleImmersiveMaterial(this.accentHex, false, true))
-        .onClick(() => this.closeSubpage())
-        .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.97 })
-        Text(title)
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_TEXT_TITLE)
-      }
-      .width('100%')
-      .height(48)
-      .padding({ left: 16, right: 16 })
-    }
-    .width('100%')
-    .padding({ top: this.topSafeHeight })
-  }
-
   /** 子页面注册 */
   @Builder
   pageMap(name: string) {
@@ -2170,8 +2171,7 @@ struct ProfilePage {
   @Builder
   favouritesDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('我的收藏')
+      Scroll(this.favouritesScroller) {
         Column() {
         Row() {
           ForEach(SORT_OPTIONS, (item: SortOption) => {
@@ -2194,7 +2194,6 @@ struct ProfilePage {
         .justifyContent(FlexAlign.Start)
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
 
-        Scroll() {
           Grid() {
             ForEach(this.favComics, (comic: ComicViewModel) => {
               GridItem() {
@@ -2214,26 +2213,36 @@ struct ProfilePage {
           .padding({ left: 12, right: 12, top: 8, bottom: this.bottomSafeHeight + 76 })
         }
         .width('100%')
-        .layoutWeight(1)
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-        .onReachEnd(() => {
-          if (this.favHasMore && !this.favLoading) {
-            this.favPage++;
-            this.loadFavourites(false);
-          }
-        })
-        }
-        .layoutWeight(1)
-        .width('100%')
+        .padding({ top: this.topSafeHeight + this.subpageContentTop - 8 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .onReachEnd(() => {
+        if (this.favHasMore && !this.favLoading) {
+          this.favPage++;
+          this.loadFavourites(false);
+        }
+      })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '我的收藏' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.favouritesScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -2244,9 +2253,9 @@ struct ProfilePage {
   @Builder
   historyDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('浏览历史')
+      List({ space: 0, scroller: this.historyScroller }) {
         if (this.historyItems.length === 0) {
+          ListItem() {
           Column({ space: 8 }) {
             SymbolGlyph($r('sys.symbol.clock'))
               .fontSize(36)
@@ -2258,8 +2267,9 @@ struct ProfilePage {
           .width('100%')
           .padding({ top: 60 })
           .alignItems(HorizontalAlign.Center)
+          }
         } else {
-          List({ space: 0 }) {
+          ListItemGroup() {
             ForEach(this.historyItems, (item: HistoryItem, index: number) => {
               ListItem() {
                 Row() {
@@ -2336,19 +2346,37 @@ struct ProfilePage {
             }
           }
           .width('100%')
-          .layoutWeight(1)
           .backgroundColor(COLOR_CARD)
           .borderRadius(18)
           .border({ width: 1, color: COLOR_DIVIDER })
           .margin({ top: 4, bottom: 8 })
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .contentStartOffset(this.topSafeHeight + this.subpageContentTop)
+      .contentEndOffset(this.bottomSafeHeight + 40)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .cachedCount(3, true)
+      .clip(false)
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '浏览历史' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.historyScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -2359,16 +2387,25 @@ struct ProfilePage {
   @Builder
   downloadsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('我的下载')
-        DownloadListView()
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      DownloadListView({ scroller: this.downloadsScroller })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '我的下载' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.downloadsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -2379,9 +2416,9 @@ struct ProfilePage {
   @Builder
   notificationsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('通知')
+      List({ space: 0, scroller: this.notificationsScroller }) {
         if (this.notifications.length === 0) {
+          ListItem() {
           Column({ space: 8 }) {
             SymbolGlyph($r('sys.symbol.bell'))
               .fontSize(36)
@@ -2393,8 +2430,9 @@ struct ProfilePage {
           .width('100%')
           .padding({ top: 60 })
           .alignItems(HorizontalAlign.Center)
+          }
         } else {
-        List({ space: 0 }) {
+        ListItemGroup() {
           ForEach(this.notifications, (n: BikaNotification, index: number) => {
             ListItem() {
               Row() {
@@ -2434,19 +2472,37 @@ struct ProfilePage {
           }, (n: BikaNotification) => n._id)
           }
           .width('100%')
-          .layoutWeight(1)
           .backgroundColor(COLOR_CARD)
           .borderRadius(18)
           .border({ width: 1, color: COLOR_DIVIDER })
           .margin({ top: 4, bottom: 8 })
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .contentStartOffset(this.topSafeHeight + this.subpageContentTop)
+      .contentEndOffset(this.bottomSafeHeight + 40)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .cachedCount(3, true)
+      .clip(false)
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '通知' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.notificationsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -2457,9 +2513,9 @@ struct ProfilePage {
   @Builder
   commentsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('我的评论')
+      List({ space: 0, scroller: this.commentsScroller }) {
         if (this.myComments.length === 0) {
+          ListItem() {
           Column({ space: 8 }) {
             SymbolGlyph($r('sys.symbol.message'))
               .fontSize(36)
@@ -2471,8 +2527,9 @@ struct ProfilePage {
           .width('100%')
           .padding({ top: 60 })
           .alignItems(HorizontalAlign.Center)
+          }
         } else {
-        List({ space: 0 }) {
+        ListItemGroup() {
           ForEach(this.myComments, (comment: BikaComment, index: number) => {
             ListItem() {
               Column({ space: 4 }) {
@@ -2502,19 +2559,37 @@ struct ProfilePage {
           }, (comment: BikaComment) => comment._id)
           }
           .width('100%')
-          .layoutWeight(1)
           .backgroundColor(COLOR_CARD)
           .borderRadius(18)
           .border({ width: 1, color: COLOR_DIVIDER })
           .margin({ top: 4, bottom: 8 })
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .contentStartOffset(this.topSafeHeight + this.subpageContentTop)
+      .contentEndOffset(this.bottomSafeHeight + 40)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .cachedCount(3, true)
+      .clip(false)
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '我的评论' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.commentsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -2525,9 +2600,7 @@ struct ProfilePage {
   @Builder
   settingsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('设置')
-        Scroll() {
+      Scroll(this.settingsScroller) {
         Column({ space: 14 }) {
           Text('外观')
             .fontSize(14)
@@ -2982,20 +3055,34 @@ struct ProfilePage {
           .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
+      .width('100%').height('100%')
       .backgroundColor(COLOR_BG)
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '设置' } },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .backgroundColor(COLOR_BG)
+    .bindToScrollable([this.settingsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3006,9 +3093,7 @@ struct ProfilePage {
   @Builder
   aboutDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('关于')
-        Scroll() {
+      Scroll(this.aboutScroller) {
         Column({ space: 14 }) {
           Text('应用信息')
             .fontSize(14)
@@ -3134,20 +3219,30 @@ struct ProfilePage {
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.985 })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '关于' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.aboutScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3158,9 +3253,7 @@ struct ProfilePage {
   @Builder
   storageDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('存储与空间')
-        Scroll() {
+      Scroll(this.storageScroller) {
           Column({ space: 12 }) {
             Column() {
               Text('下载')
@@ -3248,20 +3341,30 @@ struct ProfilePage {
             .onClick(() => this.refreshStorage())
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '存储与空间' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.storageScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3275,8 +3378,8 @@ struct ProfilePage {
   @Builder
   dnsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('DNS 直连与分流优化')
+      Scroll(this.dnsScroller) {
+        Column({ space: 12 }) {
         if (this.dnsFetching) {
           Row({ space: 8 }) {
             LoadingProgress()
@@ -3306,8 +3409,6 @@ struct ProfilePage {
           .justifyContent(FlexAlign.Center)
           .backgroundColor(COLOR_PRIMARY_TINT)
         }
-        Scroll() {
-          Column({ space: 12 }) {
             // 系统代理开关
             Column({ space: 0 }) {
               Row() {
@@ -3535,20 +3636,30 @@ struct ProfilePage {
             .onClick(() => this.resetDns())
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: 'DNS 直连与分流优化' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.dnsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3562,9 +3673,7 @@ struct ProfilePage {
   @Builder
   blockedTagsDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('屏蔽标签')
-        Scroll() {
+      Scroll(this.blockedTagsScroller) {
           Column({ space: 12 }) {
             Column() {
               Text('已屏蔽')
@@ -3652,20 +3761,30 @@ struct ProfilePage {
               .padding({ left: 16, right: 16, top: 4 })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '屏蔽标签' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.blockedTagsScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3676,9 +3795,7 @@ struct ProfilePage {
   @Builder
   profileEditDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('编辑资料')
-        Scroll() {
+      Scroll(this.profileEditScroller) {
           Column({ space: 12 }) {
             Column() {
               Text('签名')
@@ -3719,20 +3836,30 @@ struct ProfilePage {
             .padding({ bottom: 16 })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '编辑资料' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.profileEditScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
@@ -3743,9 +3870,7 @@ struct ProfilePage {
   @Builder
   accountDestination() {
     HdsNavDestination() {
-      Column() {
-        this.subpageHeader('账号与安全')
-        Scroll() {
+      Scroll(this.accountScroller) {
           Column({ space: 12 }) {
             Column() {
               Text('当前密码')
@@ -3828,20 +3953,30 @@ struct ProfilePage {
               .padding({ left: 16, right: 16 })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .padding({ left: 16, right: 16, top: this.topSafeHeight + this.subpageContentTop, bottom: 40 })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .width('100%').height('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+    .backgroundColor(COLOR_BG)
+    .hideTitleBar(false)
+    .hideBackButton(false)
+    .titleBar({
+      content: { title: { mainTitle: '账号与安全' } },
+      style: {
+        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false
+    })
+    .bindToScrollable([this.accountScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
       this.closeSubpage();
       return true;
