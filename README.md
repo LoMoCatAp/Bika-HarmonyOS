@@ -19,15 +19,14 @@
 ## 界面预览
 
 <p align="center">
-  <img src="docs/screenshots/01-home.jpg" width="160" alt="首页频道">
-  <img src="docs/screenshots/05-profile.jpg" width="160" alt="我的">
-  <img src="docs/screenshots/02-settings.jpg" width="160" alt="设置">
-  <img src="docs/screenshots/03-about.jpg" width="160" alt="关于">
-  <img src="docs/screenshots/04-changelog.jpg" width="160" alt="更新日志">
+  <img src="docs/screenshots/01-home.jpg" width="200" alt="首页频道">
+  <img src="docs/screenshots/05-profile.jpg" width="200" alt="我的">
+  <img src="docs/screenshots/02-settings.jpg" width="200" alt="设置">
+  <img src="docs/screenshots/03-about.jpg" width="200" alt="关于">
 </p>
 
 <p align="center">
-  <sub>首页频道 · 我的 · 设置 · 关于 · 更新日志（浅色模式；涉及个人信息处已模糊处理）</sub>
+  <sub>首页频道 · 我的 · 设置 · 关于</sub>
 </p>
 
 ## 版本说明
