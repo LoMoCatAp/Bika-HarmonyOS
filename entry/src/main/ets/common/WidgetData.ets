@@ -642,7 +642,7 @@ export class WidgetData {
       }
       await WidgetData.getRecentUpdates(ctx);
     } catch (err) {
-      console.info('[WidgetData] bootstrapCache skipped: ' + JSON.stringify(err));
+      console.debug('[WidgetData] bootstrapCache skipped: ' + JSON.stringify(err));
     }
   }
 
@@ -660,7 +660,7 @@ export class WidgetData {
         return net;
       }
     } catch (err) {
-      console.info('[WidgetData] network unavailable, fallback to local history: ' + JSON.stringify(err));
+      console.debug('[WidgetData] network unavailable, fallback to local history: ' + JSON.stringify(err));
     }
     return WidgetData.getLocalHistoryUpdates(ctx);
   }
@@ -689,12 +689,6 @@ export class WidgetData {
       return list;
     }
     let comics: BikaComicSummary[] = res.comics;
-    // 环节 1：确认接口返回条数与封面原始字段
-    let firstThumb: string = '';
-    if (comics.length > 0 && comics[0] && comics[0].thumb) {
-      firstThumb = comics[0].thumb.path;
-    }
-    console.info('[WidgetData] api items=' + comics.length + ' thumb.path=' + firstThumb);
     for (let i = 0; i < comics.length && list.length < WidgetData.MAX_ROWS; i++) {
       let c: BikaComicSummary = comics[i];
       if (!c || !c.title || c.title.length === 0) {

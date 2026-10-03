@@ -58,28 +58,11 @@ struct RecentCard {
     } catch (err) {
       rows = [];
     }
-    try {
-      console.info('[BikaWidget:RecentCard] showCover=' + this.showCover + ' rows=' + rows.length +
-        ' key0=' + (rows.length > 0 ? rows[0].coverKey : '') + ' continueKey=' + this.continueCoverKey);
-    } catch (e) {
-    }
     return rows;
   }
 
   private canShow(coverKey: string): boolean {
     return this.showCover !== 'false' && coverKey.length > 0;
-  }
-
-  private keyAt(rows: RecentRow[], i: number): string {
-    return i < rows.length ? rows[i].coverKey : '';
-  }
-
-  private titleAt(rows: RecentRow[], i: number): string {
-    return i < rows.length ? rows[i].title : '';
-  }
-
-  private idAt(rows: RecentRow[], i: number): string {
-    return i < rows.length ? rows[i].id : '';
   }
 
   private openContinue(): void {
@@ -100,40 +83,6 @@ struct RecentCard {
       abilityName: this.ABILITY_NAME,
       params: { action: 'open_comic', comicId: id, comicTitle: title }
     });
-  }
-
-  @Builder
-  coverCell(rows: RecentRow[], index: number) {
-    Column() {
-      Stack() {
-        if (this.canShow(this.keyAt(rows, index))) {
-          Image('memory://' + this.keyAt(rows, index))
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-        } else {
-          Text('')
-            .width('100%')
-            .height('100%')
-            .backgroundColor($r('app.color.bika_placeholder'))
-        }
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .borderRadius(8)
-      .clip(true)
-
-      Text(this.titleAt(rows, index))
-        .fontSize(10)
-        .fontColor($r('app.color.bika_text_title'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 4 })
-    }
-    .layoutWeight(1)
-    .height('100%')
-    .margin({ left: 3, right: 3 })
-    .onClick((): void => this.openComic(this.idAt(rows, index), this.titleAt(rows, index)))
   }
 
   @Builder
@@ -257,21 +206,78 @@ struct RecentCard {
           .margin({ top: 8 })
       } else {
         Column() {
+          // key 必须带 coverKey，避免复用「封面还没下发」时构建的骨架节点
           Row() {
-            this.coverCell(this.parseRows(), 0)
-            if (this.parseRows().length > 1) {
-              this.coverCell(this.parseRows(), 1)
-            }
+            ForEach(this.parseRows().slice(0, 2), (item: RecentRow, idx: number) => {
+              Column() {
+                Stack() {
+                  if (this.canShow(item.coverKey)) {
+                    Image('memory://' + item.coverKey)
+                      .width('100%')
+                      .height('100%')
+                      .objectFit(ImageFit.Cover)
+                  } else {
+                    Text('')
+                      .width('100%')
+                      .height('100%')
+                      .backgroundColor($r('app.color.bika_placeholder'))
+                  }
+                }
+                .width('100%')
+                .layoutWeight(1)
+                .borderRadius(8)
+                .clip(true)
+
+                Text(item.title)
+                  .fontSize(10)
+                  .fontColor($r('app.color.bika_text_title'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .margin({ top: 4 })
+              }
+              .layoutWeight(1)
+              .height('100%')
+              .margin({ left: 3, right: 3 })
+              .onClick((): void => this.openComic(item.id, item.title))
+            }, (item: RecentRow, idx: number) => 'c0_' + item.id + '_' + item.coverKey)
           }
           .width('100%')
           .layoutWeight(1)
 
           if (this.parseRows().length > 2) {
             Row() {
-              this.coverCell(this.parseRows(), 2)
-              if (this.parseRows().length > 3) {
-                this.coverCell(this.parseRows(), 3)
-              }
+              ForEach(this.parseRows().slice(2, 4), (item: RecentRow, idx: number) => {
+                Column() {
+                  Stack() {
+                    if (this.canShow(item.coverKey)) {
+                      Image('memory://' + item.coverKey)
+                        .width('100%')
+                        .height('100%')
+                        .objectFit(ImageFit.Cover)
+                    } else {
+                      Text('')
+                        .width('100%')
+                        .height('100%')
+                        .backgroundColor($r('app.color.bika_placeholder'))
+                    }
+                  }
+                  .width('100%')
+                  .layoutWeight(1)
+                  .borderRadius(8)
+                  .clip(true)
+
+                  Text(item.title)
+                    .fontSize(10)
+                    .fontColor($r('app.color.bika_text_title'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 4 })
+                }
+                .layoutWeight(1)
+                .height('100%')
+                .margin({ left: 3, right: 3 })
+                .onClick((): void => this.openComic(item.id, item.title))
+              }, (item: RecentRow, idx: number) => 'c1_' + item.id + '_' + item.coverKey)
             }
             .width('100%')
             .layoutWeight(1)

@@ -2,7 +2,7 @@ import { formBindingData, FormExtensionAbility, formInfo, formProvider } from '@
 import { Context, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { WidgetData, WidgetRecentFormData } from '../common/WidgetData';
+import { WidgetData } from '../common/WidgetData';
 import { WidgetExtraData } from '../common/WidgetExtraData';
 import { WidgetCover, WidgetCoverFormData } from '../common/WidgetCover';
 
@@ -184,7 +184,6 @@ export default class EntryFormAbility extends FormExtensionAbility {
       await formProvider.updateForm(formId, formBindingData.createFormBindingData(data));
       hilog.info(DOMAIN, TAG, 'updateForm ok formId=%{public}s name=%{public}s covers=%{public}d',
         formId, name, Object.keys(data.formImages).length);
-      hilog.info(DOMAIN, TAG, 'push detail name=%{public}s %{public}s', name, EntryFormAbility.describe(data));
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'updateForm failed: %{public}s', JSON.stringify(err as BusinessError));
       return;
@@ -195,18 +194,6 @@ export default class EntryFormAbility extends FormExtensionAbility {
     // 官方 onAddForm 示例同样把 fd 交给系统、由 FormExtensionAbility 进程退出时统一释放
     // （本进程生命周期只有 ~10s，fd 不会长时间泄漏）。
     this.coverTokens.set(formId, data.coverToken);
-  }
-
-  /** 排障用：把下发的关键字段拼成一行短日志 */
-  private static describe(data: WidgetCoverFormData): string {
-    let detail: string = 'keys=' + Object.keys(data).join(',');
-    if (data instanceof WidgetRecentFormData) {
-      detail += ' showCover=' + data.showCover + ' continueCoverKey=' + data.continueCoverKey +
-        ' continueComicId=' + data.continueComicId + ' recentJson=' + data.recentJson;
-    }
-    let json: string = JSON.stringify(data);
-    detail += ' raw=' + json;
-    return detail.length > 900 ? detail.substring(0, 900) : detail;
   }
 
   /** 卡片被移除时释放本进程为它保留的 fd（渲染期绝不能提前释放） */

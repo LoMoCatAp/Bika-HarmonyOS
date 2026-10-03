@@ -51,11 +51,6 @@ struct FavoritesCard {
     } catch (err) {
       rows = [];
     }
-    try {
-      console.info('[BikaWidget:FavoritesCard] showCover=' + this.extraShowCover + ' rows=' + rows.length +
-        ' key0=' + (rows.length > 0 ? rows[0].coverKey : ''));
-    } catch (e) {
-    }
     return rows;
   }
 

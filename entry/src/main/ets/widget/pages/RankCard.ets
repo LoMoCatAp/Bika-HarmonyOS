@@ -52,11 +52,6 @@ struct RankCard {
     } catch (err) {
       rows = [];
     }
-    try {
-      console.info('[BikaWidget:RankCard] showCover=' + this.extraShowCover + ' rows=' + rows.length +
-        ' key0=' + (rows.length > 0 ? rows[0].coverKey : ''));
-    } catch (e) {
-    }
     return rows;
   }
 
