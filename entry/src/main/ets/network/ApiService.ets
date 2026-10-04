@@ -2,6 +2,7 @@ import { BikaHttpClient, BikaHttpResponse } from './BikaHttpClient';
 import { BikaRcpClient } from './BikaRcpClient';
 import { BikaSigner } from './BikaSigner';
 import { ApiRouteManager } from './ApiRouteManager';
+import { Context } from '@kit.AbilityKit';
 import { CacheManager } from '../common/CacheManager';
 import { BIKA_API_HOST, BIKA_API_BASE } from '../common/Constants';
 import {
@@ -86,6 +87,16 @@ export class ApiService {
   /** 401 自动重登的单飞 Promise（并发 401 只触发一次重登） */
   private reloginPromise: Promise<boolean> | null = null;
 
+  /** 应用 AbilityContext（仅主进程由 EntryAbility 注入；卡片进程为 null） */
+  private static appContext: Context | null = null;
+  /** 登录态是否已完成「读取凭据 + 首次有效性判定」 */
+  private authResolved: boolean = false;
+  /** 首次登录态判定单飞 Promise */
+  private authResolvePromise: Promise<void> | null = null;
+  /** 退出登录后的清理钩子（卡片内存态等）。
+   *  由 EntryAbility 注册，避免 ApiService → WidgetData 的循环依赖。 */
+  private static logoutCleanupHook: (() => void) | null = null;
+
   /** 使用系统代理（规则模式 VPN：Clash/v2rayN 等开启系统代理后生效） */
   private static useSystemProxyFlag: boolean = false;
 
@@ -142,22 +153,159 @@ export class ApiService {
     }
   }
 
+  /**
+   * 注入应用 AbilityContext（EntryAbility.onCreate 调用）。
+   * 仅用于「同步句柄尚未就绪」时的异步凭据恢复；卡片进程不会走到这里。
+   */
+  static setAppContext(ctx: Context): void {
+    ApiService.appContext = ctx;
+  }
+
+  /**
+   * 注册退出登录后的清理钩子（当前用于 WidgetData.resetMemo()）。
+   * 由 EntryAbility 在启动时注册；logout() 按钩子调用，避免循环 import。
+   */
+  static registerLogoutCleanup(hook: () => void): void {
+    ApiService.logoutCleanupHook = hook;
+  }
+
+  /** 写 AppStorage 布尔值：卡片等非 UI 进程没有 AppStorage，异常一律忽略 */
+  private static setAppStorageBool(key: string, value: boolean): void {
+    try {
+      AppStorage.setOrCreate(key, value);
+    } catch (err) {
+      // 非 UI 进程：AppStorage 不可用，忽略
+    }
+  }
+
   private constructor() {
-    // 恢复上次登录的凭据（异步，首次请求前生效即可）
-    CacheManager.getInstance().then(cache => {
-      let self = ApiService.instance;
+    // ① 优先走「同步已就绪」的偏好库：EntryAbility.onCreate 已 CacheManager.initSync(context)，
+    //    凭据在任何 UI 首帧之前就绪，isLoggedIn 初值不再依赖异步回调（修复冷启动先显示未登录）。
+    let ready: CacheManager | null = CacheManager.getInstanceIfReady();
+    if (ready !== null) {
+      this.applyCredentials(ready);
+      return;
+    }
+    // ② 卡片等非 UI 进程：没有有效 context，绝不调用无参 getInstance()（其全局
+    //    getContext() 会抛异常并打印「恢复凭据失败」）。令牌由调用方 syncToken() 显式注入。
+    let ctx: Context | null = ApiService.appContext;
+    if (ctx === null) {
+      console.info('[ApiService] 无应用 context，跳过凭据恢复（卡片/非 UI 进程）');
+      return;
+    }
+    // ③ 兜底：同步句柄尚未就绪（ApiService 早于 initSync 被创建）时保留异步恢复。
+    CacheManager.getInstance(ctx).then((cache: CacheManager) => {
+      let self: ApiService | null = ApiService.instance;
       if (self === null) {
         return;
       }
-      self.token = cache.getToken();
-      self.email = cache.getEmail();
-      self.password = cache.getPassword();
-      if (self.token.length > 0) {
-        AppStorage.set('isLoggedIn', true);
-      }
+      self.applyCredentials(cache);
     }).catch((err: Error) => {
-      console.error(`[ApiService] 恢复凭据失败: ${err.message}`);
+      // 不复用旧措辞「恢复凭据失败」，避免卡片进程日志噪声；后续可由 resolveAuthState() 复检
+      console.info('[BikaAuth] 凭据恢复延后: ' + JSON.stringify(err));
     });
+  }
+
+  /** 从同步可用的偏好库读入凭据（不打印任何令牌内容） */
+  private applyCredentials(cache: CacheManager): void {
+    this.token = cache.getToken();
+    this.email = cache.getEmail();
+    this.password = cache.getPassword();
+  }
+
+  /** 取偏好库：优先同步已就绪的句柄，其次用注入的 AbilityContext 异步打开 */
+  private async obtainCache(): Promise<CacheManager | null> {
+    let ready: CacheManager | null = CacheManager.getInstanceIfReady();
+    if (ready !== null) {
+      return ready;
+    }
+    let ctx: Context | null = ApiService.appContext;
+    if (ctx === null) {
+      return null;
+    }
+    try {
+      return await CacheManager.getInstance(ctx);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** 登录态是否已完成首次判定（供 UI 判断能否渲染确定性的未登录态） */
+  isAuthResolved(): boolean {
+    return this.authResolved;
+  }
+
+  /**
+   * 首次登录态判定（单飞）。
+   *
+   * 同步初值已由 EntryAbility.onCreate（CacheManager.initSync + getToken）给出，
+   * 这里保留原「异步凭据恢复」路径并做有效性复检：
+   *  - 令牌存在且未被服务端标记失效 → 已登录；
+   *  - 令牌缺失 / 已被 401、1005 标记失效 → 未登录，并把 isLoggedIn 置回 false；
+   *  - IO / 网络异常不改判（异常不等同于令牌失效），保留同步初值。
+   * 无论结果如何都会置位 auth_resolved，供 UI 决定能否渲染确定性未登录态。
+   */
+  async resolveAuthState(): Promise<void> {
+    if (this.authResolvePromise === null) {
+      this.authResolvePromise = this.doResolveAuthState();
+    }
+    await this.authResolvePromise;
+  }
+
+  private async doResolveAuthState(): Promise<void> {
+    try {
+      let cache: CacheManager | null = await this.obtainCache();
+      if (cache !== null) {
+        // 异步凭据恢复：同步路径已就绪时为幂等复核，同步路径失败时是兜底来源
+        if (this.token.length === 0) {
+          this.token = cache.getToken();
+        }
+        if (this.email.length === 0) {
+          this.email = cache.getEmail();
+        }
+        if (this.password.length === 0) {
+          this.password = cache.getPassword();
+        }
+        // 首次有效性判定：令牌存在，且未被服务端判定失效
+        let valid: boolean = this.token.length > 0 && !cache.isTokenInvalid();
+        if (!valid) {
+          this.token = '';
+        }
+        ApiService.setAppStorageBool('isLoggedIn', valid);
+      }
+    } catch (err) {
+      console.info('[BikaAuth] 凭据复检跳过: ' + JSON.stringify(err));
+    } finally {
+      this.authResolved = true;
+      ApiService.setAppStorageBool('auth_resolved', true);
+      let logged: boolean = false;
+      try {
+        logged = AppStorage.get<boolean>('isLoggedIn') === true;
+      } catch (err) {
+        logged = this.token.length > 0;
+      }
+      console.info('[BikaAuth] auth resolved, isLoggedIn=' + (logged ? 'true' : 'false'));
+    }
+  }
+
+  /**
+   * 服务端明确拒绝令牌（HTTP 401 / 业务码 1005）且无法自动重登时的收尾：
+   * 清空内存令牌、落盘「失效标记」（供下次冷启动同步判定），并把 isLoggedIn 置回 false。
+   * 不打印令牌等敏感内容。
+   */
+  private handleTokenRejected(): void {
+    if (this.token.length === 0 && this.authResolved) {
+      return;
+    }
+    this.token = '';
+    let cache: CacheManager | null = CacheManager.getInstanceIfReady();
+    if (cache !== null) {
+      cache.markTokenInvalid();
+    }
+    this.authResolved = true;
+    ApiService.setAppStorageBool('isLoggedIn', false);
+    ApiService.setAppStorageBool('auth_resolved', true);
+    console.info('[BikaAuth] 令牌已失效，登录态置回未登录');
   }
 
   // ═══════════════ 认证 ═══════════════
@@ -167,16 +315,31 @@ export class ApiService {
   }
 
   /**
-   * 显式注入登录令牌。
-   * 卡片进程（FormExtensionAbility）里全局 getContext() 不可用，
-   * 构造函数中的 CacheManager.getInstance() 会失败，导致 this.token 一直为空、
-   * 所有接口请求都拿不到数据。卡片侧取数前必须先注入。
+   * 同步登录令牌到本实例（可覆盖、可传空串清空）。
+   *
+   * 卡片进程（FormExtensionAbility）里全局 getContext() 不可用，ApiService 构造函数
+   * 按「无有效 context 不恢复凭据」处理，this.token 一直为空、所有请求都拿不到数据，
+   * 因此卡片侧每次取数前都应调用本方法，把当前账号令牌同步进来。
+   *
+   * 必须是「同步」而非「仅填空」：旧实现在 token 非空时直接忽略，
+   * 结果是退出登录 / 换号后卡片进程一直持有上一账号的令牌。
+   * 传空串（未登录）即清空，保证后续请求不会带着旧凭据发出。
+   */
+  syncToken(token: string): void {
+    this.token = token;
+  }
+
+  /**
+   * 旧方法名，保留作兼容转发。
+   * 行为已改为等价于 syncToken：每次调用都覆盖（含传空串清空），不再只填空。
    */
   injectToken(token: string): void {
-    if (token.length > 0 && this.token.length === 0) {
-      this.token = token;
-      console.info('[ApiService] token injected (widget process)');
-    }
+    this.syncToken(token);
+  }
+
+  /** 清空内存中的令牌（退出登录 / 卡片进程发现未登录时调用） */
+  clearToken(): void {
+    this.token = '';
   }
 
   isLoggedIn(): boolean {
@@ -206,7 +369,9 @@ export class ApiService {
     let cache = await CacheManager.getInstance();
     cache.saveToken(this.token);
     cache.saveCredentials(email, password);
-    AppStorage.set('isLoggedIn', true);
+    this.authResolved = true;
+    ApiService.setAppStorageBool('isLoggedIn', true);
+    ApiService.setAppStorageBool('auth_resolved', true);
     return this.token;
   }
 
@@ -219,7 +384,24 @@ export class ApiService {
     this.password = '';
     let cache = await CacheManager.getInstance();
     cache.clearAuth();
-    AppStorage.set('isLoggedIn', false);
+    // 清空卡片离线降级会读到的历史 / 进度 / 卡片缓存快照，
+    // 否则退出登录后桌面仍显示上一账号的作品名、进度、封面与收藏。
+    // 只删与账号阅读数据相关的键，其它用户设置保持不变。
+    cache.clearWidgetUserData();
+    // 主应用进程内缓存的最近阅读内存态（WidgetData.memoReadInfo）也要清掉，
+    // 否则登出后卡片仍可能拿到上一账号的作品信息。通过钩子调用，
+    // 避免 ApiService → WidgetData 的循环依赖；未注册时静默跳过。
+    let cleanup: (() => void) | null = ApiService.logoutCleanupHook;
+    if (cleanup !== null) {
+      try {
+        cleanup();
+      } catch (err) {
+        console.warn('[ApiService] logout cleanup failed: ' + JSON.stringify(err));
+      }
+    }
+    this.authResolved = true;
+    ApiService.setAppStorageBool('isLoggedIn', false);
+    ApiService.setAppStorageBool('auth_resolved', true);
   }
 
   /**
@@ -275,14 +457,49 @@ export class ApiService {
     return categories || [];
   }
 
+  // ═══════════════ 服务端结构兜底 ═══════════════
+  // 服务端偶发缺字段（历史上频道整列空白同源）：data 缺失、字段缺失或类型不符时
+  // 一律返回空列表，绝不抛 TypeError 让调用方 catch 后渲染空白。
+
+  /** 安全取数组字段：data 缺失、字段缺失或不是数组时返回空数组 */
+  private static pickArray(data: Record<string, Object> | null | undefined, key: string): BikaComicSummary[] {
+    if (data === undefined || data === null) {
+      return [];
+    }
+    let v = data[key];
+    if (v === undefined || v === null) {
+      return [];
+    }
+    if (!Array.isArray(v)) {
+      return [];
+    }
+    return v as BikaComicSummary[];
+  }
+
+  /** 安全解析 data.comics 分页对象（docs/pages），结构异常时返回空页 */
+  private static pickPage(data: Record<string, Object> | null | undefined): ComicsPageResult {
+    if (data === undefined || data === null) {
+      return { comics: [], pages: 1 };
+    }
+    let v = data['comics'];
+    if (v === undefined || v === null) {
+      return { comics: [], pages: 1 };
+    }
+    let paged = v as BikaPaged<BikaComicSummary>;
+    let docs = paged.docs;
+    if (docs === undefined || docs === null || !Array.isArray(docs)) {
+      docs = [];
+    }
+    return { comics: docs, pages: toNum(paged.pages) };
+  }
+
   /**
    * 详情页相关推荐（BIKA getRecommendations）
    * GET comics/{id}/recommendation → data.comics[]
    */
   async getRecommendationsFor(comicId: string): Promise<BikaComicSummary[]> {
     let data = await this.request<Record<string, Object>>('comics/' + comicId + '/recommendation', 'GET', null, true);
-    let comics = data['comics'] as BikaComicSummary[];
-    return comics || [];
+    return ApiService.pickArray(data, 'comics');
   }
 
   /**
@@ -379,11 +596,7 @@ export class ApiService {
     let body = JSON.stringify({ keyword: keyword, sort: sort, categories: [] });
     let data = await this.request<Record<string, Object>>(
       'comics/advanced-search?page=' + page, 'POST', body, true);
-    let paged = data['comics'] as BikaPaged<BikaComicSummary>;
-    return {
-      comics: paged.docs || [],
-      pages: toNum(paged.pages)
-    };
+    return ApiService.pickPage(data);
   }
 
   /**
@@ -393,11 +606,7 @@ export class ApiService {
   async getFavourites(sort: string, page: number): Promise<ComicsPageResult> {
     let data = await this.request<Record<string, Object>>(
       'users/favourite?page=' + page + '&s=' + encodeURIComponent(sort), 'GET', null, true);
-    let paged = data['comics'] as BikaPaged<BikaComicSummary>;
-    return {
-      comics: paged.docs || [],
-      pages: toNum(paged.pages)
-    };
+    return ApiService.pickPage(data);
   }
 
   /**
@@ -476,8 +685,7 @@ export class ApiService {
   async getLeaderboard(tt: string): Promise<BikaComicSummary[]> {
     let data = await this.request<Record<string, Object>>(
       'comics/leaderboard?tt=' + tt + '&ct=VC', 'GET', null, true);
-    let comics = data['comics'] as BikaComicSummary[];
-    return comics || [];
+    return ApiService.pickArray(data, 'comics');
   }
 
   /**
@@ -486,8 +694,7 @@ export class ApiService {
    */
   async getRandomComics(): Promise<BikaComicSummary[]> {
     let data = await this.request<Record<string, Object>>('comics/random', 'GET', null, true);
-    let comics = data['comics'] as BikaComicSummary[];
-    return comics || [];
+    return ApiService.pickArray(data, 'comics');
   }
 
   /**
@@ -496,11 +703,26 @@ export class ApiService {
    */
   async getCollections(): Promise<BikaComicSummary[]> {
     let data = await this.request<Record<string, Object>>('collections', 'GET', null, true);
-    let list = data['collections'] as Record<string, Object>[];
-    if (list && list.length > 0) {
-      return (list[0]['comics'] as BikaComicSummary[]) || [];
+    if (data === undefined || data === null) {
+      return [];
     }
-    return [];
+    let list = data['collections'];
+    if (list === undefined || list === null || !Array.isArray(list)) {
+      return [];
+    }
+    let rows = list as Record<string, Object>[];
+    if (rows.length === 0) {
+      return [];
+    }
+    let first = rows[0];
+    if (first === undefined || first === null) {
+      return [];
+    }
+    let comics = first['comics'];
+    if (comics === undefined || comics === null || !Array.isArray(comics)) {
+      return [];
+    }
+    return comics as BikaComicSummary[];
   }
 
   /**
@@ -517,11 +739,7 @@ export class ApiService {
     // 分页对象在 data.comics 下（与 advancedSearch 同构）
     console.info('[ApiService][getComics] ' + query);
     let data = await this.request<Record<string, Object>>(`comics?${query}`, 'GET', null, true);
-    let paged = data['comics'] as BikaPaged<BikaComicSummary>;
-    return {
-      comics: paged.docs || [],
-      pages: toNum(paged.pages)
-    };
+    return ApiService.pickPage(data);
   }
 
   /**
@@ -633,9 +851,8 @@ export class ApiService {
       // 记录真实发请求时间（sign-in 冷窗口依据）
       ApiService.lastApiRequestAt = Date.now();
       let headers = await BikaSigner.buildHeaders(path, method, this.token);
-      // 调试：打印签名关键头，用于 PC 重放对比
-      console.info('[ApiService][debug] ' + method + ' ' + path +
-        ' time=' + headers['time'] + ' nonce=' + headers['nonce'] + ' sig=' + headers['signature']);
+      // 只记录方法与路径，便于定位请求；time / nonce / signature 属签名敏感信息，禁止打印
+      console.debug('[ApiService] ' + method + ' ' + path);
 
       let resp: BikaHttpResponse | null = null;
       let candidates = ApiRouteManager.getInstance().getCandidates();
@@ -701,6 +918,8 @@ export class ApiService {
         if (ok && attempt === 0) {
           continue;
         }
+        // 服务端明确拒绝且无法自动重登：令牌失效，登录态置回未登录并落盘失效标记
+        this.handleTokenRejected();
         throw new Error(ERROR_MESSAGES['1005']);
       }
 
@@ -743,6 +962,10 @@ export class ApiService {
         }
         console.error('[ApiService] 请求失败 path=' + path + ' code=' + envelope.code + ' message=' + envelope.message);
         let key = String(envelope.code);
+        // 业务码鉴权失败（401 / 1005 登录已过期）：令牌已失效，置回未登录并落盘
+        if (allowRelogin && (code === 401 || key === '1005')) {
+          this.handleTokenRejected();
+        }
         let friendly = ERROR_MESSAGES[key];
         if (!friendly && envelope.error && envelope.error.length > 0) {
           friendly = ERROR_MESSAGES[String(envelope.error)];

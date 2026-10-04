@@ -118,6 +118,25 @@ export class WidgetData {
     }
   }
 
+  /**
+   * 主应用登出 / 清空账号数据后调用：清掉进程内缓存的最近阅读内存态。
+   * preferences 已被 CacheManager.clearWidgetUserData() 清空，但 memoReadInfo 仍在进程内，
+   * 不清会继续把上一账号的阅读进度下发给卡片。
+   * （应用侧调用点由 EntryAbility / 登出流程统一接线。）
+   */
+  static resetMemo(): void {
+    WidgetData.memoReadInfo = null;
+  }
+
+  /** 用卡片自身有效的 context 预热 CacheManager 单例（P2-1）；失败不影响取数 */
+  private static async warmCache(ctx?: Context): Promise<void> {
+    try {
+      await CacheManager.getInstance(ctx);
+    } catch (err) {
+      // 预热失败：token 仍由 syncToken 覆盖，不阻断刷新
+    }
+  }
+
   private static openPrefsSync(ctx?: Context): preferences.Preferences | null {
     if (WidgetData.syncPrefs !== null) {
       return WidgetData.syncPrefs;
@@ -264,7 +283,7 @@ export class WidgetData {
    * 同步读取最近一条历史：
    * - 先用 history_ids 索引；
    * - 再用 getAllSync() 扫描 history_time_<id> 兜底（索引缺失/不完整时仍可用）；
-   * - 标题优先 history_title_<id>，没有再尝试漫画列表缓存（不为标题发网络请求）。
+   * - 标题只用 history_title_<id>，取不到就留空（不再全量扫描漫画列表缓存）。
    */
   private static readRecentFromPrefs(prefs: preferences.Preferences): WidgetReadInfo | null {
     let ids: string[] = WidgetData.collectHistoryIds(prefs);
@@ -290,9 +309,8 @@ export class WidgetData {
         best = info;
       }
     }
-    if (best !== null && best.title.length === 0) {
-      best.title = WidgetData.findTitleInComicsCache(prefs, best.comicId);
-    }
+    // P1-5：标题不再全量扫描 comics_ 分页缓存（getAllSync + 多层 JSON.parse 会同步阻塞卡片挂载）；
+    // history_title_<id> 取不到就留空，由卡片侧显示占位文案。
     return best;
   }
 
@@ -326,45 +344,6 @@ export class WidgetData {
       // getAllSync 失败：只使用索引结果
     }
     return ids;
-  }
-
-  /**
-   * 标题兜底：从本地漫画列表缓存里按 _id 找标题。纯本地读取，找不到返回空串。
-   */
-  private static findTitleInComicsCache(prefs: preferences.Preferences, comicId: string): string {
-    if (comicId.length === 0) {
-      return '';
-    }
-    try {
-      let all = prefs.getAllSync();
-      let keys = Object.keys(all);
-      for (let k of keys) {
-        if (!k.startsWith('comics_') || k === 'comics_cache_version') {
-          continue;
-        }
-        let raw = WidgetData.readString(prefs, k, '');
-        if (raw.length === 0) {
-          continue;
-        }
-        let entry = JSON.parse(raw) as Record<string, string>;
-        let docsRaw = entry['data'];
-        if (docsRaw === undefined || docsRaw.length === 0) {
-          continue;
-        }
-        let docs = JSON.parse(docsRaw) as BikaComicSummary[];
-        if (!docs || docs.length === 0) {
-          continue;
-        }
-        for (let d of docs) {
-          if (d._id === comicId) {
-            return d.title;
-          }
-        }
-      }
-    } catch (err) {
-      return '';
-    }
-    return '';
   }
 
   // ═══════════════ 格式化 ═══════════════
@@ -415,16 +394,17 @@ export class WidgetData {
       if (parsed && parsed.length > 0) {
         for (let i = 0; i < parsed.length && list.length < WidgetData.MAX_ROWS; i++) {
           let it = parsed[i];
-          let row = new WidgetUpdateItem();
-          row.id = WidgetData.safeString(it.id);
-          row.title = WidgetData.safeString(it.title);
-          row.cover = WidgetData.safeString(it.cover);
-          row.order = it.order > 0 ? it.order : 0;
-          row.time = it.time > 0 ? it.time : 0;
-          row.coverKey = WidgetData.safeString(it.coverKey);
-          if (row.title.length === 0) {
+          // P2-2：数组里出现 null / 无标题项只跳过这一条，绝不让整份列表抛异常被清空
+          if (!it || !it.title || it.title.length === 0) {
             continue;
           }
+          let row = new WidgetUpdateItem();
+          row.id = WidgetData.safeString(it.id);
+          row.title = it.title;
+          row.cover = WidgetData.safeString(it.cover);
+          row.order = WidgetData.toCount(it.order);
+          row.time = WidgetData.toCount(it.time);
+          row.coverKey = WidgetData.safeString(it.coverKey);
           list.push(row);
         }
       }
@@ -432,6 +412,18 @@ export class WidgetData {
       list = [];
     }
     return list;
+  }
+
+  /** P2-2：数字字段可能是字符串，统一转成非负整数，非法值归 0 */
+  private static toCount(v: number | string | undefined | null): number {
+    if (v === undefined || v === null) {
+      return 0;
+    }
+    let n: number = typeof v === 'number' ? v : parseFloat(v as string);
+    if (isNaN(n) || n <= 0) {
+      return 0;
+    }
+    return Math.floor(n);
   }
 
   private static safeString(v: string | undefined | null): string {
@@ -511,8 +503,8 @@ export class WidgetData {
         data.continueSubtitle = WidgetData.formatProgress(info.order, info.timestamp);
         data.continueComicId = info.comicId;
       }
-      // 本地历史缺标题 / id 时用最近更新缓存首项兜底，保证卡片有真实作品名且点击能进阅读器
-      WidgetData.applyContinueFallback(data, rows);
+      // P2-1：区分真实历史与无历史占位；无历史时不再拿推荐列表冒充阅读进度
+      WidgetData.applyContinueFallback(data, rows, info !== null);
       data.recentJson = WidgetData.toCardJson(rows);
       return data;
     } catch (err) {
@@ -523,7 +515,7 @@ export class WidgetData {
 
   /**
    * 异步刷新绑定数据（供 onUpdateForm / onAddForm 后二次刷新使用）：
-   * 取数（5s 超时）→ 并发下载封面 → 组装。
+   * 取数（3.5s 超时）→ 并发下载封面 → 组装。
    */
   static async refreshRecentForm(ctx?: Context): Promise<WidgetRecentFormData> {
     let data = new WidgetRecentFormData();
@@ -533,15 +525,18 @@ export class WidgetData {
       }
       let showCover: boolean = WidgetData.isCoverEnabled(ctx);
       data.showCover = showCover ? 'true' : 'false';
-      let items: WidgetUpdateItem[] = await WidgetData.getRecentUpdates(ctx);
-      let info: WidgetReadInfo | null = await WidgetData.loadRecentReadInfo(ctx);
+      // 网络取数与本地历史互不依赖，并行发起，缩短卡片刷新耗时
+      let itemsTask: Promise<WidgetUpdateItem[]> = WidgetData.getRecentUpdates(ctx);
+      let infoTask: Promise<WidgetReadInfo | null> = WidgetData.loadRecentReadInfo(ctx);
+      let items: WidgetUpdateItem[] = await itemsTask;
+      let info: WidgetReadInfo | null = await infoTask;
       if (info !== null && info.title.length > 0) {
         data.continueTitle = info.title;
         data.continueSubtitle = WidgetData.formatProgress(info.order, info.timestamp);
         data.continueComicId = info.comicId;
       }
-      // 本地历史缺标题 / id 时，优先按 comicId 在最近更新列表里找标题，再用首项兜底
-      WidgetData.applyContinueFallback(data, items);
+      // P2-1：区分真实历史与无历史占位；无历史时不再拿推荐列表冒充阅读进度
+      WidgetData.applyContinueFallback(data, items, info !== null);
       let continueCover: string = '';
       if (info !== null && info.cover.length > 0 && info.comicId === data.continueComicId) {
         continueCover = info.cover;
@@ -590,11 +585,24 @@ export class WidgetData {
   }
 
   /**
-   * 「继续阅读」兜底：本地历史没有标题 / 作品 id 时，用最近更新列表补齐，
-   * 保证卡片上一定有真实作品名，且点击能带着 comicId 进阅读器。
+   * 「继续阅读」兜底（P2-1）。
+   * - 有真实本地历史、只是缺标题时：按 comicId 在最近更新列表里补标题，comicId 保持真实历史 id；
+   * - 完全没有本地历史时：不再用最近更新首项冒充阅读进度（那会点到别的作品），
+   *   只留空让卡片显示自己的占位文案，且绝不填 comicId。
    */
-  private static applyContinueFallback(data: WidgetRecentFormData, items: WidgetUpdateItem[]): void {
+  private static applyContinueFallback(data: WidgetRecentFormData, items: WidgetUpdateItem[],
+    hasHistory: boolean): void {
     if (data.continueTitle.length > 0) {
+      if (data.continueSubtitle.length === 0) {
+        data.continueSubtitle = '继续上次阅读';
+      }
+      return;
+    }
+    if (!hasHistory) {
+      data.continueTitle = '';
+      data.continueSubtitle = '';
+      data.continueComicId = '';
+      data.continueCoverKey = '';
       return;
     }
     if (data.continueComicId.length > 0) {
@@ -604,10 +612,6 @@ export class WidgetData {
           break;
         }
       }
-    }
-    if (data.continueTitle.length === 0 && items.length > 0) {
-      data.continueTitle = items[0].title;
-      data.continueComicId = items[0].id;
     }
     if (data.continueTitle.length > 0 && data.continueSubtitle.length === 0) {
       data.continueSubtitle = '继续上次阅读';
@@ -650,7 +654,7 @@ export class WidgetData {
 
   /**
    * 首页「最近更新」列表（GET comics?page=1&s=dd）。
-   * - 未登录不发请求；5s 超时；失败降级为本地历史；再失败返回空数组，绝不抛异常。
+   * - 未登录不发请求；3.5s 超时；失败降级为本地历史；再失败返回空数组，绝不抛异常。
    */
   static async getRecentUpdates(ctx?: Context): Promise<WidgetUpdateItem[]> {
     try {
@@ -666,16 +670,22 @@ export class WidgetData {
   }
 
   private static async fetchRecentFromNetwork(ctx?: Context): Promise<WidgetUpdateItem[]> {
+    // P2-1：卡片进程里全局 getContext() 无效，ApiService 构造函数内部无参的
+    // CacheManager.getInstance() 必然抛「context is invalid」并打印「恢复凭据失败」。
+    // 这里先用卡片自身有效的 context 预热 CacheManager 单例，ApiService 随后复用同一实例，
+    // 凭据恢复走正常路径；token 仍由下面的 syncToken 无条件覆盖兜底。
+    await WidgetData.warmCache(ctx);
     let prefs = WidgetData.openPrefsSync(ctx);
+    let token: string = '';
     if (prefs !== null) {
-      let token = WidgetData.readString(prefs, WidgetData.KEY_TOKEN, '');
-      if (token.length === 0) {
-        // 未登录：不发请求，直接降级
-        return [];
-      }
-      // 卡片进程里 ApiService 自己是拿不到令牌的（构造函数依赖 getContext()），
-      // 这里显式注入，否则请求必然失败、卡片永远只有本地缓存。
-      ApiService.getInstance().injectToken(token);
+      token = WidgetData.readString(prefs, WidgetData.KEY_TOKEN, '');
+    }
+    // 卡片进程里 ApiService 自己是拿不到令牌的（构造函数依赖 getContext()），这里显式覆盖同步：
+    // 即使令牌为空也要同步（清空旧值），否则卡片进程跨登出存活时会继续用上一账号的令牌请求。
+    ApiService.getInstance().syncToken(token);
+    if (token.length === 0) {
+      // 未登录：不发请求，直接降级
+      return [];
     }
     let task: Promise<WidgetUpdateItem[]> = WidgetData.requestRecentComics();
     return WidgetData.withTimeout(task, WidgetData.NET_TIMEOUT_MS);

@@ -36,6 +36,51 @@ export class CacheManager {
     return CacheManager.instance;
   }
 
+  /**
+   * 同步初始化：用 preferences.getPreferencesSync 打开偏好库并持有句柄。
+   *
+   * 必须在「页面首帧之前」调用一次（EntryAbility.onCreate）。
+   * 之后 getToken()/getSetting() 等全部 getSync/putSync 路径在任何时刻（含首帧）都可用，
+   * 冷启动登录态不再依赖异步 getInstance() 的回调时序。
+   *
+   * 幂等：实例已存在 / 句柄已打开时直接复用，不重复打开，也不影响异步 getInstance()。
+   * @returns 同步可用的 CacheManager（句柄可能仍为 null，用 isReady() 判断）
+   */
+  static initSync(ctx: Context): CacheManager {
+    if (CacheManager.instance === null) {
+      CacheManager.instance = new CacheManager();
+    }
+    if (CacheManager.instance.prefs === null) {
+      try {
+        let options: preferences.Options = { name: CacheManager.PREF_NAME };
+        CacheManager.instance.prefs = preferences.getPreferencesSync(ctx, options);
+      } catch (err) {
+        console.error('[CacheManager] initSync failed: ' + JSON.stringify(err));
+      }
+    }
+    return CacheManager.instance;
+  }
+
+  /**
+   * 只取「同步已就绪」的单例：句柄未打开时返回 null，绝不触发异步打开，
+   * 也绝不调用全局 getContext()。
+   *
+   * 卡片进程（FormExtensionAbility）没有 UI 上下文，无参 getInstance() 里的
+   * getContext() 会抛异常；调用方据此走「无凭据」路径，而不是打印错误日志。
+   */
+  static getInstanceIfReady(): CacheManager | null {
+    let inst: CacheManager | null = CacheManager.instance;
+    if (inst !== null && inst.prefs !== null) {
+      return inst;
+    }
+    return null;
+  }
+
+  /** 同步句柄是否已就绪（getSync/putSync 可用） */
+  isReady(): boolean {
+    return this.prefs !== null;
+  }
+
   // ─── 通用方法 ───
 
   private put(key: string, value: string): void {
@@ -65,6 +110,8 @@ export class CacheManager {
 
   saveToken(token: string): void {
     this.put('auth_token', token);
+    // 新令牌尚未被服务端拒绝：清掉历史失效标记，避免下次冷启动同步判定被误判为未登录
+    this.put('auth_token_invalid', 'false');
   }
 
   getToken(): string {
@@ -88,7 +135,65 @@ export class CacheManager {
     this.prefs?.deleteSync('auth_token');
     this.prefs?.deleteSync('auth_email');
     this.prefs?.deleteSync('auth_password');
+    this.prefs?.deleteSync('auth_token_invalid');
     this.prefs?.flushSync();
+  }
+
+  /**
+   * 令牌是否已被服务端判定失效（HTTP 401 或业务码 1005，且无法自动重登）。
+   * 落盘持久化，供下次冷启动「同步读取 + 本地有效性判定」使用，
+   * 避免已知失效的令牌被当成已登录、先渲染已登录再闪回未登录。
+   */
+  isTokenInvalid(): boolean {
+    return this.getString('auth_token_invalid', 'false') === 'true';
+  }
+
+  /**
+   * 标记当前令牌失效：只删令牌（保留邮箱/密码供重新登录回填），并落盘失效标记。
+   * 与 clearAuth()（用户主动彻底退出登录）区分开。
+   */
+  markTokenInvalid(): void {
+    this.prefs?.deleteSync('auth_token');
+    this.put('auth_token_invalid', 'true');
+  }
+
+  /**
+   * 退出登录：清空卡片（桌面小组件）在离线降级时会读到的本账号数据快照。
+   *
+   * 卡片取数失败会回落到下列本地键；若不清空，退出登录后桌面仍显示上一账号
+   * 的作品名 / 阅读进度 / 封面 / 收藏（隐私泄漏）。
+   *
+   * 只删与账号阅读数据有关的键；setting_ 前缀下与卡片无关的用户设置
+   * （颜色模式、材质、DNS、代理、动画、卡片两个显示开关、预热节流时间戳等）
+   * 以及 widget_form_name_<formId> 这类设备级映射一律保留。
+   */
+  clearWidgetUserData(): void {
+    if (this.prefs === null) {
+      return;
+    }
+    try {
+      let all = this.prefs.getAllSync();
+      let keys = Object.keys(all);
+      for (let k of keys) {
+        let hit = k === 'history_ids'
+          || k.startsWith('history_title_')
+          || k.startsWith('history_order_')
+          || k.startsWith('history_time_')
+          || k.startsWith('history_cover_')
+          || k.startsWith('progress_')
+          || k.startsWith('page_')
+          || k === 'setting_widget_recent_json'
+          || k === 'setting_widget_extra_rank_json'
+          || k === 'setting_widget_extra_fav_json'
+          || k === 'setting_widget_extra_rec_json';
+        if (hit) {
+          this.prefs.deleteSync(k);
+        }
+      }
+      this.prefs.flushSync();
+    } catch (err) {
+      console.warn('[CacheManager] clearWidgetUserData failed: ' + JSON.stringify(err));
+    }
   }
 
   // ─── 分类列表缓存 ───

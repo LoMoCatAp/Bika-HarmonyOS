@@ -232,55 +232,88 @@ export class BikaHttpClient {
     headers: Record<string, string> = {},
     sniHost: string = ''
   ): Promise<ArrayBuffer> {
-    // 共享单例：图片请求同样复用连接，避免大量新握手
-    let request = BikaHttpClient.getRequest();
+    // 主应用调用方沿用原有超时（connect 30s / read 60s），行为完全不变
+    return BikaHttpClient.downloadBinaryWithTimeout(url, headers, sniHost, 30000, 60000);
+  }
 
-    // 跟随重定向（最多 3 跳），镜像站可能 302 到真实存储
-    let currentUrl = url;
-    for (let hop = 0; hop < 3; hop++) {
-      let options: http.HttpRequestOptions = {
-        method: http.RequestMethod.GET,
-        header: headers,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        connectTimeout: 30000,
-        readTimeout: 60000
-      };
-      if (sniHost && sniHost.length > 0) {
-        // 图片 DNS 优化：直连选中 IP，SNI 指回原域名
-        options.sniHostName = sniHost;
-        options.remoteValidation = 'skip';
-      }
-      let response = await request.request(currentUrl, options);
-
-      if (response.responseCode === 200) {
-        return response.result as ArrayBuffer;
-      }
-
-      if ((response.responseCode === 301 || response.responseCode === 302 || response.responseCode === 307) &&
-        response.header) {
-        let headerObj = JSON.parse(JSON.stringify(response.header)) as Record<string, string>;
-        let loc: string = headerObj['Location'] || '';
-        if (!loc || loc.length === 0) {
-          throw new Error('HTTP ' + response.responseCode + ': ' + currentUrl);
+  /**
+   * 下载二进制并显式指定原生超时。
+   * 卡片（FormExtensionAbility）专用：生命周期上限只有 10s，原生超时必须收进 1~2 秒级，
+   * 否则 JS 层早已放弃而底层 connect/read 还挂着几十秒。
+   * 主应用调用方继续走 downloadBinary（默认 30s/60s），不受影响。
+   * @param http1Fallback true 时用独立连接 + HTTP/1.1：
+   *   共享单例可能已协商成 HTTP/2，遇到 framing 层错误时降级到 HTTP/1.1 重试一次。
+   */
+  static async downloadBinaryWithTimeout(
+    url: string,
+    headers: Record<string, string> = {},
+    sniHost: string = '',
+    connectTimeout: number = 30000,
+    readTimeout: number = 60000,
+    http1Fallback: boolean = false
+  ): Promise<ArrayBuffer> {
+    // 共享单例：图片请求同样复用连接，避免大量新握手；
+    // HTTP/1.1 降级必须用独立连接，用完即销毁，避免污染共享连接的协议协商。
+    let request: http.HttpRequest = http1Fallback ? http.createHttp() : BikaHttpClient.getRequest();
+    try {
+      // 跟随重定向（最多 3 跳），镜像站可能 302 到真实存储
+      let currentUrl = url;
+      for (let hop = 0; hop < 3; hop++) {
+        let options: http.HttpRequestOptions = {
+          method: http.RequestMethod.GET,
+          header: headers,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          connectTimeout: connectTimeout,
+          readTimeout: readTimeout
+        };
+        if (http1Fallback) {
+          options.usingProtocol = http.HttpProtocol.HTTP1_1;
         }
-        if (loc.startsWith('/')) {
-          let idx = currentUrl.indexOf('://');
-          let schemeEnd = idx + 3;
-          let hostEnd = currentUrl.indexOf('/', schemeEnd);
-          currentUrl = hostEnd > 0
-            ? currentUrl.substring(0, hostEnd) + loc
-            : currentUrl + loc;
-        } else {
-          currentUrl = loc;
+        if (sniHost && sniHost.length > 0) {
+          // 图片 DNS 优化：直连选中 IP，SNI 指回原域名
+          options.sniHostName = sniHost;
+          options.remoteValidation = 'skip';
         }
-        console.info('[BikaHttpClient] 图片重定向: ' + currentUrl);
-        continue;
+        let response = await request.request(currentUrl, options);
+
+        if (response.responseCode === 200) {
+          return response.result as ArrayBuffer;
+        }
+
+        if ((response.responseCode === 301 || response.responseCode === 302 || response.responseCode === 307) &&
+          response.header) {
+          let headerObj = JSON.parse(JSON.stringify(response.header)) as Record<string, string>;
+          let loc: string = headerObj['Location'] || '';
+          if (!loc || loc.length === 0) {
+            throw new Error('HTTP ' + response.responseCode + ': ' + currentUrl);
+          }
+          if (loc.startsWith('/')) {
+            let idx = currentUrl.indexOf('://');
+            let schemeEnd = idx + 3;
+            let hostEnd = currentUrl.indexOf('/', schemeEnd);
+            currentUrl = hostEnd > 0
+              ? currentUrl.substring(0, hostEnd) + loc
+              : currentUrl + loc;
+          } else {
+            currentUrl = loc;
+          }
+          console.info('[BikaHttpClient] 图片重定向: ' + currentUrl);
+          continue;
+        }
+
+        throw new Error('HTTP ' + response.responseCode + ': ' + currentUrl);
       }
 
-      throw new Error('HTTP ' + response.responseCode + ': ' + currentUrl);
+      throw new Error('重定向次数过多: ' + url);
+    } finally {
+      if (http1Fallback) {
+        try {
+          request.destroy();
+        } catch (err) {
+          // 忽略：独立连接销毁失败不影响调用方
+        }
+      }
     }
-
-    throw new Error('重定向次数过多: ' + url);
   }
   /**
    * 延迟 Promise

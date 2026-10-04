@@ -1,4 +1,4 @@
-import { router, display, promptAction, curves } from '@kit.ArkUI';
+import { router, display, promptAction, curves, LengthMetrics, ComponentContent } from '@kit.ArkUI';
 import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
@@ -10,7 +10,7 @@ import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
 import { DownloadManager, DownloadTask } from '../common/DownloadManager';
-import { compatibleImmersiveMaterial } from '../common/CompatibleMaterial';
+import { compatibleImmersiveMaterial, compatibleSheetMaterial } from '../common/CompatibleMaterial';
 import { ImageLoader } from '../common/ImageLoader';
 import { WindowHelper } from '../common/WindowHelper';
 import { ApiRouteManager } from '../network/ApiRouteManager';
@@ -38,7 +38,7 @@ import {
   adaptiveChannelColumns,
   adaptiveListColumns
 } from '../common/Constants';
-import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, HdsNavigationTitleMode, ScrollEffectType } from '@kit.UIDesignKit';
 
 /**
  * 主入口 — HdsTabs 悬浮页签（首页 / 我的）
@@ -48,22 +48,35 @@ import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial,
 /** 全部分类标识 */
 const CATEGORY_ALL: string = '全部';
 
+// Refresh 只负责手势与回弹；提示在标题栏下方单独绘制，避免进入状态栏。
+@Builder
+function homeRefreshPlaceholder() {
+  Row().width('100%').height(0)
+}
+
 // ═══════════════════════════════════════════
 // 首页 — 频道网格
 @Component
 struct HomePage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
-  @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
+  @StorageProp('isLoggedIn') @Watch('onHomeAuthChanged') isLoggedIn: boolean = false;
   @StorageProp('avatarUrl') avatarUrl: string = '';
   @StorageProp('bika_material_rev') materialRev: number = 0;
   /** 频道自定义：顺序与隐藏 */
   @State channelOrder: string[] = [];
   @State channelHidden: string[] = [];
   @State showChannelEdit: boolean = false;
+  @State refreshing: boolean = false;
+  @State refreshPullOffset: number = 0;
   /** 频道按压效果 */
   @State pressedChannel: string = '';
   private cache: CacheManager | null = null;
+  private homeStack: NavPathStack = new NavPathStack();
+  private homeScroller: Scroller = new Scroller();
+  private avatarRequest: number = 0;
+  private refreshInFlight: boolean = false;
+  private refreshContent: ComponentContent<Object> | undefined = undefined;
 
   /** 跳转个人中心（由 IndexPage 切换 tab） */
   onGotoProfile(): void {
@@ -71,11 +84,64 @@ struct HomePage {
   }
 
   aboutToAppear(): void {
-    CacheManager.getInstance().then(cache => {
-      this.cache = cache;
-      this.channelOrder = cache.loadChannelsOrder();
-      this.channelHidden = cache.loadChannelsHidden();
+    this.refreshContent = new ComponentContent(this.getUIContext(), wrapBuilder(homeRefreshPlaceholder));
+    this.reloadHomeData().catch(() => {
+      // 网络不可用时保留本地频道和默认头像。
     });
+  }
+
+  aboutToDisappear(): void {
+    this.avatarRequest++;
+    this.refreshContent?.dispose();
+    this.refreshContent = undefined;
+  }
+
+  private onHomeAuthChanged(): void {
+    this.avatarRequest++;
+    if (this.isLoggedIn) {
+      this.loadHomeAvatar().catch(() => {});
+    }
+  }
+
+  private async loadHomeAvatar(): Promise<void> {
+    if (!this.isLoggedIn) {
+      return;
+    }
+    const request = ++this.avatarRequest;
+    const user = await ApiService.getInstance().getUserProfile();
+    if (request === this.avatarRequest && this.isLoggedIn) {
+      AppStorage.setOrCreate('avatarUrl', user.avatar?.path ? buildImageUrl(user.avatar) : '');
+    }
+  }
+
+  private async reloadHomeData(): Promise<void> {
+    const cache = await CacheManager.getInstance();
+    this.cache = cache;
+    this.channelOrder = cache.loadChannelsOrder();
+    this.channelHidden = cache.loadChannelsHidden();
+    await this.loadHomeAvatar();
+  }
+
+  private async refreshHome(): Promise<void> {
+    if (this.refreshInFlight) {
+      return;
+    }
+    this.refreshInFlight = true;
+    this.refreshing = true;
+    const startedAt = Date.now();
+    try {
+      await this.reloadHomeData();
+    } catch (err) {
+      showImmersiveToast({ message: '刷新失败，请稍后重试', duration: 1600 });
+    } finally {
+      // 本地数据可能立即返回，保留短暂展示时间，避免刚展开就收起。
+      const remaining = 400 - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, remaining); });
+      }
+      this.refreshInFlight = false;
+      this.refreshing = false;
+    }
   }
 
   /** 按自定义顺序与隐藏过滤后的频道 */
@@ -237,14 +303,145 @@ struct HomePage {
     }
   }
 
-  build() {
-    Stack() {
-      Scroll() {
+  @Builder
+  homeHeader() {
+    Row({ space: 8 }) {
+      Text('Bika')
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(COLOR_TEXT_TITLE)
+        .layoutWeight(1)
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.square_and_pencil'))
+          .fontSize(20)
+          .fontColor([COLOR_TEXT_TITLE])
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .attributeModifier(compatibleImmersiveMaterial('#FF7CA8', false, true))
+      .accessibilityText('编辑频道')
+      .onClick(() => { this.showChannelEdit = true; })
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(22)
+          .fontColor([COLOR_TEXT_TITLE])
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .attributeModifier(compatibleImmersiveMaterial('#FF7CA8', false, true))
+      .accessibilityText('搜索')
+      .onClick(() => { router.pushUrl({ url: 'pages/SearchPage' }); })
+      if (this.isLoggedIn) {
+        if (this.avatarUrl.length > 0) {
+          NetImage({ src: this.avatarUrl, fit: ImageFit.Cover, radius: 18, fillParent: true })
+            .width(36)
+            .height(36)
+            .accessibilityText('个人中心')
+            .onClick(() => { this.onGotoProfile(); })
+        } else {
+          Image($r('app.media.ic_default_avatar'))
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .objectFit(ImageFit.Cover)
+            .accessibilityText('个人中心')
+            .onClick(() => { this.onGotoProfile(); })
+        }
+      }
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 20, right: 20 })
+  }
+
+  @Builder
+  guestChannel() {
+    Column({ space: 12 }) {
+      Stack() {
+        Circle().width(172).height(172).fill(COLOR_PRIMARY_TINT)
+        Circle().width(18).height(18).fill(COLOR_PRIMARY).opacity(0.35)
+          .translate({ x: 78, y: -60 })
+        Circle().width(10).height(10).fill(COLOR_PRIMARY).opacity(0.5)
+          .translate({ x: -82, y: 42 })
+        Column() {}
+          .width(118).height(144).backgroundColor(COLOR_PRIMARY).opacity(0.25)
+          .borderRadius(18).rotate({ angle: -14 }).translate({ x: -8, y: 2 })
+        Column({ space: 12 }) {
+          Text('Bika').fontSize(25).fontWeight(FontWeight.Bold).fontColor(COLOR_PRIMARY)
+          Row().width(54).height(4).backgroundColor(COLOR_PRIMARY_TINT).borderRadius(2)
+          Row().width(38).height(4).backgroundColor(COLOR_PRIMARY_TINT).borderRadius(2)
+        }
+        .width(118).height(144).justifyContent(FlexAlign.Center)
+        .backgroundColor(COLOR_CARD).borderRadius(18)
+        .border({ width: 2, color: COLOR_PRIMARY_TINT }).rotate({ angle: 8 })
+      }
+      .width(208).height(200)
+      .accessibilityLevel('no')
+      Text('请登录')
+        .fontSize(26).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT_TITLE)
+      Text('登录后可同步收藏与阅读进度')
+        .fontSize(14).fontColor(COLOR_TEXT_SECONDARY).textAlign(TextAlign.Center)
+      Row({ space: 8 }) {
+        Text('立即登录').fontSize(15).fontWeight(FontWeight.Medium).fontColor(COLOR_WHITE)
+        SymbolGlyph($r('sys.symbol.arrow_right')).fontSize(16).fontColor([COLOR_WHITE])
+      }
+      .height(44).padding({ left: 24, right: 24 }).borderRadius(22)
+      .backgroundColor(COLOR_PRIMARY).margin({ top: 10 })
+    }
+    .width('100%')
+    .padding({ top: 30, bottom: 32, left: 20, right: 20 })
+    .linearGradient({ angle: 160, colors: [[COLOR_PRIMARY_TINT, 0], [COLOR_CARD, 0.7]] })
+    .borderRadius(28)
+    .scale({ x: this.pressedChannel === '__guest_login__' ? 0.97 : 1,
+      y: this.pressedChannel === '__guest_login__' ? 0.97 : 1 })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.setChannelPressed('__guest_login__', true);
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel || event.type === TouchType.Move) {
+        this.setChannelPressed('__guest_login__', false);
+      }
+    })
+    .accessibilityGroup(true)
+    .accessibilityText('请登录，点击登录')
+    .onClick(() => router.pushUrl({ url: 'pages/LoginPage', params: { from: 'inapp' } }))
+  }
+
+  @Builder
+  refreshHeader() {
+    Row({ space: 8 }) {
+      LoadingProgress().width(22).height(22).color(COLOR_PRIMARY)
+      Text(this.refreshing ? '正在刷新' : (this.refreshPullOffset >= 64 ? '松开刷新' : '下拉刷新'))
+        .fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+    }
+    .width('100%')
+    .height(48)
+    .justifyContent(FlexAlign.Center)
+    .position({ x: 0, y: this.topSafeHeight + 56 + Math.max(0, (this.refreshPullOffset - 48) / 2) })
+    .opacity(Math.min(1, Math.max(0, (this.refreshPullOffset - 24) / 24)))
+    .hitTestBehavior(HitTestMode.None)
+    .accessibilityLevel('no-hide-descendants')
+  }
+
+  @Builder
+  homeNavigation() {
+    HdsNavigation(this.homeStack) {
+      Scroll(this.homeScroller) {
         Column() {
-          // 顶部占位（浮层标题栏）
+          // 内容从标题下方开始，滚动时进入原生标题栏的模糊采样区域。
           Row().height(this.topSafeHeight + 56)
 
+          if (!this.isLoggedIn) {
+            Column() {
+              this.guestChannel()
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 76 })
+          }
+
           // 频道网格（方形图标 + 名称，按自定义顺序与隐藏过滤）
+          if (this.isLoggedIn) {
           Grid() {
             ForEach(this.visibleChannels(), (ch: BikaChannel) => {
               GridItem() {
@@ -288,6 +485,7 @@ struct HomePage {
           .columnsGap(14)
           .rowsGap(18)
           .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 76 })
+          }
         }
         .width('100%')
       }
@@ -295,79 +493,58 @@ struct HomePage {
       .height('100%')
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .nestedScroll({ scrollForward: NestedScrollMode.SELF_FIRST, scrollBackward: NestedScrollMode.SELF_FIRST })
+      .edgeEffect(EdgeEffect.None, { alwaysEnabled: true })
+      .translate({ y: this.refreshPullOffset })
       .backgroundColor(COLOR_BG)
 
-      // 浮层标题栏（纯色融入背景）
-      Row() {
-        Text('Bika')
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_TEXT_TITLE)
-          .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.square_and_pencil'))
-          .fontSize(20)
-          .fontColor([COLOR_TEXT_TITLE])
-          .padding(6)
-          .onClick(() => {
-            this.showChannelEdit = true;
-          })
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(22)
-          .fontColor([COLOR_TEXT_TITLE])
-          .padding(6)
-          .onClick(() => {
-            router.pushUrl({ url: 'pages/SearchPage' });
-          })
-        if (this.isLoggedIn) {
-          if (this.avatarUrl.length > 0) {
-            NetImage({
-              src: this.avatarUrl,
-              fit: ImageFit.Cover,
-              radius: 18,
-              fillParent: true
-            })
-              .width(36)
-              .height(36)
-              .margin({ left: 8 })
-              .onClick(() => {
-                this.onGotoProfile();
-              })
-          } else {
-            Image($r('app.media.ic_default_avatar'))
-              .width(36)
-              .height(36)
-              .borderRadius(18)
-              .objectFit(ImageFit.Cover)
-              .margin({ left: 8 })
-              .onClick(() => {
-                this.onGotoProfile();
-              })
-          }
-        } else {
-          Button({ type: ButtonType.Normal }) {
-            Text('登录')
-              .fontSize(14)
-              .fontColor(COLOR_WHITE)
-          }
-          .backgroundColor(COLOR_PRIMARY)
-          .borderRadius(18)
-          .width(64)
-          .height(34)
-          .margin({ left: 8 })
-          .onClick(() => router.pushUrl({ url: 'pages/LoginPage' }))
+    }
+    .mode(NavigationMode.Stack)
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideTitleBar(false)
+    .hideBackButton(true)
+    .titleBar({
+      content: { title: { mainTitle: '' }, stackBuilder: () => this.homeHeader() },
+      enableComponentSafeArea: false,
+      avoidLayoutSafeArea: true,
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          blurEffectiveEndOffset: LengthMetrics.vp(64)
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         }
       }
-      .position({ x: 0, y: 0 })
+    })
+    .bindToScrollable([this.homeScroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .width('100%')
+    .height('100%')
+    .backgroundColor(COLOR_BG)
+    // 自定义刷新节点存在时，固定导航容器，只有内容区跟随下拉。
+    .position({ x: 0, y: 0 })
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Refresh({ refreshing: $$this.refreshing, refreshingContent: this.refreshContent }) {
+        this.homeNavigation()
+      }
       .width('100%')
-      .padding({ left: 20, right: 20, top: this.topSafeHeight + 8, bottom: 6 })
-      .backgroundColor(COLOR_GLASS_TOP)
-      .backdropBlur(20)
-      .zIndex(10)
+      .height('100%')
+      .refreshOffset(64)
+      .maxPullDownDistance(128)
+      .onOffsetChange((offset: number) => { this.refreshPullOffset = Math.max(0, offset); })
+      .onRefreshing(() => { this.refreshHome(); })
+      this.refreshHeader()
     }
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_BG)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .bindSheet($$this.showChannelEdit, this.channelEditSheet(), {
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
@@ -783,6 +960,19 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.4.0',
+    date: '2026-10-04',
+    items: [
+      '修复：冷启动时短暂显示「未登录」；深色模式下「更新日志」与「隐私政策」弹窗底色与应用背景不一致',
+      '新增：未登录进入应用时引导登录',
+      '主页：新增下拉刷新；未登录首页加入引导',
+      '注册页：界面风格与登录页统一，标题栏改为与「我的」子页一致的沉浸光感样式',
+      '桌面卡片：修复多卡同时刷新导致刷新超时、封面偶发不显示、退出登录后仍显示上一账号内容等问题',
+      '优化：设置页文案更准确、更简洁；DNS 与检查更新提示不再暴露第三方工具与实现细节',
+      '隐私：系统日志不再记录作品名等敏感信息；退出登录会一并清理历史与卡片缓存'
+    ]
+  },
+  {
     version: '1.3.8',
     date: '2026-10-04',
     items: [
@@ -1047,6 +1237,8 @@ struct ProfilePage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
+  /** 登录态是否已确定：未置位前不渲染「未登录」这类确定性文案（防御性） */
+  @StorageProp('auth_resolved') authResolved: boolean = false;
   // 主题强调色：哔咔粉（保留哔咔主题色）
   private accentColor: ResourceColor = $r('app.color.bika_primary');
   /** 强调色 hex（沉浸光感点光用） */
@@ -1097,8 +1289,8 @@ struct ProfilePage {
   @State autoPunch: boolean = false;
   @State secureScreen: boolean = false;
   /** 桌面卡片设置（与 CacheManager 的 setting_ 前缀约定一致） */
-  @State widgetShowRealData: boolean = false;
-  @State widgetShowCover: boolean = false;
+  @State widgetShowRealData: boolean = true;
+  @State widgetShowCover: boolean = true;
   /** 存储占用（字节） */
   @State downloadSizeBytes: number = 0;
   @State cacheSizeBytes: number = 0;
@@ -1172,8 +1364,11 @@ struct ProfilePage {
     }
     CacheManager.getInstance().then(cache => {
       this.cache = cache;
-      this.widgetShowRealData = cache.getSetting('widget_show_real_data', 'false') === 'true';
-      this.widgetShowCover = cache.getSetting('widget_show_cover', 'false') === 'true';
+      // 与卡片侧 WidgetData 保持一致：默认开启。兜底必须是 'true'，
+      // 否则新装 / 升级后卡片已经在显示真实内容与封面，设置页却显示关闭，
+      // 用户第一次拨动是空操作（写入 true 而本就是 true）却提示已保存。
+      this.widgetShowRealData = cache.getSetting('widget_show_real_data', 'true') === 'true';
+      this.widgetShowCover = cache.getSetting('widget_show_cover', 'true') === 'true';
     });
     // 冷启动时页面可能晚于信号创建，@Watch 不会补发，这里主动检查一次
     this.consumeSubpageSignal();
@@ -2096,11 +2291,11 @@ struct ProfilePage {
                   .borderRadius(28)
                   .objectFit(ImageFit.Cover)
                 Column({ space: 2 }) {
-                  Text('未登录')
+                  Text(this.authResolved ? '未登录' : '正在确认登录状态')
                     .fontSize(17)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(COLOR_TEXT_TITLE)
-                  Text('登录后同步收藏与评论')
+                  Text(this.authResolved ? '登录后同步收藏与评论' : ' ')
                     .fontSize(12)
                     .fontColor(COLOR_TEXT_HINT)
                 }
@@ -2108,14 +2303,16 @@ struct ProfilePage {
                 .margin({ left: 14 })
                 .layoutWeight(1)
 
-                Button('登录', { type: ButtonType.Normal })
-                  .fontSize(14)
-                  .fontColor(COLOR_WHITE)
-                  .backgroundColor(COLOR_PRIMARY)
-                  .borderRadius(18)
-                  .height(36)
-                  .padding({ left: 20, right: 20 })
-                  .onClick(() => this.onLogin())
+                if (this.authResolved) {
+                  Button('登录', { type: ButtonType.Normal })
+                    .fontSize(14)
+                    .fontColor(COLOR_WHITE)
+                    .backgroundColor(COLOR_PRIMARY)
+                    .borderRadius(18)
+                    .height(36)
+                    .padding({ left: 20, right: 20 })
+                    .onClick(() => this.onLogin())
+                }
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
@@ -2171,6 +2368,9 @@ struct ProfilePage {
       preferType: SheetType.BOTTOM,
       showClose: true,
       dragBar: false,
+      // 沉浸光感材质：让弹窗底色与应用背景协调（API 26+ 生效，旧设备保持系统默认）
+      // 同一 bindSheet 服务 aboutSheetKind 0/1/2（更新提示 / 更新日志 / 隐私政策）
+      systemMaterial: compatibleSheetMaterial(this.materialLevel),
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
       onWillDismiss: (): void => {
         this.showAboutSheet = false;
@@ -2669,7 +2869,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('跟随系统 / 浅色 / 深色')
+                Text('跟随系统、浅色或深色')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -2703,7 +2903,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('导航栏与卡片的材质强度')
+                Text('底部导航栏的材质强度')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -2765,7 +2965,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('每天首次打开自动打卡')
+                Text('每天首次打开自动签到')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -2833,7 +3033,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('章节图片列表与列表页缓存')
+                Text('清理章节图片、列表与分类缓存')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -2941,7 +3141,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('修改登录密码')
+                Text('修改后需要重新登录')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -3126,7 +3326,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text(this.checkingUpdate ? '正在检查…' : '检测 GitHub Release 新版本')
+                Text(this.checkingUpdate ? '正在检查…' : '检查是否有新版本')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -3543,7 +3743,7 @@ struct ProfilePage {
                     .fontSize(17)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(COLOR_TEXT_TITLE)
-                  Text('规则模式 VPN（Clash / v2rayN 等）')
+                  Text('规则模式 VPN（常见代理客户端）')
                     .fontSize(13)
                     .fontColor(COLOR_TEXT_SECONDARY)
                 }
@@ -4005,7 +4205,7 @@ struct ProfilePage {
                 .type(InputType.Password)
                 .fontSize(15)
                 .fontColor(COLOR_TEXT_TITLE)
-                .placeholderColor(COLOR_PLACEHOLDER)
+                .placeholderColor(COLOR_TEXT_SECONDARY)
                 .backgroundColor(COLOR_INPUT_BG)
                 .borderRadius(14)
                 .height(46)
@@ -4023,7 +4223,7 @@ struct ProfilePage {
                 .type(InputType.Password)
                 .fontSize(15)
                 .fontColor(COLOR_TEXT_TITLE)
-                .placeholderColor(COLOR_PLACEHOLDER)
+                .placeholderColor(COLOR_TEXT_SECONDARY)
                 .backgroundColor(COLOR_INPUT_BG)
                 .borderRadius(14)
                 .height(46)
@@ -4041,7 +4241,7 @@ struct ProfilePage {
                 .type(InputType.Password)
                 .fontSize(15)
                 .fontColor(COLOR_TEXT_TITLE)
-                .placeholderColor(COLOR_PLACEHOLDER)
+                .placeholderColor(COLOR_TEXT_SECONDARY)
                 .backgroundColor(COLOR_INPUT_BG)
                 .borderRadius(14)
                 .height(46)
@@ -4200,7 +4400,7 @@ struct ProfilePage {
   /** Markdown 正文 → 纯文本块（原生无 Markdown 组件，做轻量转换） */
   private markdownLines(): UpdateBlock[] {
     let blocks: UpdateBlock[] = [];
-    let raw = this.updateBody.length > 0 ? this.updateBody : '点击「去下载」前往 Release 页面';
+    let raw = this.updateBody.length > 0 ? this.updateBody : '点击「去下载」前往下载页面';
     let lines = raw.split('\n');
     for (let line of lines) {
       let t = line.trim();
@@ -4506,6 +4706,10 @@ struct ProfilePage {
       .animation({ duration: 420, curve: Curve.Friction })
     }
     .width('100%')
+    // 弹窗根容器补与页面一致的底色：内部卡片均为 COLOR_CARD，根用 COLOR_BG 才不撞色，深浅两模式都与页面同色
+    // 顶部圆角取值≥系统 sheet 圆角（实测约 24vp），避免底色把弹窗顶角填成直角
+    .backgroundColor(COLOR_BG)
+    .borderRadius({ topLeft: 28, topRight: 28 })
     .padding({ left: 20, right: 20, top: 8, bottom: 20 })
   }
 
@@ -4590,6 +4794,9 @@ struct ProfilePage {
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .width('100%')
+    // 隐私政策弹窗与更新日志同底色，保证两类弹窗观感一致
+    .backgroundColor(COLOR_BG)
+    .borderRadius({ topLeft: 28, topRight: 28 })
     .padding({ left: 20, right: 20, top: 8, bottom: 20 })
   }
 }
@@ -4628,6 +4835,10 @@ struct IndexPage {
   private apiService: ApiService = ApiService.getInstance();
 
   aboutToAppear(): void {
+    // 首帧打点：用于证明 EntryAbility.onCreate 的同步置位发生在此之前（不打印敏感内容）
+    console.info('[BikaAuth] IndexPage first frame: isLoggedIn='
+      + (AppStorage.get<boolean>('isLoggedIn') === true ? 'true' : 'false')
+      + ', auth_resolved=' + (AppStorage.get<boolean>('auth_resolved') === true ? 'true' : 'false'));
     AppStorage.setOrCreate('bika_material_level', this.materialLevel);
     let saved: number | undefined = AppStorage.get<number>('bika_active_tab') as number | undefined;
     if (saved === 0 || saved === 1) {

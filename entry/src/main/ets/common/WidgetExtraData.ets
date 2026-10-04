@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
 import { ApiService } from '../network/ApiService';
+import { CacheManager } from './CacheManager';
 import { BikaComicSummary, buildImageUrl } from '../models/Comic';
 import { WidgetCover, WidgetCoverBundle, WidgetCoverFormData, WidgetCoverRequest } from './WidgetCover';
 import { WidgetData } from './WidgetData';
@@ -17,7 +18,7 @@ import { WidgetData } from './WidgetData';
  * - 为你推荐：ApiService.getRandomComics()       → GET comics/random（与排行榜同构的漫画列表）
  *
  * 统一约束：
- * - 所有网络请求 5 秒超时，超时立即返回安全默认值；
+ * - 所有网络请求 3.5 秒超时，超时立即返回安全默认值；
  * - 未登录（preferences 里没有 auth_token）不发任何网络请求，直接读本地缓存；
  * - 所有异常都被吞掉并返回安全默认值（空列表 / 上次缓存），绝不向上抛异常；
  * - 网络失败时回退到本类写入的本地缓存（setting_widget_extra_*_json）；
@@ -193,13 +194,21 @@ export class WidgetExtraData {
       if (!WidgetExtraData.isRealDataEnabled(ctx)) {
         return [];
       }
+      // P2-1：先用卡片自身有效的 context 预热 CacheManager 单例，避免 ApiService 构造函数
+      // 内部无参 getContext() 失败并打印「恢复凭据失败」；token 仍走 syncToken 覆盖兜底。
+      try {
+        await CacheManager.getInstance(ctx);
+      } catch (err) {
+        // 预热失败：不阻断取数
+      }
       let token: string = WidgetExtraData.readToken(ctx);
+      // 卡片进程里 ApiService 构造函数拿不到令牌，这里显式覆盖同步：
+      // 即使令牌为空也要同步（清空旧值），否则卡片进程跨登出存活时会继续用上一账号的令牌请求。
+      ApiService.getInstance().syncToken(token);
       if (token.length === 0) {
         // 未登录：不发请求
         return WidgetExtraData.readCachedItems(cacheKey, ctx);
       }
-      // 卡片进程里 ApiService 构造函数拿不到令牌，这里显式注入
-      ApiService.getInstance().injectToken(token);
       let list = await WidgetExtraData.withTimeout(fetcher(), WidgetExtraData.NET_TIMEOUT_MS);
       if (list.length > 0) {
         WidgetExtraData.cacheItems(cacheKey, list, ctx);

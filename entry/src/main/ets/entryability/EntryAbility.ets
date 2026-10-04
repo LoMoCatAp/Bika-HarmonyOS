@@ -27,6 +27,11 @@ interface WidgetActionPayload {
 }
 
 export default class EntryAbility extends UIAbility {
+  /** 卡片缓存预热节流键（setting_ 前缀下）：窗口内只预热一次 */
+  private static readonly WIDGET_WARMUP_KEY: string = 'widget_warmup_ts';
+  /** 卡片缓存预热最小间隔：30 分钟 */
+  private static readonly WIDGET_WARMUP_INTERVAL_MS: number = 30 * 60 * 1000;
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
@@ -44,6 +49,34 @@ export default class EntryAbility extends UIAbility {
     } catch (e) {
       hilog.error(DOMAIN, 'BikaTag', 'Failed to read version. Cause: %{public}s', JSON.stringify(e));
     }
+    // ── 同步恢复登录态（修复冷启动先渲染「未登录」、过几秒才刷成已登录）──
+    // preferences.getPreferencesSync 同步打开偏好库并持有句柄；在 loadContent 之前
+    // 同步读取 auth_token，保证页面首帧渲染时 isLoggedIn 就是正确值。
+    ApiService.setAppContext(this.context);
+    ApiService.registerLogoutCleanup((): void => {
+      // 退出登录时清掉主应用进程内缓存的旧作品信息（卡片内存态）
+      WidgetData.resetMemo();
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'logout cleanup: WidgetData.resetMemo done');
+    });
+    let authCache: CacheManager = CacheManager.initSync(this.context);
+    let bootTokenPresent: boolean = authCache.getToken().length > 0;
+    let bootTokenInvalid: boolean = authCache.isTokenInvalid();
+    let bootLoggedIn: boolean = bootTokenPresent && !bootTokenInvalid;
+    // 同步句柄就绪才算「登录态已确定」；未就绪则由下面的异步复检置位
+    let bootResolved: boolean = authCache.isReady();
+    AppStorage.setOrCreate('isLoggedIn', bootLoggedIn);
+    AppStorage.setOrCreate('auth_resolved', bootResolved);
+    // 顺序打点：证明同步置位发生在页面首帧之前（只打印布尔与时间戳，不打印令牌内容）
+    hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'auth sync ts=' + Date.now()
+      + ' tokenPresent=' + (bootTokenPresent ? 'true' : 'false')
+      + ' invalid=' + (bootTokenInvalid ? 'true' : 'false')
+      + ' isLoggedIn=' + (bootLoggedIn ? 'true' : 'false')
+      + ' auth_resolved=' + (bootResolved ? 'true' : 'false'));
+    // 首次登录态判定（异步复检）：保留原凭据恢复路径，发现令牌失效会把 isLoggedIn 置回 false
+    ApiService.getInstance().resolveAuthState().catch((e: Error) => {
+      hilog.debug(DOMAIN, 'BikaTag', 'auth resolve failed: %{public}s', JSON.stringify(e));
+    });
+
     // 冷启动路径：桌面卡片点击首次拉起应用时，参数只在 onCreate 的 want 里
     this.parseWidgetWant(want);
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onCreate');
@@ -74,8 +107,9 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       let params = want.parameters;
-      // 卡片点击是否真的到达系统侧，全靠这条日志判定（onCreate / onNewWant 都会打）
-      hilog.info(DOMAIN, 'BikaTag', 'Widget want: %{public}s', JSON.stringify(want));
+      // 只记录「是否携带参数」这一布尔事实：完整 want 含作品名等敏感内容，禁止打印
+      hilog.debug(DOMAIN, 'BikaTag', 'Widget want received, hasParams=%{public}s',
+        (params === undefined || params === null) ? 'false' : 'true');
       if (params === undefined || params === null) {
         return;
       }
@@ -123,7 +157,8 @@ export default class EntryAbility extends UIAbility {
         timestamp: Date.now()
       };
       AppStorage.setOrCreate('bika_widget_action', JSON.stringify(payload));
-      hilog.info(DOMAIN, 'BikaTag',
+      // 只打 action 与布尔事实，不打印作品名 / comicId 原文
+      hilog.debug(DOMAIN, 'BikaTag',
         'Widget want parsed: action=%{public}s, hasComicId=%{public}s, hasTitle=%{public}s',
         action, comicId.length > 0 ? 'true' : 'false', comicTitle.length > 0 ? 'true' : 'false');
     } catch (err) {
@@ -218,20 +253,10 @@ export default class EntryAbility extends UIAbility {
         // 桌面卡片预热：在应用进程里把卡片要用的列表刷进本地缓存。
         // 卡片进程（FormExtensionAbility）生命周期只有 10s，不能每次都指望它自己联网；
         // 预热之后，卡片一挂上就能同步读到真实作品名。
-        try {
-          WidgetData.init(this.context);
-          WidgetExtraData.init(this.context);
-          if (this.context !== null) {
-            WidgetData.bootstrapCache(this.context).catch((e: Error) => {
-              hilog.info(DOMAIN, 'BikaTag', 'widget cache warmup failed: %{public}s', JSON.stringify(e));
-            });
-            WidgetExtraData.bootstrapCache(this.context).catch((e: Error) => {
-              hilog.info(DOMAIN, 'BikaTag', 'widget extra warmup failed: %{public}s', JSON.stringify(e));
-            });
-          }
-        } catch (e) {
-          hilog.error(DOMAIN, 'BikaTag', 'widget warmup init failed: %{public}s', JSON.stringify(e));
-        }
+        // 预热改为串行 + 30 分钟节流，避免冷启动并发请求触发频控熔断（见 warmupWidgetCache）
+        this.warmupWidgetCache(cache).catch((e: Error) => {
+          hilog.debug(DOMAIN, 'BikaTag', 'widget warmup failed: %{public}s', JSON.stringify(e));
+        });
 
         // 应用防截屏
         if (cache.getSetting('secure_screen', 'false') === 'true') {
@@ -257,13 +282,66 @@ export default class EntryAbility extends UIAbility {
     // 启动即后台刷新直连 IP 池（非阻塞，默认池已可用）
     ApiRouteManager.getInstance().ensureInitialized();
 
-    windowStage.loadContent('pages/IndexPage', (err) => {
+    this.loadInitialContent(windowStage);
+  }
+
+  /** 登录态恢复后再决定首屏，每个版本只展示一次登录门。 */
+  private async loadInitialContent(windowStage: window.WindowStage): Promise<void> {
+    let showGate: boolean = false;
+    try {
+      await ApiService.getInstance().resolveAuthState();
+      const cache = await CacheManager.getInstance(this.context);
+      const version = AppStorage.get<string>('bika_current_version') ?? '';
+      showGate = AppStorage.get<boolean>('auth_resolved') === true &&
+        AppStorage.get<boolean>('isLoggedIn') === false && cache.isReady() &&
+        version.length > 0 && cache.getSetting('login_gate_shown_version', '') !== version;
+      if (showGate) {
+        cache.saveSetting('login_gate_shown_version', version);
+      }
+    } catch (err) {
+      // 无法确定登录态或无法持久化时，保留主页入口，避免反复弹门。
+      showGate = false;
+      hilog.warn(DOMAIN, 'BikaTag', 'Initial login gate state unavailable.');
+    }
+    AppStorage.setOrCreate('bika_login_gate_pending', showGate);
+    windowStage.loadContent(showGate ? 'pages/LoginPage' : 'pages/IndexPage', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'BikaTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
       hilog.info(DOMAIN, 'BikaTag', 'Succeeded in loading the content.');
     });
+  }
+
+  /**
+   * 桌面卡片缓存预热：串行 + 节流。
+   *
+   * 两个 bootstrapCache 各自都会立刻发网络请求；冷启动时并发调用会在数毫秒内
+   * 连发两枪（实测两个请求相隔 8ms），极易命中服务端低频窗口的全局频控熔断
+   * （命中后主应用所有请求冻结 90s 起，最长 60 分钟）。
+   *
+   * 因此：
+   *  1) 用 preferences 记时间戳，30 分钟内直接跳过；
+   *  2) 首次执行时逐个 await，保证同一时刻只有一个请求在途。
+   */
+  private async warmupWidgetCache(cache: CacheManager): Promise<void> {
+    try {
+      let last = parseInt(cache.getSetting(EntryAbility.WIDGET_WARMUP_KEY, '0'));
+      let now = Date.now();
+      if (!isNaN(last) && last > 0 && now - last < EntryAbility.WIDGET_WARMUP_INTERVAL_MS) {
+        hilog.debug(DOMAIN, 'BikaTag', '%{public}s', 'widget warmup skipped (throttled)');
+        return;
+      }
+      // 先落时间戳：即便本次失败也在 30 分钟内不再重试，避免失败重试把频控窗口续期
+      cache.saveSetting(EntryAbility.WIDGET_WARMUP_KEY, now.toString());
+      WidgetData.init(this.context);
+      WidgetExtraData.init(this.context);
+      await WidgetData.bootstrapCache(this.context);
+      await WidgetExtraData.bootstrapCache(this.context);
+      hilog.debug(DOMAIN, 'BikaTag', '%{public}s', 'widget warmup done');
+    } catch (e) {
+      hilog.debug(DOMAIN, 'BikaTag', 'widget warmup failed: %{public}s', JSON.stringify(e));
+    }
   }
 
   onWindowStageDestroy(): void {

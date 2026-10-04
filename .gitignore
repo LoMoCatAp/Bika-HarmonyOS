@@ -30,3 +30,8 @@
 /**/*.log
 /hilog-stream.txt
 /regress-verify/
+# 交接文档与阶段性验证产物（本地保留，不入库）
+/UI-IMMERSIVE-SPEC.md
+/verify-evidence/
+/widget-cover-evidence.jpeg
+/.dsh-material-shots/

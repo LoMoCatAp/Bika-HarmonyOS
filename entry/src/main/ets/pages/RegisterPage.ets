@@ -1,5 +1,5 @@
-import { router, promptAction } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
+import { router, LengthMetrics } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial, ScrollEffectType } from '@kit.UIDesignKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import {
@@ -9,12 +9,15 @@ import {
   COLOR_TEXT_SECONDARY,
   COLOR_TEXT_HINT,
   COLOR_INPUT_BG,
-  COLOR_PLACEHOLDER,
-  COLOR_BG,
   COLOR_CARD,
   COLOR_WHITE,
+  COLOR_LOGOUT_TEXT,
   COLOR_DIVIDER
 } from '../common/Constants';
+
+interface RegisterRouteParams {
+  from?: string;
+}
 
 /**
  * 注册页：邮箱/昵称/密码 + 生日/性别 + 三道密保题
@@ -35,23 +38,43 @@ struct RegisterPage {
   @State answer3: string = '';
   @State registering: boolean = false;
   @State registerError: string = '';
+  @State gateMode: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private stack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
+
+  aboutToAppear(): void {
+    const params = router.getParams() as RegisterRouteParams | undefined;
+    this.gateMode = params?.from === 'gate';
+  }
+
+  private backToLogin(): void {
+    if (Number(router.getLength()) > 1) {
+      router.back();
+    } else {
+      router.replaceUrl({ url: 'pages/LoginPage', params: { from: this.gateMode ? 'gate' : 'inapp' } });
+    }
+  }
+
+  onBackPress(): boolean {
+    this.backToLogin();
+    return true;
+  }
 
   private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
     return {
-      content: { title: { mainTitle: title } },
-      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: title },
+        backIcon: { action: () => this.backToLogin() }
+      },
+      enableComponentSafeArea: false,
       avoidLayoutSafeArea: true,
       style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: $r('app.color.bika_bg')
-          },
-          contentStyle: {
-            titleStyle: { mainTitleColor: $r('app.color.bika_text_title') },
-            backIconStyle: { iconColor: $r('app.color.bika_text_title') }
-          }
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          blurEffectiveEndOffset: LengthMetrics.vp(64)
         },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
@@ -131,8 +154,8 @@ struct RegisterPage {
       await this.apiService.register(username, this.password, nickname,
         this.birthday, this.gender, questions, answers);
       showImmersiveToast({ message: '注册成功，请登录', duration: 2000 });
-      AppStorage.set('reg_email', username);
-      router.back();
+      AppStorage.setOrCreate('reg_email', username);
+      this.backToLogin();
     } catch (err) {
       let msg = (err as Error).message || '注册失败';
       let low = msg.toLowerCase();
@@ -186,10 +209,12 @@ struct RegisterPage {
       .type(isPassword ? InputType.Password : InputType.Normal)
       .fontSize(15)
       .fontColor(COLOR_TEXT_TITLE)
-      .placeholderColor(COLOR_PLACEHOLDER)
-      .backgroundColor(COLOR_INPUT_BG)
-      .borderRadius(14)
-      .height(46)
+      .placeholderColor(COLOR_TEXT_HINT)
+      .backgroundColor(COLOR_CARD)
+      .borderRadius(12)
+      .height(52)
+      .padding({ left: 16, right: 16 })
+      .border({ width: 1, color: COLOR_DIVIDER })
       .width('100%')
       .margin({ top: topMargin })
       .onChange((v: string) => {
@@ -199,9 +224,8 @@ struct RegisterPage {
 
   build() {
     HdsNavigation(this.stack) {
-      Scroll() {
+      Scroll(this.scroller) {
         Column() {
-          Row().height(24)
           this.fieldTitle('昵称')
           this.inputField('显示在评论与个人主页', this.name, false, (v: string) => {
             this.name = v;
@@ -230,10 +254,11 @@ struct RegisterPage {
               .fontColor([COLOR_PRIMARY])
           }
           .width('100%')
-          .height(46)
-          .padding({ left: 14, right: 14 })
-          .backgroundColor(COLOR_INPUT_BG)
-          .borderRadius(14)
+          .height(52)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor(COLOR_CARD)
+          .borderRadius(12)
+          .border({ width: 1, color: COLOR_DIVIDER })
           .onClick(() => this.pickBirthday())
 
           this.fieldTitle('性别')
@@ -270,8 +295,8 @@ struct RegisterPage {
             .fontSize(16)
             .fontColor(COLOR_WHITE)
             .backgroundColor(this.registering ? COLOR_TEXT_HINT : COLOR_PRIMARY)
-            .borderRadius(24)
-            .height(48)
+            .borderRadius(28)
+            .height(56)
             .width('100%')
             .margin({ top: 24 })
             .enabled(!this.registering)
@@ -281,17 +306,21 @@ struct RegisterPage {
           if (this.registerError.length > 0) {
             Text(this.registerError)
               .fontSize(13)
-              .fontColor('#C62828')
+              .fontColor(COLOR_LOGOUT_TEXT)
               .width('100%')
               .textAlign(TextAlign.Center)
               .margin({ top: 12, bottom: 40 })
           }
         }
         .width('100%')
-        .padding({ left: 20, right: 20 })
+        .justifyContent(FlexAlign.Start)
+        .padding({
+          left: 24, right: 24,
+          top: this.topSafeHeight + (this.gateMode ? 0 : 56),
+          bottom: this.bottomSafeHeight + 24
+        })
       }
-      .layoutWeight(1)
-      .width('100%')
+      .width('100%').height('100%')
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
@@ -299,10 +328,12 @@ struct RegisterPage {
     .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
     .titleBar(this.immersiveTitleBar('注册'))
-    .hideTitleBar(false)
-    .hideBackButton(false)
+    .hideTitleBar(this.gateMode)
+    .hideBackButton(this.gateMode)
+    .bindToScrollable([this.scroller])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor(COLOR_BG)
+    .backgroundColor(COLOR_CARD)
   }
 }

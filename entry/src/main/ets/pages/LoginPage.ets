@@ -16,6 +16,10 @@ import {
   COLOR_WHITE
 } from '../common/Constants';
 
+interface LoginRouteParams {
+  from?: string;
+}
+
 /**
  * 登录页面
  * 用户名 + 密码登录（不含邮箱），自动保存凭据
@@ -31,14 +35,21 @@ struct LoginPage {
   @State savePassword: boolean = true;
   @State usernameFocused: boolean = false;
   @State passwordFocused: boolean = false;
+  @State gateMode: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private stack: NavPathStack = new NavPathStack();
+  private sourceResolved: boolean = false;
+  private credentialsLoaded: boolean = false;
+  private leaving: boolean = false;
 
   private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
     return {
-      content: { title: { mainTitle: title } },
+      content: {
+        title: { mainTitle: title },
+        backIcon: { action: () => this.onBack() }
+      },
       enableComponentSafeArea: true,
       avoidLayoutSafeArea: true,
       style: {
@@ -62,13 +73,31 @@ struct LoginPage {
   private cooldownTimer: number = -1;
 
   async aboutToAppear(): Promise<void> {
-    // 注册成功回填邮箱
-    let regEmail = AppStorage.get<string>('reg_email');
-    if (regEmail && regEmail.length > 0) {
-      this.email = regEmail;
-      AppStorage.set('reg_email', '');
+    if (!this.sourceResolved) {
+      const params = router.getParams() as LoginRouteParams | undefined;
+      this.gateMode = params?.from === 'gate' ||
+        (AppStorage.get<boolean>('bika_login_gate_pending') ?? false);
+      AppStorage.setOrCreate('bika_login_gate_pending', false);
+      this.sourceResolved = true;
     }
     await this.loadSavedCredentials();
+    this.credentialsLoaded = true;
+    this.fillRegisteredUsername();
+  }
+
+  onPageShow(): void {
+    if (this.credentialsLoaded) {
+      this.fillRegisteredUsername();
+    }
+  }
+
+  private fillRegisteredUsername(): void {
+    const regEmail = AppStorage.get<string>('reg_email');
+    if (regEmail && regEmail.length > 0) {
+      this.email = regEmail;
+      this.password = '';
+      AppStorage.set('reg_email', '');
+    }
   }
 
   async loadSavedCredentials(): Promise<void> {
@@ -88,6 +117,9 @@ struct LoginPage {
   }
 
   async onLogin(): Promise<void> {
+    if (this.isLoading || this.leaving) {
+      return;
+    }
     if (!this.email.trim()) {
       this.errorMsg = '用户名不能为空';
       return;
@@ -104,7 +136,7 @@ struct LoginPage {
       await this.apiService.signIn(this.email.trim(), this.password);
       console.info('[LoginPage] 登录成功');
       showImmersiveToast({ message: '登录成功', duration: 2000 });
-      router.back();
+      await this.goHome();
     } catch (err) {
       let msg = (err as Error).message;
       this.errorMsg = msg || '登录失败，请稍后重试';
@@ -138,7 +170,32 @@ struct LoginPage {
   }
 
   onBack(): void {
-    router.back();
+    if (this.gateMode || Number(router.getLength()) <= 1) {
+      this.goHome();
+    } else {
+      router.back();
+    }
+  }
+
+  onBackPress(): boolean {
+    this.onBack();
+    return true;
+  }
+
+  private async goHome(): Promise<void> {
+    if (this.leaving) {
+      return;
+    }
+    this.leaving = true;
+    AppStorage.setOrCreate('bika_active_tab', 0);
+    AppStorage.setOrCreate('bika_subpage_open', false);
+    try {
+      await router.replaceUrl({ url: 'pages/IndexPage' });
+      router.clear();
+    } catch (err) {
+      this.leaving = false;
+      showImmersiveToast({ message: '暂时无法打开主页，请重试', duration: 1600 });
+    }
   }
 
   /** 忘记密码：哔咔通过官网处理密码找回（bika 原版亦为占位提示） */
@@ -285,7 +342,10 @@ struct LoginPage {
             .fontWeight(FontWeight.Medium)
             .fontColor(COLOR_PRIMARY)
             .onClick(() => {
-              router.pushUrl({ url: 'pages/RegisterPage' });
+              router.pushUrl({
+                url: 'pages/RegisterPage',
+                params: { from: this.gateMode ? 'gate' : 'inapp' }
+              });
             })
         }
         .width('100%')
@@ -300,8 +360,8 @@ struct LoginPage {
     .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
     .titleBar(this.immersiveTitleBar('账号'))
-    .hideTitleBar(false)
-    .hideBackButton(false)
+    .hideTitleBar(this.gateMode)
+    .hideBackButton(this.gateMode)
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_CARD)

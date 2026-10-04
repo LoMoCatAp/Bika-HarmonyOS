@@ -3,7 +3,7 @@
  *
  * 布局：标题 + 2x2 封面网格，撑满卡片高度。
  * 动态卡片：整格点击 postCardAction(action:'router') → open_comic（作品详情）。
- * 数据：ApiService.getCollections()，为空回退 getRandomComics()，
+ * 数据：ApiService.getRandomComics()（GET comics/random），
  *       经 common/WidgetExtraData.ets 下发 recTitle / recJson / extraShowCover。
  * 封面：Image('memory://' + coverKey)；无封面时骨架色块。
  */
