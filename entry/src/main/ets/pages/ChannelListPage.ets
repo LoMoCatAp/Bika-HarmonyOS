@@ -43,6 +43,8 @@ struct ChannelListPage {
   @State comics: ComicViewModel[] = [];
   @State knights: BikaKnightUser[] = [];
   @State isLoading: boolean = false;
+  /** 下拉刷新中 */
+  @State refreshing: boolean = false;
   @State errorMsg: string = '';
   @State currentPage: number = 1;
   @State hasMore: boolean = false;
@@ -192,6 +194,26 @@ struct ChannelListPage {
     }
   }
 
+  /**
+   * 下拉刷新：回到第一页重新拉取，保留当前筛选与排序条件（与首屏加载共用 doLoad）。
+   * 注意：进入 onRefreshing 时 Refresh 组件已通过 $$ 把 refreshing 置为 true，
+   * 所以这里不能用 refreshing 做自守卫（那样会直接 return 且永不复位，指示器一直悬停）；
+   * 也不额外置 true，只负责在加载完成/失败后复位。
+   */
+  private async onPullRefresh(): Promise<void> {
+    this.currentPage = 1;
+    this.hasMore = false;
+    try {
+      this.errorMsg = '';
+      await this.doLoad(true);
+    } catch (err) {
+      this.errorMsg = (err as Error).message || '刷新失败';
+      console.error('[ChannelListPage] refresh failed: ' + this.errorMsg);
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
   private async doLoad(reset: boolean): Promise<void> {
     let vms: ComicViewModel[] = [];
     if (this.kind === 'leaderboard' && this.leaderboardTab === 3) {
@@ -265,6 +287,23 @@ struct ChannelListPage {
       return this.label !== '那年今天';
     }
     return false;
+  }
+
+  /** 下拉刷新指示器：下拉/刷新中均显示主色 loading，与首页下拉刷新观感一致，深浅两模式都清晰 */
+  @Builder
+  refreshIndicator() {
+    Row({ space: 8 }) {
+      LoadingProgress()
+        .width(20)
+        .height(20)
+        .color(COLOR_PRIMARY)
+      Text(this.refreshing ? '正在刷新' : '下拉刷新')
+        .fontSize(13)
+        .fontColor(COLOR_TEXT_SECONDARY)
+    }
+    .width('100%')
+    .height(44)
+    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -448,6 +487,7 @@ struct ChannelListPage {
       .padding({ top: 70 })
       .alignItems(HorizontalAlign.Center)
     } else {
+      // 这里必须让 Scroll 成为 Refresh 的直接子节点：中间再夹一层 Stack 会截断下拉手势，导致下拉刷新永远不触发
       Scroll(this.listScroller) {
         Grid() {
           ForEach(this.comics, (comic: ComicViewModel) => {
@@ -513,8 +553,33 @@ struct ChannelListPage {
       Column() {
         this.filterBar()
 
-        Column() {
-          this.contentArea()
+        // Stack 只负责把「上拉加载更多」指示器浮在底部；Refresh 必须直接包住 contentArea（内部 Scroll），
+        // 否则下拉手势会被中间层截断，刷新不会触发
+        Stack({ alignContent: Alignment.Bottom }) {
+          Refresh({ refreshing: $$this.refreshing, builder: this.refreshIndicator() }) {
+            this.contentArea()
+          }
+          .width('100%')
+          .height('100%')
+          .refreshOffset(64)
+          .onRefreshing(() => { this.onPullRefresh(); })
+
+          if (this.isLoading) {
+            Row({ space: 6 }) {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color(COLOR_PRIMARY)
+              Text('加载中…')
+                .fontSize(12)
+                .fontColor(COLOR_TEXT_SECONDARY)
+            }
+            .padding({ left: 14, right: 16, top: 8, bottom: 8 })
+            .margin({ bottom: 20 })
+            .backgroundColor(COLOR_CARD)
+            .borderRadius(18)
+            .border({ width: 1, color: COLOR_DIVIDER })
+          }
         }
         .layoutWeight(1)
         .width('100%')

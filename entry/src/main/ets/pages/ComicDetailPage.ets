@@ -18,6 +18,7 @@ import {
   COLOR_TEXT_DISABLED,
   COLOR_BG,
   COLOR_CARD,
+  COLOR_INPUT_BG,
   COLOR_DIVIDER,
   COLOR_WHITE,
   adaptiveListColumns
@@ -55,6 +56,8 @@ struct ComicDetailPage {
   @State commentHasMore: boolean = false;
   @State commentSort: string = 'dd';
   @State commentsLoading: boolean = false;
+  /** 评论列表下拉刷新中 */
+  @State commentsRefreshing: boolean = false;
   @State isLoading: boolean = true;
   @State errorMsg: string = '';
   @State comicTitle: string = '详情';
@@ -157,6 +160,20 @@ struct ComicDetailPage {
       console.warn('[ComicDetailPage] comments failed: ' + JSON.stringify(err));
     } finally {
       this.commentsLoading = false;
+    }
+  }
+
+  /**
+   * 评论列表下拉刷新：重置到第一页重新拉取（与首屏加载共用 loadComments）。
+   * 注意：进入 onRefreshing 时 Refresh 组件已通过 $$ 把 commentsRefreshing 置为 true，
+   * 这里不能用它做自守卫（否则直接 return 且永不复位，指示器会一直悬停）。
+   */
+  private async refreshComments(): Promise<void> {
+    try {
+      this.commentPage = 1;
+      await this.loadComments(true);
+    } finally {
+      this.commentsRefreshing = false;
     }
   }
 
@@ -860,6 +877,23 @@ struct ComicDetailPage {
     .padding({ left: 16, right: 16, top: 8, bottom: 16 })
   }
 
+  /** 评论列表下拉刷新指示器：下拉/刷新中均显示主色 loading，深浅两模式都清晰 */
+  @Builder
+  commentsRefreshIndicator() {
+    Row({ space: 8 }) {
+      LoadingProgress()
+        .width(20)
+        .height(20)
+        .color(COLOR_PRIMARY)
+      Text(this.commentsRefreshing ? '正在刷新' : '下拉刷新')
+        .fontSize(13)
+        .fontColor(COLOR_TEXT_SECONDARY)
+    }
+    .width('100%')
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+  }
+
   /** 评论 Tab */
   @Builder
   commentTab() {
@@ -909,61 +943,84 @@ struct ComicDetailPage {
       .width('100%')
       .margin({ bottom: 8 })
 
-      List({ scroller: this.commentScroller, space: 0 }) {
-        if (this.comments.length === 0) {
-          ListItem() {
-            Column({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.message'))
-                .fontSize(36)
-                .fontColor([COLOR_TEXT_DISABLED])
-              Text('暂无评论，来抢沙发')
-                .fontSize(14)
-                .fontColor(COLOR_TEXT_HINT)
-            }
-            .width('100%')
-            .padding({ top: 80, bottom: 80 })
-            .justifyContent(FlexAlign.Center)
-          }
-        }
-        ForEach(this.sortedComments(), (comment: BikaComment, index: number) => {
-          ListItem() {
-            this.commentItem(comment)
-          }
-          if (index < this.sortedComments().length - 1) {
+      Refresh({ refreshing: $$this.commentsRefreshing, builder: this.commentsRefreshIndicator() }) {
+        List({ scroller: this.commentScroller, space: 0 }) {
+          if (this.comments.length === 0) {
             ListItem() {
-              Divider().height(1).color(COLOR_DIVIDER).margin({ left: 64 })
+              if (this.commentsLoading) {
+                // 首次加载：先显示加载指示器，加载结束后再决定展示空态还是列表
+                Column({ space: 10 }) {
+                  LoadingProgress()
+                    .width(28)
+                    .height(28)
+                    .color(COLOR_PRIMARY)
+                  Text('评论加载中…')
+                    .fontSize(13)
+                    .fontColor(COLOR_TEXT_HINT)
+                }
+                .width('100%')
+                .padding({ top: 80, bottom: 80 })
+                .justifyContent(FlexAlign.Center)
+              } else {
+                Column({ space: 8 }) {
+                  SymbolGlyph($r('sys.symbol.message'))
+                    .fontSize(36)
+                    .fontColor([COLOR_TEXT_DISABLED])
+                  Text('暂无评论，来抢沙发')
+                    .fontSize(14)
+                    .fontColor(COLOR_TEXT_HINT)
+                }
+                .width('100%')
+                .padding({ top: 80, bottom: 80 })
+                .justifyContent(FlexAlign.Center)
+              }
             }
           }
-        }, (comment: BikaComment) => comment._id)
-        if (this.commentHasMore && !this.commentsLoading) {
-          ListItem() {
-            Row({ space: 6 }) {
-              LoadingProgress()
-                .width(14)
-                .height(14)
-                .color(COLOR_PRIMARY)
-              Text('加载中…')
-                .fontSize(12)
-                .fontColor(COLOR_TEXT_HINT)
+          ForEach(this.sortedComments(), (comment: BikaComment, index: number) => {
+            ListItem() {
+              this.commentItem(comment)
             }
-            .width('100%')
-            .padding({ top: 12, bottom: 12 })
-            .justifyContent(FlexAlign.Center)
+            if (index < this.sortedComments().length - 1) {
+              ListItem() {
+                Divider().height(1).color(COLOR_DIVIDER).margin({ left: 64 })
+              }
+            }
+          }, (comment: BikaComment) => comment._id)
+          // 上拉加载更多：只有真正在加载时才显示指示器（加载完成/失败都会隐藏）
+          if (this.commentsLoading && this.comments.length > 0) {
+            ListItem() {
+              Row({ space: 6 }) {
+                LoadingProgress()
+                  .width(16)
+                  .height(16)
+                  .color(COLOR_PRIMARY)
+                Text('加载中…')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_HINT)
+              }
+              .width('100%')
+              .padding({ top: 12, bottom: 12 })
+              .justifyContent(FlexAlign.Center)
+            }
           }
         }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(COLOR_CARD)
+        .borderRadius(18)
+        .border({ width: 1, color: COLOR_DIVIDER })
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .onReachEnd(() => {
+          if (this.commentHasMore && !this.commentsLoading) {
+            this.commentPage++;
+            this.loadComments(false);
+          }
+        })
       }
       .layoutWeight(1)
       .width('100%')
-      .backgroundColor(COLOR_CARD)
-      .borderRadius(18)
-      .border({ width: 1, color: COLOR_DIVIDER })
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-      .onReachEnd(() => {
-        if (this.commentHasMore && !this.commentsLoading) {
-          this.commentPage++;
-          this.loadComments(false);
-        }
-      })
+      .refreshOffset(56)
+      .onRefreshing(() => { this.refreshComments(); })
 
       // 底部输入栏（假输入框 → 弹层输入）
       Row({ space: 10 }) {
@@ -1174,12 +1231,17 @@ struct ComicDetailPage {
     .bindSheet($$this.showDetailSheet, this.detailUnifiedSheet(), {
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
+      // 系统 sheet 统一绘制表面与圆角，内容根容器不再叠加第二层表面。
+      backgroundColor: COLOR_BG,
+      blurStyle: BlurStyle.NONE,
+      borderWidth: 0,
       showClose: false,
       dragBar: false,
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
-      title: { title: this.detailSheetKind === 'comment'
-        ? (this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论')
-        : '下载章节' },
+      // 下载内容自带顶部横条与标题，不再在它上方叠加系统标题区。
+      title: this.detailSheetKind === 'comment'
+        ? { title: this.replyTarget ? ('回复 @' + (this.replyTarget._user?.name ?? '匿名')) : '发表评论' }
+        : undefined,
       onWillDismiss: (): void => {
         this.showDetailSheet = false;
       }
@@ -1201,33 +1263,38 @@ struct ComicDetailPage {
   /** 评论输入弹窗（发表评论 / 回复某人） */
   @Builder
   commentSheet() {
-    Column({ space: 12 }) {
+    Column({ space: 10 }) {
+      // 输入区收到约 4 行高（原 120 偏高，空态时整块留白显得头重脚轻）
       TextArea({ placeholder: '说点什么吧…', text: this.commentInput })
-        .height(120)
+        .height(96)
         .width('100%')
         .fontSize(15)
         .fontColor(COLOR_TEXT_TITLE)
         .placeholderColor(COLOR_TEXT_HINT)
-        .backgroundColor(COLOR_BG)
+        // 输入框与系统弹窗表面区分，颜色随深浅主题切换。
+        .backgroundColor(COLOR_INPUT_BG)
+        .border({ width: 1, color: COLOR_DIVIDER })
         .borderRadius(14)
         .onChange((value: string) => {
           this.commentInput = value;
         })
       Row() {
+        // 发送改为右下角紧凑胶囊（原先通栏 100% 宽 + 40 高，只承载两个控件时比例过重）
         Button(this.commentSending ? '发送中…' : '发送')
           .fontSize(15)
           .fontColor(COLOR_WHITE)
           .backgroundColor(this.commentSending ? COLOR_TEXT_DISABLED : COLOR_PRIMARY)
-          .borderRadius(20)
-          .height(40)
-          .layoutWeight(1)
+          .borderRadius(19)
+          .width(96)
+          .height(38)
           .onClick(() => this.sendComment())
       }
       .width('100%')
-      .padding({ bottom: 8 })
+      .justifyContent(FlexAlign.End)
+      .padding({ bottom: 4 })
     }
     .width('100%')
-    .padding({ left: 16, right: 16 })
+    .padding({ left: 16, right: 16, top: 4 })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -1317,6 +1384,5 @@ struct ComicDetailPage {
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 8, bottom: 28 })
-    .backgroundColor(COLOR_BG)
   }
 }

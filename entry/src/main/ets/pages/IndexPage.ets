@@ -960,6 +960,15 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.4.1',
+    date: '2026-10-04',
+    items: [
+      '修复：弹窗边框与底色不一致',
+      '修复：频道页与评论区的下拉刷新、上拉加载更多缺少加载提示',
+      '优化：评论输入弹窗改为自适应高度输入框与紧凑发送按钮'
+    ]
+  },
+  {
     version: '1.4.0',
     date: '2026-10-04',
     items: [
@@ -2368,9 +2377,11 @@ struct ProfilePage {
       preferType: SheetType.BOTTOM,
       showClose: true,
       dragBar: false,
-      // 沉浸光感材质：让弹窗底色与应用背景协调（API 26+ 生效，旧设备保持系统默认）
-      // 同一 bindSheet 服务 aboutSheetKind 0/1/2（更新提示 / 更新日志 / 隐私政策）
-      systemMaterial: compatibleSheetMaterial(this.materialLevel),
+      // 仅更新提示统一系统表面；更新日志与隐私政策保留原有配置。
+      backgroundColor: this.aboutSheetKind === 0 ? COLOR_BG : undefined,
+      blurStyle: this.aboutSheetKind === 0 ? BlurStyle.NONE : undefined,
+      borderWidth: this.aboutSheetKind === 0 ? 0 : undefined,
+      systemMaterial: this.aboutSheetKind === 0 ? undefined : compatibleSheetMaterial(this.materialLevel),
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
       onWillDismiss: (): void => {
         this.showAboutSheet = false;
@@ -4551,8 +4562,6 @@ struct ProfilePage {
       .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 12 })
     }
     .width('100%')
-    .backgroundColor(COLOR_CARD)
-    .borderRadius({ topLeft: 20, topRight: 20 })
   }
 
   /** 打开外部链接 */
