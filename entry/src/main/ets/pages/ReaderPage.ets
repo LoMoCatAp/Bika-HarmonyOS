@@ -11,6 +11,15 @@ import { ImageLoader } from '../common/ImageLoader';
 import { exportImagesZip, exportImagesPdf } from '../common/ExportUtils';
 import { BikaPageDoc } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
+import {
+  CONTINUATION_READING_KEY,
+  CurrentReadingState,
+  publishContinuationRoute,
+  clearContinuationRoute,
+  readContinuationRoute,
+  ContinuationRouteState,
+  ROUTE_READER
+} from '../common/ContinuationState';
 import { DownloadManager } from '../common/DownloadManager';
 import {
   COLOR_PRIMARY,
@@ -200,6 +209,7 @@ struct ReaderPage {
       cache.saveReadProgress(this.comicId, this.currentOrder);
       cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
       this.restoreLastPage(cache);
+      this.publishCurrentReading();
     });
   }
 
@@ -246,6 +256,7 @@ struct ReaderPage {
       cache.saveReadProgress(this.comicId, this.currentOrder);
       cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
       this.restoreLastPage(cache);
+      this.publishCurrentReading();
     } catch (err) {
       if (gen !== this.generation) {
         return;
@@ -286,6 +297,7 @@ struct ReaderPage {
     this.persistPageIndex();
     this.currentOrder--;
     this.updateChapterButtons();
+    this.publishCurrentReading();
     this.zoomScale = 1.0;
     this.isZoomed = false;
     this.scrollScroller.scrollEdge(Edge.Top);
@@ -303,6 +315,7 @@ struct ReaderPage {
     this.persistPageIndex();
     this.currentOrder++;
     this.updateChapterButtons();
+    this.publishCurrentReading();
     this.zoomScale = 1.0;
     this.isZoomed = false;
     this.scrollScroller.scrollEdge(Edge.Top);
@@ -726,6 +739,64 @@ struct ReaderPage {
     .borderRadius({ topLeft: 20, topRight: 20 })
   }
 
+  /**
+   * 发布「当前正在阅读」到 AppStorage（应用接续源端只认这个状态）。
+   * 阅读器进入 / 切换话 / 翻页都会调用，保证接续到的是「此刻」的话与页，而不是历史快照。
+   * 只写内存态，不落盘；离开阅读器时由 clearCurrentReading 清除。
+   */
+  private publishCurrentReading(): void {
+    try {
+      if (this.comicId.length === 0) {
+        return;
+      }
+      let page: number = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+      if (page < 0) {
+        page = 0;
+      }
+      let state: CurrentReadingState = {
+        comicId: this.comicId,
+        comicTitle: this.comicTitle,
+        order: this.currentOrder,
+        page: page,
+        coverUrl: this.coverUrl,
+        timestamp: Date.now()
+      };
+      AppStorage.setOrCreate(CONTINUATION_READING_KEY, JSON.stringify(state));
+      // 通用页面描述符：接续到任意设备都落回阅读器的「当前话 + 当前页」
+      publishContinuationRoute(ROUTE_READER, {
+        comicId: this.comicId,
+        comicTitle: this.comicTitle,
+        coverUrl: this.coverUrl,
+        order: this.currentOrder,
+        page: page
+      });
+    } catch (err) {
+      console.warn('[ReaderPage] publishCurrentReading failed: ' + JSON.stringify(err));
+    }
+  }
+
+  /**
+   * 清除「当前正在阅读」：离开阅读器后不再参与接续。
+   * 只在本页状态仍是最新时清除（页栈里可能还压着另一个阅读器实例）。
+   *
+   * 注意：用 aboutToDisappear 而不是 onPageHide——应用退到后台（正是用户去触发接续的时刻）
+   * 也会触发页面隐藏，若在那里清除会导致接续永远拿不到位置。
+   */
+  private clearCurrentReading(): void {
+    try {
+      let raw: string = AppStorage.get<string>(CONTINUATION_READING_KEY) ?? '';
+      if (raw.length === 0) {
+        return;
+      }
+      let state = JSON.parse(raw) as CurrentReadingState;
+      if (state !== null && state !== undefined && state.comicId === this.comicId) {
+        AppStorage.setOrCreate(CONTINUATION_READING_KEY, '');
+      }
+    } catch (err) {
+      AppStorage.setOrCreate(CONTINUATION_READING_KEY, '');
+    }
+  }
+
   /** 保存当前页级进度（单页模式用 swiperIndex，滚动模式用当前可见页） */
   private persistPageIndex(): void {
     let page = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
@@ -738,7 +809,18 @@ struct ReaderPage {
   }
 
   aboutToDisappear(): void {
-    // 退出阅读器：注销音量键 + 保存页级进度 + 恢复系统亮度与方向
+    // 退出阅读器：清除「当前正在阅读」状态（接续不再带走旧位置）
+    this.clearCurrentReading();
+    // 描述符也清掉（仅当它仍指向本阅读器）；下层页面（详情页/首页）的 onPageShow 会重新发布
+    try {
+      let st: ContinuationRouteState | null = readContinuationRoute();
+      if (st !== null && st.route === ROUTE_READER) {
+        clearContinuationRoute();
+      }
+    } catch (err) {
+      clearContinuationRoute();
+    }
+    // 注销音量键 + 保存页级进度 + 恢复系统亮度与方向
     this.unregisterVolumeKeys();
     this.persistPageIndex();
     let context = getContext(this);
@@ -833,6 +915,7 @@ struct ReaderPage {
             this.swiperIndex = index;
             this.currentVisibleIndex = index;
             this.persistPageIndex();
+            this.publishCurrentReading();
           })
           .onClick(() => this.toggleControls())
         } else {
@@ -883,6 +966,7 @@ struct ReaderPage {
             .onScrollIndex((start: number, end: number, center: number) => {
               this.currentVisibleIndex = start;
               this.persistPageIndex();
+              this.publishCurrentReading();
             })
             .nestedScroll({
               scrollForward: NestedScrollMode.PARENT_FIRST,

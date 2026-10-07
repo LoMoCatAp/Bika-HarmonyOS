@@ -28,6 +28,27 @@
       },
       {
         "name": "ohos.permission.PRIVACY_WINDOW"
+      },
+      // 网络状态查询（仅 WiFi 下载判断）：不声明会以 201 Permission denied 失败，
+      // 导致 isWifiNow() 恒为 false、开启仅 WiFi 后无法派发任务
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      // 长时任务（下载保活）：startBackgroundRunning(DATA_TRANSFER) 需要该权限
+      {
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+      },
+      // 应用接续：跨设备传递阅读进度需要的数据同步权限（user_grant，普通应用可申请）
+      // user_grant 权限必须声明 reason 与 usedScene，否则 PreBuild 报 00303218
+      {
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:continuation_datasync_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
       }
     ],
     "abilities": [
@@ -40,6 +61,12 @@
         "startWindowIcon": "$media:bika",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        // 应用接续（手机 ↔ 平板 无缝续读）：声明该 ability 可参与跨设备接续
+        "continuable": true,
+        // 长时任务：不声明 backgroundModes，startBackgroundRunning 会以 9800005 校验失败
+        "backgroundModes": [
+          "dataTransfer"
+        ],
         "skills": [
           {
             "entities": [

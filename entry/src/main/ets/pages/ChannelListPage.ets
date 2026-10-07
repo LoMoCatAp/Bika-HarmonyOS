@@ -4,6 +4,7 @@ import { ApiService } from '../network/ApiService';
 import { ComicViewModel, BikaComicSummary, BikaKnightUser, buildImageUrl, isBlockedComic } from '../models/Comic';
 import { ComicCard } from '../components/ComicCard';
 import { NetImage } from '../components/NetImage';
+import { publishContinuationRoute, ROUTE_CHANNEL_LIST } from '../common/ContinuationState';
 import {
   COLOR_PRIMARY,
   COLOR_PRIMARY_TINT,
@@ -78,6 +79,11 @@ struct ChannelListPage {
       this.kind = params.kind || 'topic';
     }
     this.load(true);
+  }
+
+  /** 应用接续：本页可见即发布「当前页面」（从二级页返回时也会重新发布） */
+  onPageShow(): void {
+    publishContinuationRoute(ROUTE_CHANNEL_LIST, { label: this.label, kind: this.kind });
   }
 
   private isFixedChannel(): boolean {

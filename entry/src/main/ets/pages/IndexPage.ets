@@ -9,6 +9,18 @@ import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, Bika
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
+import {
+  publishContinuationRoute,
+  CONTINUATION_PROFILE_SUBPAGE_KEY,
+  ContinuationRouteParams,
+  ROUTE_HOME,
+  ROUTE_CHANNEL_LIST,
+  ROUTE_COMIC_DETAIL,
+  ROUTE_READER,
+  ROUTE_PROFILE_SUBPAGE,
+  ROUTE_SEARCH,
+  ROUTE_SEARCH_RESULT
+} from '../common/ContinuationState';
 import { DownloadManager, DownloadTask } from '../common/DownloadManager';
 import { compatibleImmersiveMaterial, compatibleSheetMaterial } from '../common/CompatibleMaterial';
 import { ImageLoader } from '../common/ImageLoader';
@@ -582,6 +594,298 @@ interface DownloadGroup {
   sizeBytes: number;
 }
 
+/**
+ * 下载列表单项（按作品）。
+ *
+ * 为什么单独成组件：进度每页都会变，若把它放进 ForEach 的数据里、或用含进度的键值，
+ * 列表项会被销毁重建 —— 封面图跟着重新加载，表现为「图片一直闪」。
+ * 这里让列表项自己订阅 DownloadManager，进度只更新本组件内部 @State，
+ * 父级 ForEach 键值始终是 comicId（稳定），封面图节点创建一次后不再重建。
+ */
+@Component
+struct DownloadGroupItem {
+  /** 作品 id（父组件仅在分组增删时创建 / 销毁本组件） */
+  comicId: string = '';
+  /** 作品元数据：不会变化，仅创建时赋值一次 */
+  title: string = '';
+  coverUrl: string = '';
+  coverLocal: string = '';
+  description: string = '';
+  author: string = '';
+
+  // ── 会随下载进度变化的状态（只影响本组件内部节点） ──
+  @State downloadedCount: number = 0;
+  @State totalCount: number = 0;
+  @State hasDownloading: boolean = false;
+  @State hasWaiting: boolean = false;
+  @State hasFailed: boolean = false;
+  @State failedOrder: number = 0;
+  @State failedTitle: string = '';
+  @State downloadingTitle: string = '';
+  @State downloadingProgress: number = 0;
+  @State downloadingTotal: number = 0;
+  @State sizeBytes: number = 0;
+
+  private cb: (tasks: DownloadTask[]) => void = (tasks: DownloadTask[]) => {
+    this.applyTasks(tasks);
+  };
+
+  aboutToAppear(): void {
+    // 订阅即刻回调一次：进入页面时已经在下（或已完成）的任务立即显示真实进度
+    DownloadManager.getInstance().subscribe(this.cb);
+  }
+
+  aboutToDisappear(): void {
+    DownloadManager.getInstance().unsubscribe(this.cb);
+  }
+
+  /** 只统计本作品的任务；进度变化只写本组件 @State，不触碰封面图节点 */
+  private applyTasks(tasks: DownloadTask[]): void {
+    let downloaded: number = 0;
+    let total: number = 0;
+    let size: number = 0;
+    let downloading: boolean = false;
+    let waiting: boolean = false;
+    let failed: boolean = false;
+    let dlTitle: string = '';
+    let dlProgress: number = 0;
+    let dlTotal: number = 0;
+    let fOrder: number = 0;
+    let fTitle: string = '';
+    for (let t of tasks) {
+      if (t.comicId !== this.comicId) {
+        continue;
+      }
+      total += 1;
+      if (t.status === 'completed') {
+        downloaded += 1;
+        size += t.sizeBytes ?? 0;
+      } else if (t.status === 'downloading') {
+        downloading = true;
+        dlTitle = t.chapterTitle;
+        dlProgress = t.progress;
+        dlTotal = t.total;
+      } else if (t.status === 'waiting') {
+        waiting = true;
+      } else if (t.status === 'failed') {
+        failed = true;
+        if (fOrder === 0) {
+          fOrder = t.chapterOrder;
+          fTitle = t.chapterTitle;
+        }
+      }
+    }
+    this.downloadedCount = downloaded;
+    this.totalCount = total;
+    this.sizeBytes = size;
+    this.hasDownloading = downloading;
+    this.hasWaiting = waiting;
+    this.hasFailed = failed;
+    this.downloadingTitle = dlTitle;
+    this.downloadingProgress = dlProgress;
+    this.downloadingTotal = dlTotal;
+    this.failedOrder = fOrder;
+    this.failedTitle = fTitle;
+  }
+
+  private sizeLabel(bytes: number): string {
+    if (bytes <= 0) {
+      return '';
+    }
+    if (bytes >= 1024 * 1024) {
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    if (bytes >= 1024) {
+      return (bytes / 1024).toFixed(0) + ' KB';
+    }
+    return bytes + ' B';
+  }
+
+  /** 删除整部作品的下载（原生确认框） */
+  private confirmDeleteGroup(): void {
+    showImmersiveDialog({
+      title: '删除下载',
+      message: '删除《' + this.title + '》的全部已下载章节？本地文件将一并删除，且不可恢复。',
+      buttons: [
+        { text: '取消', color: '#667085' },
+        { text: '删除', color: '#C62828' }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        let manager = DownloadManager.getInstance();
+        for (let t of manager.getTasks()) {
+          if (t.comicId === this.comicId) {
+            manager.deleteTask(t.comicId, t.chapterOrder);
+          }
+        }
+        showImmersiveToast({ message: '已删除', duration: 1600 });
+      }
+    }).catch((err: Error) => {
+      console.warn('[DownloadListView] delete dialog failed: ' + JSON.stringify(err));
+    });
+  }
+
+  build() {
+    Row() {
+      if (this.coverLocal.length > 0) {
+        NetImage({
+          src: 'file://' + this.coverLocal,
+          fit: ImageFit.Cover,
+          radius: 10,
+          fillParent: true
+        })
+          .width(76)
+          .height(100)
+      } else {
+        NetImage({
+          src: this.coverUrl,
+          fit: ImageFit.Cover,
+          radius: 10,
+          fillParent: true
+        })
+          .width(76)
+          .height(100)
+      }
+      Column({ space: 6 }) {
+        Text(this.title)
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(COLOR_TEXT_TITLE)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.author.length > 0) {
+          Text(this.author)
+            .fontSize(12)
+            .fontColor(COLOR_TEXT_HINT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        if (this.description.length > 0) {
+          Text(this.description)
+            .fontSize(12)
+            .fontColor(COLOR_TEXT_SECONDARY)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        Row() {
+          Text('已下载 ' + this.downloadedCount + '/' + this.totalCount + ' 话')
+            .fontSize(12)
+            .fontColor(this.downloadedCount === this.totalCount ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+          if (this.sizeBytes > 0) {
+            Text(' · ' + this.sizeLabel(this.sizeBytes))
+              .fontSize(12)
+              .fontColor(COLOR_TEXT_HINT)
+              .margin({ left: 4 })
+          }
+          Blank()
+          if (this.hasDownloading) {
+            Text('下载中')
+              .fontSize(11)
+              .fontColor(COLOR_PRIMARY)
+              .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+              .backgroundColor(COLOR_PRIMARY_TINT)
+              .borderRadius(8)
+          } else if (this.hasWaiting) {
+            Text('等待中')
+              .fontSize(11)
+              .fontColor(COLOR_TEXT_SECONDARY)
+              .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+              .backgroundColor(COLOR_INPUT_BG)
+              .borderRadius(8)
+          }
+        }
+        .width('100%')
+        if (this.hasDownloading) {
+          Text('正在下载：' + (this.downloadingTitle.length > 0 ? this.downloadingTitle : ('第' + (this.downloadedCount + 1) + '话')))
+            .fontSize(11)
+            .fontColor(COLOR_TEXT_HINT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Row() {
+            Progress({
+              value: this.downloadingTotal > 0 ? this.downloadingProgress * 100 / this.downloadingTotal : 0,
+              type: ProgressType.Linear
+            })
+              .height(4)
+              .layoutWeight(1)
+              .color(COLOR_PRIMARY)
+              .backgroundColor(COLOR_PRIMARY_TINT)
+            Text(this.downloadingTotal > 0 ? Math.round(this.downloadingProgress * 100 / this.downloadingTotal) + '%' : '等待中')
+              .fontSize(11)
+              .fontColor(COLOR_PRIMARY)
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        } else if (this.hasWaiting) {
+          if (DownloadManager.getInstance().getWifiOnly() && !DownloadManager.getInstance().isWifiNow()) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.wifi'))
+                .fontSize(13)
+                .fontColor([COLOR_TEXT_HINT])
+              Text('等待 WiFi，连接后自动下载')
+                .fontSize(11)
+                .fontColor(COLOR_TEXT_HINT)
+            }
+            .width('100%')
+          } else {
+            Text('排队中，即将开始…')
+              .fontSize(11)
+              .fontColor(COLOR_TEXT_HINT)
+              .width('100%')
+          }
+        }
+        if (this.hasFailed) {
+          Row() {
+            Text('下载失败：' + (this.failedTitle.length > 0 ? this.failedTitle : ('第' + this.failedOrder + '话')))
+              .fontSize(11)
+              .fontColor('#C62828')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text('重试')
+              .fontSize(11)
+              .fontColor(COLOR_PRIMARY)
+              .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+              .backgroundColor(COLOR_PRIMARY_TINT)
+              .borderRadius(10)
+              .margin({ left: 8 })
+              .onClick(() => {
+                DownloadManager.getInstance().retryTask(this.comicId, this.failedOrder);
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 12 })
+
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(18)
+        .fontColor([COLOR_TEXT_HINT])
+        .padding(6)
+        .alignSelf(ItemAlign.Start)
+        .onClick(() => {
+          this.confirmDeleteGroup();
+        })
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(COLOR_CARD)
+    .borderRadius(16)
+    .border({ width: 1, color: COLOR_DIVIDER })
+    .onClick(() => {
+      router.pushUrl({
+        url: 'pages/ComicDetailPage',
+        params: { comicId: this.comicId, comicTitle: this.title }
+      });
+    })
+  }
+}
+
 /** 下载列表（独立组件：订阅 DownloadManager 实时刷新） */
 @Component
 struct DownloadListView {
@@ -652,43 +956,6 @@ struct DownloadListView {
     return Array.from(map.values());
   }
 
-  private sizeLabel(bytes: number): string {
-    if (bytes <= 0) {
-      return '';
-    }
-    if (bytes >= 1024 * 1024) {
-      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-    if (bytes >= 1024) {
-      return (bytes / 1024).toFixed(0) + ' KB';
-    }
-    return bytes + ' B';
-  }
-
-  /** 删除整部作品的下载（原生确认框） */
-  private confirmDeleteGroup(g: DownloadGroup): void {
-    showImmersiveDialog({
-      title: '删除下载',
-      message: '删除《' + g.title + '》的全部已下载章节？本地文件将一并删除，且不可恢复。',
-      buttons: [
-        { text: '取消', color: '#667085' },
-        { text: '删除', color: '#C62828' }
-      ]
-    }).then((res: promptAction.ShowDialogSuccessResponse) => {
-      if (res.index === 1) {
-        let manager = DownloadManager.getInstance();
-        for (let t of manager.getTasks()) {
-          if (t.comicId === g.comicId) {
-            manager.deleteTask(t.comicId, t.chapterOrder);
-          }
-        }
-        showImmersiveToast({ message: '已删除', duration: 1600 });
-      }
-    }).catch((err: Error) => {
-      console.warn('[DownloadListView] delete dialog failed: ' + JSON.stringify(err));
-    });
-  }
-
   build() {
     List({ space: 12, scroller: this.scroller }) {
     if (this.groups().length === 0) {
@@ -712,162 +979,15 @@ struct DownloadListView {
     } else {
         ForEach(this.groups(), (g: DownloadGroup) => {
           ListItem() {
-            Row() {
-              if (g.coverLocal.length > 0) {
-                NetImage({
-                  src: 'file://' + g.coverLocal,
-                  fit: ImageFit.Cover,
-                  radius: 10,
-                  fillParent: true
-                })
-                  .width(76)
-                  .height(100)
-              } else {
-                NetImage({
-                  src: g.coverUrl,
-                  fit: ImageFit.Cover,
-                  radius: 10,
-                  fillParent: true
-                })
-                  .width(76)
-                  .height(100)
-              }
-              Column({ space: 6 }) {
-                Text(g.title)
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(COLOR_TEXT_TITLE)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                if (g.author.length > 0) {
-                  Text(g.author)
-                    .fontSize(12)
-                    .fontColor(COLOR_TEXT_HINT)
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-                if (g.description.length > 0) {
-                  Text(g.description)
-                    .fontSize(12)
-                    .fontColor(COLOR_TEXT_SECONDARY)
-                    .maxLines(2)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-                Row() {
-                  Text('已下载 ' + g.downloadedCount + '/' + g.totalCount + ' 话')
-                    .fontSize(12)
-                    .fontColor(g.downloadedCount === g.totalCount ? COLOR_PRIMARY : COLOR_TEXT_HINT)
-                  if (g.sizeBytes > 0) {
-                    Text(' · ' + this.sizeLabel(g.sizeBytes))
-                      .fontSize(12)
-                      .fontColor(COLOR_TEXT_HINT)
-                      .margin({ left: 4 })
-                  }
-                  Blank()
-                  if (g.hasDownloading) {
-                    Text('下载中')
-                      .fontSize(11)
-                      .fontColor(COLOR_PRIMARY)
-                      .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-                      .backgroundColor(COLOR_PRIMARY_TINT)
-                      .borderRadius(8)
-                  } else if (g.hasWaiting) {
-                    Text('等待中')
-                      .fontSize(11)
-                      .fontColor(COLOR_TEXT_SECONDARY)
-                      .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-                      .backgroundColor(COLOR_INPUT_BG)
-                      .borderRadius(8)
-                  }
-                }
-                .width('100%')
-                if (g.hasDownloading) {
-                  Text('正在下载：' + (g.downloadingTitle.length > 0 ? g.downloadingTitle : ('第' + (g.downloadedCount + 1) + '话')))
-                    .fontSize(11)
-                    .fontColor(COLOR_TEXT_HINT)
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .width('100%')
-                  Row() {
-                    Progress({
-                      value: g.downloadingTotal > 0 ? g.downloadingProgress * 100 / g.downloadingTotal : 0,
-                      type: ProgressType.Linear
-                    })
-                      .height(4)
-                      .layoutWeight(1)
-                      .color(COLOR_PRIMARY)
-                      .backgroundColor(COLOR_PRIMARY_TINT)
-                    Text(g.downloadingTotal > 0 ? Math.round(g.downloadingProgress * 100 / g.downloadingTotal) + '%' : '等待中')
-                      .fontSize(11)
-                      .fontColor(COLOR_PRIMARY)
-                      .margin({ left: 8 })
-                  }
-                  .width('100%')
-                  .alignItems(VerticalAlign.Center)
-                } else if (g.hasWaiting) {
-                  if (DownloadManager.getInstance().getWifiOnly() && !DownloadManager.getInstance().isWifiNow()) {
-                    Row({ space: 6 }) {
-                      SymbolGlyph($r('sys.symbol.wifi'))
-                        .fontSize(13)
-                        .fontColor([COLOR_TEXT_HINT])
-                      Text('等待 WiFi，连接后自动下载')
-                        .fontSize(11)
-                        .fontColor(COLOR_TEXT_HINT)
-                    }
-                    .width('100%')
-                  } else {
-                    Text('排队中，即将开始…')
-                      .fontSize(11)
-                      .fontColor(COLOR_TEXT_HINT)
-                      .width('100%')
-                  }
-                }
-                if (g.hasFailed && g.failedFirst) {
-                  Row() {
-                    Text('下载失败：' + (g.failedFirst.chapterTitle.length > 0 ? g.failedFirst.chapterTitle : ('第' + g.failedFirst.chapterOrder + '话')))
-                      .fontSize(11)
-                      .fontColor('#C62828')
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .layoutWeight(1)
-                    Text('重试')
-                      .fontSize(11)
-                      .fontColor(COLOR_PRIMARY)
-                      .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                      .backgroundColor(COLOR_PRIMARY_TINT)
-                      .borderRadius(10)
-                      .margin({ left: 8 })
-                      .onClick(() => {
-                        DownloadManager.getInstance().retryTask(g.failedFirst!.comicId, g.failedFirst!.chapterOrder);
-                      })
-                  }
-                  .width('100%')
-                  .alignItems(VerticalAlign.Center)
-                }
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-              .margin({ left: 12 })
-
-              SymbolGlyph($r('sys.symbol.trash'))
-                .fontSize(18)
-                .fontColor([COLOR_TEXT_HINT])
-                .padding(6)
-                .alignSelf(ItemAlign.Start)
-                .onClick(() => {
-                  this.confirmDeleteGroup(g);
-                })
-            }
-            .width('100%')
-            .padding(12)
-            .backgroundColor(COLOR_CARD)
-            .borderRadius(16)
-            .border({ width: 1, color: COLOR_DIVIDER })
-            .onClick(() => {
-              router.pushUrl({
-                url: 'pages/ComicDetailPage',
-                params: { comicId: g.comicId, comicTitle: g.title }
-              });
+            // 列表项自己订阅进度：ForEach 键值固定为 comicId（稳定），
+            // 进度刷新只重渲染项内文本，封面图节点不被销毁重建（不闪烁）
+            DownloadGroupItem({
+              comicId: g.comicId,
+              title: g.title,
+              coverUrl: g.coverUrl,
+              coverLocal: g.coverLocal,
+              description: g.description,
+              author: g.author
             })
           }
         }, (g: DownloadGroup) => g.comicId)
@@ -959,6 +1079,17 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.4.2',
+    date: '2026-10-05',
+    items: [
+      '新增：应用接续',
+      '新增：下载支持后台运行',
+      '新增：下载进度通知',
+      '修复：下载页进度不实时刷新',
+      '修复：开启「仅 WiFi 下载」后任务概率不派发'
+    ]
+  },
   {
     version: '1.4.1',
     date: '2026-10-04',
@@ -1844,6 +1975,9 @@ struct ProfilePage {
     }
     AppStorage.set('bika_subpage_open', true);
     this.stack.pushPathByName(name, '');
+    // 应用接续：记录并发布「当前在哪个我的子页」
+    AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, name);
+    publishContinuationRoute(ROUTE_PROFILE_SUBPAGE, { subpage: name });
     if (name === 'favourites') {
       this.loadFavourites(true);
     } else if (name === 'notifications') {
@@ -1909,6 +2043,16 @@ struct ProfilePage {
     // 只有完全退出子页面栈才恢复底部导航（设置→存储→返回时仍停留在设置页，导航保持隐藏）
     if (this.stack.size() === 0) {
       AppStorage.set('bika_subpage_open', false);
+    }
+    // 应用接续：同步「当前我的子页」描述符（退回根页则发布「我的」根页）
+    if (this.stack.size() === 0) {
+      AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, '');
+      publishContinuationRoute(ROUTE_HOME, { tab: 1 });
+    } else {
+      let names: string[] = this.stack.getAllPathName();
+      let top: string = names.length > 0 ? names[names.length - 1] : '';
+      AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, top);
+      publishContinuationRoute(ROUTE_PROFILE_SUBPAGE, { subpage: top });
     }
   }
 
@@ -4816,6 +4960,13 @@ interface WidgetActionParams {
   comicId?: string;
   comicTitle?: string;
   timestamp?: number;
+  /** 应用接续专用：源端话数 / 页码 / 封面（仅 continuation_reading 时有值） */
+  order?: number;
+  page?: number;
+  coverUrl?: string;
+  /** 通用页面接续（action = continuation_navigate）：目标 route 与参数 JSON */
+  route?: string;
+  paramsJson?: string;
 }
 
 /** 打开「我的」内子页面的信号（IndexPage → ProfilePage 转交） */
@@ -4905,11 +5056,22 @@ struct IndexPage {
     let action: string = '';
     let comicId: string = '';
     let comicTitle: string = '';
+    // 应用接续专用字段（普通卡片动作下为默认值，不影响既有行为）
+    let order: number = 0;
+    let page: number = 0;
+    let coverUrl: string = '';
+    let route: string = '';
+    let paramsJson: string = '';
     try {
       let payload = JSON.parse(raw) as WidgetActionParams;
       action = payload.action ?? '';
       comicId = payload.comicId ?? '';
       comicTitle = payload.comicTitle ?? '';
+      order = payload.order ?? 0;
+      page = payload.page ?? 0;
+      coverUrl = payload.coverUrl ?? '';
+      route = payload.route ?? '';
+      paramsJson = payload.paramsJson ?? '';
     } catch (err) {
       console.error('[IndexPage] widget action parse failed: ' + JSON.stringify(err));
       return;
@@ -4958,6 +5120,15 @@ struct IndexPage {
             params: { label: '最近更新', kind: 'recent' }
           });
         }
+      } else if (action === 'continuation_reading') {
+        // 应用接续（手机 ↔ 平板）：定位到源端的同一话、同一页；
+        // 数据缺失（无 comicId）→ 留在首页，安全降级
+        if (comicId.length > 0) {
+          this.openContinuationReader(comicId, comicTitle, order, page, coverUrl);
+        }
+      } else if (action === 'continuation_navigate') {
+        // 应用接续（通用）：按源端 route + params 落到同一个页面
+        this.handleContinuationNavigate(route, paramsJson);
       }
     }, 80);
   }
@@ -4998,6 +5169,108 @@ struct IndexPage {
         comicTitle: comicTitle,
         epsCount: epsCount,
         currentOrder: order,
+        coverUrl: coverUrl
+      }
+    });
+  }
+
+  /**
+   * 应用接续（通用）：按源端 route + params 在目标端落到同一个页面。
+   * 覆盖：home / ChannelListPage / ComicDetailPage / ReaderPage / profile_subpage / SearchPage /
+   * SearchResultPage；未知 route 一律回到首页，不崩溃。
+   */
+  private handleContinuationNavigate(route: string, paramsJson: string): void {
+    let p: ContinuationRouteParams = {};
+    try {
+      if (paramsJson.length > 0) {
+        p = JSON.parse(paramsJson) as ContinuationRouteParams;
+      }
+    } catch (err) {
+      console.warn('[IndexPage] continuation params parse failed: ' + JSON.stringify(err));
+      p = {};
+    }
+    // 只打 route：不打印作品名 / comicId
+    console.info('[IndexPage] continuation navigate: route = ' + route);
+    if (route === ROUTE_READER && (p.comicId ?? '').length > 0) {
+      this.openContinuationReader(p.comicId ?? '', p.comicTitle ?? '', p.order ?? 0, p.page ?? 0, p.coverUrl ?? '');
+    } else if (route === ROUTE_COMIC_DETAIL && (p.comicId ?? '').length > 0) {
+      router.pushUrl({
+        url: 'pages/ComicDetailPage',
+        params: { comicId: p.comicId ?? '', comicTitle: p.comicTitle ?? '' }
+      });
+    } else if (route === ROUTE_CHANNEL_LIST) {
+      router.pushUrl({
+        url: 'pages/ChannelListPage',
+        params: { label: p.label ?? '', kind: p.kind ?? 'topic' }
+      });
+    } else if (route === ROUTE_PROFILE_SUBPAGE && (p.subpage ?? '').length > 0) {
+      this.openProfileSubpage(p.subpage ?? '');
+    } else if (route === ROUTE_SEARCH) {
+      router.pushUrl({ url: 'pages/SearchPage' });
+    } else if (route === ROUTE_SEARCH_RESULT && (p.keyword ?? '').length > 0) {
+      router.pushUrl({
+        url: 'pages/SearchResultPage',
+        params: { keyword: p.keyword ?? '' }
+      });
+    } else {
+      // home 或未知 route：回到首页并切到对应页签（安全降级）
+      let tab: number = p.tab ?? 0;
+      if (tab !== 0 && tab !== 1) {
+        tab = 0;
+      }
+      this.currentTab = tab;
+      AppStorage.setOrCreate('bika_active_tab', tab);
+      this.tabsController.changeIndex(tab);
+    }
+  }
+
+  /**
+   * 发布「当前页面」（应用接续源端）：首页 / 「我的」根页。
+   * 「我的」子页由 ProfilePage 发布；被 push 的页面由各自页面发布。
+   */
+  private publishCurrentRoute(): void {
+    let subpage: string = AppStorage.get<string>(CONTINUATION_PROFILE_SUBPAGE_KEY) ?? '';
+    if (subpage.length > 0) {
+      publishContinuationRoute(ROUTE_PROFILE_SUBPAGE, { subpage: subpage });
+      return;
+    }
+    publishContinuationRoute(ROUTE_HOME, { tab: this.currentTab });
+  }
+
+  /**
+   * 应用接续（手机 ↔ 平板）：打开阅读器并定位到源端的话数与页码。
+   *
+   * 话数 / 页码 / 封面一律使用源端传来的实时值，**不做本地历史回落**
+   *（避免又跳回上一次的旧位置）。页码复用阅读器现有的本地恢复逻辑
+   *（ReaderPage.restoreLastPage 读 page_<comicId>_<order>），所以先把页码落到本地
+   * 再 push 阅读器即可定位到同一页，无需改动 ReaderPage。
+   * 并发/耗时与「卡片继续阅读」一致：epsCount 异步尽力获取，失败回退 1，绝不阻塞跳转。
+   * 降级：话数无效按第 1 话打开；作品不可用由阅读器自身错误态兜底（不崩溃、不白屏）。
+   */
+  private async openContinuationReader(comicId: string, comicTitle: string,
+    order: number, page: number, coverUrl: string): Promise<void> {
+    let targetOrder: number = order > 0 ? order : 1;
+    try {
+      let cache = await CacheManager.getInstance();
+      if (page > 0) {
+        cache.savePageProgress(comicId, targetOrder, page);
+      }
+    } catch (err) {
+      console.warn('[IndexPage] continuation cache failed: ' + JSON.stringify(err));
+    }
+    let epsCount: number = await this.fetchEpsCount(comicId);
+    if (epsCount <= 0) {
+      epsCount = 1;
+    }
+    console.info('[IndexPage] open reader from continuation: order = ' + targetOrder
+      + ', page = ' + page + ', epsCount = ' + epsCount);
+    router.pushUrl({
+      url: 'pages/ReaderPage',
+      params: {
+        comicId: comicId,
+        comicTitle: comicTitle,
+        epsCount: epsCount,
+        currentOrder: targetOrder,
         coverUrl: coverUrl
       }
     });
@@ -5045,6 +5318,8 @@ struct IndexPage {
     AppStorage.set('isLoggedIn', ApiService.getInstance().isLoggedIn());
     // 冷启动时 onCreate 写入的卡片事件在此消费（此时页面与路由已就绪）
     this.consumeWidgetAction();
+    // 应用接续：本页可见即发布「当前页面」（从子页返回时也会重新发布）
+    this.publishCurrentRoute();
   }
 
   /** 沉浸光感档位映射 */
@@ -5110,6 +5385,8 @@ struct IndexPage {
     .onChange((index: number): void => {
       this.currentTab = index;
       AppStorage.set('bika_active_tab', index);
+      // 应用接续：页签切换同步「当前页面」
+      this.publishCurrentRoute();
     })
     .backgroundColor(COLOR_BG)
     .width('100%')

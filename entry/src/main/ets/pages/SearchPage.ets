@@ -2,6 +2,7 @@ import { router } from '@kit.ArkUI';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
+import { publishContinuationRoute, ROUTE_SEARCH } from '../common/ContinuationState';
 import {
   COLOR_PRIMARY,
   COLOR_BG,
@@ -29,6 +30,11 @@ struct SearchPage {
   aboutToAppear(): void {
     this.loadKeywords();
     this.loadSearchHistory();
+  }
+
+  /** 应用接续：本页可见即发布「当前页面」 */
+  onPageShow(): void {
+    publishContinuationRoute(ROUTE_SEARCH, {});
   }
 
   private loadSearchHistory(): void {

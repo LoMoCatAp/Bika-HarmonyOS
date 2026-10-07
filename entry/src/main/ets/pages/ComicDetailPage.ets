@@ -7,6 +7,7 @@ import { ApiService } from '../network/ApiService';
 import { ComicDetailViewModel, EpViewModel, ComicViewModel, BikaComicSummary, BikaComment, buildImageUrl } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
 import { DownloadManager } from '../common/DownloadManager';
+import { publishContinuationRoute, ROUTE_COMIC_DETAIL } from '../common/ContinuationState';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import {
@@ -91,6 +92,11 @@ struct ComicDetailPage {
   private chapterScroller: Scroller = new Scroller();
   private commentScroller: Scroller = new Scroller();
   private stack: NavPathStack = new NavPathStack();
+
+  /** 应用接续：本页可见即发布「当前页面」（从阅读器返回时也会重新发布） */
+  onPageShow(): void {
+    publishContinuationRoute(ROUTE_COMIC_DETAIL, { comicId: this.comicId, comicTitle: this.comicTitle });
+  }
 
   async aboutToAppear(): Promise<void> {
     let params = router.getParams() as DetailRouterParams;

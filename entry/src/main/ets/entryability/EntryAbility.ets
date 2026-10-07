@@ -1,4 +1,4 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, bundleManager, common } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, bundleManager, common, wantConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -6,12 +6,29 @@ import { ApiRouteManager } from '../network/ApiRouteManager';
 import { BikaHttpClient } from '../network/BikaHttpClient';
 import { WindowHelper } from '../common/WindowHelper';
 import { CacheManager } from '../common/CacheManager';
+import { readContinuationRoute, ContinuationRouteState, ContinuationRouteParams, ROUTE_READER } from '../common/ContinuationState';
 import { ImageLoader } from '../common/ImageLoader';
 import { ApiService } from '../network/ApiService';
 import { WidgetData } from '../common/WidgetData';
 import { WidgetExtraData } from '../common/WidgetExtraData';
+import { DownloadManager } from '../common/DownloadManager';
 
 const DOMAIN = 0x0000;
+
+// 接续自定义参数键：源端写入 wantParam → 系统投递到目标端 want.parameters
+const CONTINUE_KEY_COMIC_ID: string = 'bikaContinueComicId';
+const CONTINUE_KEY_ORDER: string = 'bikaContinueOrder';
+const CONTINUE_KEY_PAGE: string = 'bikaContinuePage';
+const CONTINUE_KEY_TITLE: string = 'bikaContinueTitle';
+const CONTINUE_KEY_COVER: string = 'bikaContinueCoverUrl';
+const CONTINUE_KEY_VERSION: string = 'bikaContinueVersion';
+// 通用页面接续：路由标识 + 该页参数（JSON 字符串）
+const CONTINUE_KEY_ROUTE: string = 'bikaContinueRoute';
+const CONTINUE_KEY_PARAMS: string = 'bikaContinueParams';
+/** 目标端接续动作：与桌面卡片深链共用 AppStorage('bika_widget_action') 链路 */
+const CONTINUATION_ACTION: string = 'continuation_reading';
+/** 目标端通用页面接续动作（任意页面：route + params） */
+const CONTINUATION_NAVIGATE_ACTION: string = 'continuation_navigate';
 
 /**
  * 桌面卡片 FormLink 回传的参数载体。
@@ -24,6 +41,13 @@ interface WidgetActionPayload {
   comicId: string;
   comicTitle: string;
   timestamp: number;
+  /** 应用接续专用：话数 / 页码 / 封面（仅 action = continuation_reading 时有值） */
+  order?: number;
+  page?: number;
+  coverUrl?: string;
+  /** 通用页面接续（action = continuation_navigate）：目标 route 与参数 JSON */
+  route?: string;
+  paramsJson?: string;
 }
 
 export default class EntryAbility extends UIAbility {
@@ -79,7 +103,24 @@ export default class EntryAbility extends UIAbility {
 
     // 冷启动路径：桌面卡片点击首次拉起应用时，参数只在 onCreate 的 want 里
     this.parseWidgetWant(want);
+    // 应用接续目标端：冷启动时接续数据只在本 want 里
+    this.logContinuationWant('onCreate', want);
+    this.parseContinuationWant(want);
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onCreate');
+  }
+
+  /** 从参数集合里安全取一个数字值（缺失 / 非数字一律返回默认值） */
+  private static pickNumber(bag: Record<string, Object>, key: string, defVal: number): number {
+    try {
+      let v = bag[key];
+      if (v === undefined || v === null) {
+        return defVal;
+      }
+      let n: number = Number(v);
+      return isNaN(n) ? defVal : n;
+    } catch (err) {
+      return defVal;
+    }
   }
 
   /** 从参数集合里安全取一个字符串值（缺失 / 类型异常一律返回空串） */
@@ -173,6 +214,156 @@ export default class EntryAbility extends UIAbility {
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onNewWant');
     this.parseWidgetWant(want);
+    // 应用接续目标端：热启动时接续数据在本 want 里
+    this.logContinuationWant('onNewWant', want);
+    this.parseContinuationWant(want);
+  }
+
+  /**
+   * 应用接续源端回调（手机 ↔ 平板）：系统在把任务流转到目标设备前调用本方法，
+   * 应用把「当前页面描述符」（route + params）写入 wantParam，让目标端落到同一个页面。
+   *
+   * 只认各页面实时发布的 AppStorage 描述符（CONTINUATION_ROUTE_KEY）：
+   *   - 首页 / 频道页 / 作品详情页 / 阅读器 / 我的子页 / 搜索页 都会发布自己 → AGREE；
+   *   - 描述符为空或解析失败（确实无法定位的异常情况）→ REJECT。
+   * 阅读器场景额外写入旧的阅读键（comicId/order/page/title/cover）以兼容。
+   * 关闭系统自动页面栈迁移，改由目标端按接续数据显式定位。
+   * 全程 try/catch，异常时返回 REJECT。
+   */
+  onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
+    try {
+      let state: ContinuationRouteState | null = readContinuationRoute();
+      if (state === null) {
+        hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onContinue: no route state -> REJECT');
+        return AbilityConstant.OnContinueResult.REJECT;
+      }
+      let p: ContinuationRouteParams = state.params;
+      wantParam[CONTINUE_KEY_ROUTE] = state.route;
+      wantParam[CONTINUE_KEY_PARAMS] = JSON.stringify(p);
+      // 兼容：阅读器场景同时写旧的阅读键
+      if (state.route === ROUTE_READER) {
+        let order: number = (p.order ?? 0) > 0 ? (p.order ?? 1) : 1;
+        let page: number = (p.page ?? 0) > 0 ? (p.page ?? 0) : 0;
+        wantParam[CONTINUE_KEY_COMIC_ID] = p.comicId ?? '';
+        wantParam[CONTINUE_KEY_ORDER] = order;
+        wantParam[CONTINUE_KEY_PAGE] = page;
+        wantParam[CONTINUE_KEY_TITLE] = p.comicTitle ?? '';
+        wantParam[CONTINUE_KEY_COVER] = p.coverUrl ?? '';
+      }
+      wantParam[CONTINUE_KEY_VERSION] = AppStorage.get<string>('bika_current_version') ?? '';
+      wantParam[wantConstant.Params.SUPPORT_CONTINUE_PAGE_STACK_KEY] = false;
+      // 只记录 route：不打印作品名 / comicId / token
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s',
+        'Ability onContinue: route=' + state.route + ', result=AGREE');
+    } catch (err) {
+      hilog.error(DOMAIN, 'BikaTag', 'onContinue failed. Cause: %{public}s', JSON.stringify(err));
+      return AbilityConstant.OnContinueResult.REJECT;
+    }
+    return AbilityConstant.OnContinueResult.AGREE;
+  }
+
+  /**
+   * 应用接续目标端：识别并解析源端写入的接续数据，转交 IndexPage 路由到阅读器。
+   *
+   * 与桌面卡片深链走同一条 AppStorage('bika_widget_action') 链路，只是 action 不同；
+   * 本方法只解析与投递，不做跳转（跳转由 IndexPage.consumeWidgetAction 完成）。
+   * 数据不完整（无 comicId）时直接返回，目标端留在首页，安全降级。
+   */
+  private parseContinuationWant(want: Want): void {
+    try {
+      if (want === undefined || want === null) {
+        return;
+      }
+      let params: Record<string, Object> | undefined = want.parameters;
+      if (params === undefined || params === null) {
+        return;
+      }
+      // 通用页面接续：route + params（任意页面）
+      let route: string = EntryAbility.pickParam(params, CONTINUE_KEY_ROUTE);
+      if (route.length > 0) {
+        let routePayload: WidgetActionPayload = {
+          action: CONTINUATION_NAVIGATE_ACTION,
+          comicId: EntryAbility.pickParam(params, CONTINUE_KEY_COMIC_ID),
+          comicTitle: EntryAbility.pickParam(params, CONTINUE_KEY_TITLE),
+          timestamp: Date.now(),
+          route: route,
+          paramsJson: EntryAbility.pickParam(params, CONTINUE_KEY_PARAMS)
+        };
+        AppStorage.setOrCreate('bika_widget_action', JSON.stringify(routePayload));
+        // 只打 route：不打印作品名 / comicId
+        hilog.info(DOMAIN, 'BikaTag', '%{public}s',
+          'continuation want parsed: route=' + route);
+        return;
+      }
+      // 兼容旧版：只有阅读键、没有 route 的接续
+      let comicId: string = EntryAbility.pickParam(params, CONTINUE_KEY_COMIC_ID);
+      if (comicId.length === 0) {
+        return;
+      }
+      let order: number = EntryAbility.pickNumber(params, CONTINUE_KEY_ORDER, 1);
+      let page: number = EntryAbility.pickNumber(params, CONTINUE_KEY_PAGE, 0);
+      let title: string = EntryAbility.pickParam(params, CONTINUE_KEY_TITLE);
+      let coverUrl: string = EntryAbility.pickParam(params, CONTINUE_KEY_COVER);
+      let payload: WidgetActionPayload = {
+        action: CONTINUATION_ACTION,
+        comicId: comicId,
+        comicTitle: title,
+        timestamp: Date.now(),
+        order: order,
+        page: page,
+        coverUrl: coverUrl
+      };
+      AppStorage.setOrCreate('bika_widget_action', JSON.stringify(payload));
+      // 只打布尔与数字：不打印作品名 / comicId
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s',
+        'continuation want parsed: order=' + order + ' page=' + page
+          + ' hasTitle=' + (title.length > 0 ? 'true' : 'false')
+          + ' hasCover=' + (coverUrl.length > 0 ? 'true' : 'false'));
+    } catch (err) {
+      hilog.error(DOMAIN, 'BikaTag', 'Failed to parse continuation want. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /**
+   * 应用接续目标端取证：判断本次 want 是否携带接续数据。
+   *
+   * 只打印「是否存在自定义探测键 / 是否存在含 continue 字样的系统键 / 参数个数」这类
+   * 布尔与计数事实，绝不打印任何参数值，避免泄露作品信息。
+   */
+  private logContinuationWant(stage: string, want: Want): void {
+    try {
+      if (want === undefined || want === null) {
+        return;
+      }
+      let params: Record<string, Object> | undefined = want.parameters;
+      if (params === undefined || params === null) {
+        hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'continuation probe [' + stage + ']: no params');
+        return;
+      }
+      let hasProbe: boolean = false;
+      let hasContinueKey: boolean = false;
+      let keyCount: number = 0;
+      try {
+        const keys: string[] = Object.keys(params);
+        keyCount = keys.length;
+        for (let i = 0; i < keys.length; i++) {
+          const k: string = keys[i];
+          if (k === CONTINUE_KEY_COMIC_ID || k === 'bikaContinueProbe') {
+            hasProbe = true;
+          } else if (k.toLowerCase().indexOf('continue') >= 0) {
+            hasContinueKey = true;
+          }
+        }
+      } catch (e) {
+        keyCount = -1;
+      }
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s',
+        'continuation probe [' + stage + ']: hasProbe=' + (hasProbe ? 'true' : 'false')
+          + ' hasContinueKey=' + (hasContinueKey ? 'true' : 'false')
+          + ' keyCount=' + keyCount);
+    } catch (err) {
+      hilog.error(DOMAIN, 'BikaTag', 'continuation probe failed. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
@@ -193,7 +384,22 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onWindowStageCreate');
+    this.initWindowStage(windowStage);
+  }
 
+  /**
+   * 应用接续目标端：跨设备接续时系统触发本回调（而不是 onWindowStageCreate），
+   * 与源端 onContinue 成对出现，目标端在这里恢复源端写入的接续数据。
+   *
+   * 最小验证阶段只打日志，窗口初始化复用 initWindowStage，保证目标端不会白屏。
+   */
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onWindowStageRestore (continuation target)');
+    this.initWindowStage(windowStage);
+  }
+
+  /** 窗口阶段初始化：onWindowStageCreate 与 onWindowStageRestore 共用同一套逻辑 */
+  private initWindowStage(windowStage: window.WindowStage): void {
     windowStage.getMainWindow((err, windowClass) => {
       let errCode: number = err.code;
       if (errCode) {
@@ -281,6 +487,8 @@ export default class EntryAbility extends UIAbility {
 
     // 启动即后台刷新直连 IP 池（非阻塞，默认池已可用）
     ApiRouteManager.getInstance().ensureInitialized();
+    // 系统后台下载（request.agent）：注入应用上下文并恢复系统里仍在进行的任务
+    DownloadManager.getInstance().init(this.context);
 
     this.loadInitialContent(windowStage);
   }

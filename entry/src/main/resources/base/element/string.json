@@ -13,6 +13,10 @@
       "value": "Bika"
     },
     {
+      "name": "continuation_datasync_reason",
+      "value": "用于跨设备接续阅读进度"
+    },
+    {
       "name": "form_label",
       "value": "阅读卡片"
     },

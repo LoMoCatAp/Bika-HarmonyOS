@@ -3,6 +3,7 @@ import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, Di
 import { ApiService } from '../network/ApiService';
 import { ComicViewModel, BikaComicSummary, isBlockedComic } from '../models/Comic';
 import { ComicCard } from '../components/ComicCard';
+import { publishContinuationRoute, ROUTE_SEARCH_RESULT } from '../common/ContinuationState';
 import {
   COLOR_PRIMARY,
   COLOR_BG,
@@ -44,6 +45,11 @@ struct SearchResultPage {
       this.keyword = params.keyword;
     }
     this.doSearch(true);
+  }
+
+  /** 应用接续：本页可见即发布「当前页面」（含关键词） */
+  onPageShow(): void {
+    publishContinuationRoute(ROUTE_SEARCH_RESULT, { keyword: this.keyword });
   }
 
   private async doSearch(reset: boolean): Promise<void> {
