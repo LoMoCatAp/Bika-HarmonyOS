@@ -95,6 +95,8 @@ export async function exportImagesZip(images: ArrayBuffer[], outPath: string, ba
   let locals: Uint8Array[] = [];
   let centrals: Uint8Array[] = [];
   let count = 0;
+  let localOffset = 0;
+  const utf8Flag = 0x0800;
   let index = 1;
   for (let buf of images) {
     let data = new Uint8Array(buf);
@@ -103,18 +105,19 @@ export async function exportImagesZip(images: ArrayBuffer[], outPath: string, ba
     let nameBytes = utf8(name);
     let nameLen = nameBytes.length;
     let local = concat([
-      u32le(0x04034b50), u16le(20), u16le(0), u16le(0), u16le(0), u16le(0),
+      u32le(0x04034b50), u16le(20), u16le(utf8Flag), u16le(0), u16le(0), u16le(0),
       u32le(crc), u32le(data.length), u32le(data.length), u16le(nameLen), u16le(0),
       nameBytes, data
     ]);
     locals.push(local);
     let central = concat([
-      u32le(0x02014b50), u16le(20), u16le(20), u16le(0), u16le(0), u16le(0), u16le(0),
+      u32le(0x02014b50), u16le(20), u16le(20), u16le(utf8Flag), u16le(0), u16le(0), u16le(0),
       u32le(crc), u32le(data.length), u32le(data.length), u16le(nameLen), u16le(0), u16le(0),
-      u16le(0), u16le(0), u32le(0), u32le(0),
+      u16le(0), u16le(0), u32le(0), u32le(localOffset),
       nameBytes
     ]);
     centrals.push(central);
+    localOffset += local.length;
     count++;
     index++;
   }

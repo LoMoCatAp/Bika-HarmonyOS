@@ -1080,6 +1080,13 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.4.3',
+    date: '2026-10-05',
+    items: [
+      '修复：导出 ZIP 时中文文件名乱码'
+    ]
+  },
+  {
     version: '1.4.2',
     date: '2026-10-05',
     items: [
