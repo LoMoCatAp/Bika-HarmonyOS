@@ -148,12 +148,16 @@ struct ReaderPage {
   private candidateUrls: string[][] = [];
   private candidateIndex: number[] = [];
   private generation: number = 0;
+  /** 忽略已被下一次模式选择或页面退出取代的设置操作。 */
+  private readingModeChangeId: number = 0;
   private scrollScroller: Scroller = new Scroller();
   private listScroller: Scroller = new Scroller();
   private imageDataSource: ImageDataSource = new ImageDataSource();
 
   async aboutToAppear(): Promise<void> {
     let cache = await CacheManager.getInstance();
+    const savedMode = cache.getSetting('reader_mode', '4');
+    this.readingMode = /^[0-4]$/.test(savedMode) ? Number(savedMode) : 4;
     this.volumeTurnEnabled = cache.getSetting('reader_volume_turn', 'true') === 'true';
     this.registerVolumeKeys();
     let params = router.getParams() as ReaderRouterParams;
@@ -479,31 +483,46 @@ struct ReaderPage {
   }
 
   /** 切换阅读模式并保留当前阅读位置 */
-  private switchReadingMode(mode: number): void {
+  private async switchReadingMode(mode: number): Promise<void> {
+    if (!Number.isInteger(mode) || mode < 0 || mode > 4) {
+      return;
+    }
+    const changeId = ++this.readingModeChangeId;
+    try {
+      const cache = await CacheManager.getInstance();
+      if (changeId !== this.readingModeChangeId) {
+        return;
+      }
+      if (!cache.isReady()) {
+        throw new Error('设置存储尚未就绪');
+      }
+      cache.saveSetting('reader_mode', String(mode));
+    } catch (err) {
+      if (changeId === this.readingModeChangeId) {
+        showImmersiveToast({ message: '阅读模式保存失败，请重试', duration: 2000 });
+      }
+      return;
+    }
     if (mode === this.readingMode) {
       this.showSheet = false;
       return;
     }
-    // 记录切换前所在页
-    let currentIndex = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+    // 保持图片的原始索引；RTL 只改变翻页方向，不反转图片数组或页码。
+    const currentIndex = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
     this.swiperIndex = currentIndex;
-    if (mode > 2) {
-      // 切到连续滚动：重建 List 后定位到同一张图
-      this.readingMode = mode;
-      this.showSheet = false;
-      setTimeout(() => {
-        this.listScroller.scrollToIndex(this.swiperIndex, true, ScrollAlign.START);
-      }, 80);
-    } else {
-      // 切到单页：Swiper 渲染完成后跳到当前页（非受控，手势不受状态干扰）
-      this.readingMode = mode;
-      this.showSheet = false;
-      let target = this.swiperIndex;
-      setTimeout(() => {
-        this.swiperController.changeIndex(target, false);
-      }, 150);
-    }
-    console.info('[ReaderPage] readingMode = ' + mode + ', keepIndex = ' + this.swiperIndex);
+    this.currentVisibleIndex = currentIndex;
+    this.readingMode = mode;
+    this.showSheet = false;
+    setTimeout(() => {
+      if (changeId !== this.readingModeChangeId) {
+        return;
+      }
+      if (mode > 2) {
+        this.listScroller.scrollToIndex(currentIndex, true, ScrollAlign.START);
+      } else {
+        this.swiperController.changeIndex(currentIndex, false);
+      }
+    }, mode > 2 ? 80 : 150);
   }
 
   /** 屏幕方向选项行 */
@@ -809,6 +828,7 @@ struct ReaderPage {
   }
 
   aboutToDisappear(): void {
+    this.readingModeChangeId++;
     // 退出阅读器：清除「当前正在阅读」状态（接续不再带走旧位置）
     this.clearCurrentReading();
     // 描述符也清掉（仅当它仍指向本阅读器）；下层页面（详情页/首页）的 onPageShow 会重新发布
@@ -902,6 +922,7 @@ struct ReaderPage {
                 })
             }, (img: ReaderImage, index: number) => String(index) + '_' + img.url)
           }
+          .direction(this.readingMode === 1 ? Direction.Rtl : Direction.Ltr)
           .vertical(this.readingMode === 2)
           .indicator(false)
           .loop(false)
