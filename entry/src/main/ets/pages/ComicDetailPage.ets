@@ -10,6 +10,7 @@ import { DownloadManager } from '../common/DownloadManager';
 import { publishContinuationRoute, ROUTE_COMIC_DETAIL } from '../common/ContinuationState';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
+import { ChapterDownloadSheet } from '../components/ChapterDownloadSheet';
 import {
   COLOR_PRIMARY,
   COLOR_PRIMARY_TINT,
@@ -756,27 +757,6 @@ struct ComicDetailPage {
     this.showDetailSheet = true;
   }
 
-  /** 弹窗内勾选切换 */
-  private toggleDownloadSelect(order: number): void {
-    let idx = this.downloadSelected.indexOf(order);
-    if (idx >= 0) {
-      let next = this.downloadSelected.slice();
-      next.splice(idx, 1);
-      this.downloadSelected = next;
-    } else {
-      this.downloadSelected = this.downloadSelected.concat(order);
-    }
-  }
-
-  /** 弹窗内全选/清除 */
-  private selectAllChapters(): void {
-    this.downloadSelected = this.chapters.map((ep: EpViewModel) => ep.order);
-  }
-
-  private clearChapterSelection(): void {
-    this.downloadSelected = [];
-  }
-
   /** 开始下载所选章节（同步入队，不阻塞 UI） */
   private startDownloadSelected(): void {
     if (!this.comic || this.downloadSelected.length === 0) {
@@ -1307,88 +1287,11 @@ struct ComicDetailPage {
   /** 下载选择弹窗（全选/清除 + 3 列等宽章节网格 + 开始下载） */
   @Builder
   downloadSheet() {
-    Column({ space: 14 }) {
-      Text('')
-        .width(36)
-        .height(4)
-        .borderRadius(2)
-        .backgroundColor(COLOR_TEXT_SECONDARY)
-        .opacity(0.32)
-        .margin({ top: 6 })
-      Row() {
-        Text('选择要下载的章节')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_TEXT_TITLE)
-          .layoutWeight(1)
-        Text('全选')
-          .fontSize(14)
-          .fontColor(COLOR_PRIMARY)
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .onClick(() => this.selectAllChapters())
-        Text('清除')
-          .fontSize(14)
-          .fontColor(COLOR_TEXT_SECONDARY)
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .margin({ left: 8 })
-          .onClick(() => this.clearChapterSelection())
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .margin({ top: 8 })
-
-      Scroll() {
-        Grid() {
-          ForEach(this.chapters, (ep: EpViewModel) => {
-            GridItem() {
-              Row({ space: 4 }) {
-                if (this.epDownloaded(ep.order)) {
-                  SymbolGlyph($r('sys.symbol.checkmark_circle'))
-                    .fontSize(14)
-                    .fontColor([this.downloadSelected.indexOf(ep.order) >= 0 ? COLOR_WHITE : COLOR_PRIMARY])
-                }
-                Text(ep.title.length > 0 ? ep.title : ('第' + ep.order + '话'))
-                  .fontSize(13)
-                  .fontColor(this.downloadSelected.indexOf(ep.order) >= 0 ? COLOR_WHITE : COLOR_TEXT_TITLE)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .layoutWeight(this.epDownloaded(ep.order) ? 1 : 0)
-              }
-              .width('100%')
-              .height(38)
-              .justifyContent(FlexAlign.Center)
-              .padding({ left: 8, right: 8 })
-              .backgroundColor(this.downloadSelected.indexOf(ep.order) >= 0 ? COLOR_PRIMARY : COLOR_CARD)
-              .border({ width: 1, color: this.downloadSelected.indexOf(ep.order) >= 0 ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 12 })
-              .onClick(() => this.toggleDownloadSelect(ep.order))
-            }
-          }, (ep: EpViewModel) => String(ep.order))
-        }
-        .columnsTemplate('1fr 1fr 1fr')
-        .columnsGap(8)
-        .rowsGap(8)
-        .width('100%')
-      }
-      .width('100%')
-      .height(220)
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-
-      Button(this.downloadSelected.length > 0
-        ? '开始下载所选章节 (' + this.downloadSelected.length + ')'
-        : '开始下载所选章节 (0)', { type: ButtonType.Normal })
-        .width('100%')
-        .height(46)
-        .fontSize(15)
-        .fontColor(COLOR_WHITE)
-        .backgroundColor(this.downloadSelected.length > 0 ? COLOR_PRIMARY : COLOR_TEXT_DISABLED)
-        .borderRadius(23)
-        .enabled(this.downloadSelected.length > 0)
-        .onClick(() => this.startDownloadSelected())
-        .animation({ duration: 200, curve: Curve.EaseOut })
-    }
-    .width('100%')
-    .padding({ left: 20, right: 20, top: 8, bottom: 28 })
+    ChapterDownloadSheet({
+      chapters: this.chapters,
+      selectedOrders: $downloadSelected,
+      isDownloaded: (order: number): boolean => this.epDownloaded(order),
+      onStart: (): void => this.startDownloadSelected()
+    })
   }
 }

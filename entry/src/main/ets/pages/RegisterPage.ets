@@ -76,6 +76,8 @@ struct RegisterPage {
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
           blurEffectiveEndOffset: LengthMetrics.vp(64)
         },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE

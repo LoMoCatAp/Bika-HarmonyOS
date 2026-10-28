@@ -525,6 +525,8 @@ struct HomePage {
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
           blurEffectiveEndOffset: LengthMetrics.vp(64)
         },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -1079,6 +1081,18 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.4.6',
+    date: '2026-10-28',
+    items: [
+      '阅读器上下操作栏采用沉浸光感胶囊，左上展示话数与作品标题，优化安全区布局和显隐动画。',
+      '新增阅读进度滑条：点击底栏页码进入，拖动时显示目标页码，松手跳页，停止操作后自动恢复操作栏。',
+      '阅读器新增快捷下载菜单，支持下载本话、全部章节或自选章节。',
+      '修复横竖屏切换后设置面板显示不全、无法完整滚动的问题，优化平板竖屏下的面板高度。',
+      '修复图片加载提示被顶部操作栏遮挡的问题。',
+      '移除主页及各子页上下边缘的明显渐隐蒙版。'
+    ]
+  },
   {
     version: '1.4.5',
     date: '2026-10-16',
@@ -2657,6 +2671,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '我的收藏' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -2791,6 +2807,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '浏览历史' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -2820,6 +2838,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '我的下载' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -2917,6 +2937,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '通知' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -3004,6 +3026,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '我的评论' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -3566,6 +3590,8 @@ struct ProfilePage {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR
         },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -3727,6 +3753,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '关于' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -3849,6 +3877,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '存储与空间' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4144,6 +4174,8 @@ struct ProfilePage {
       content: { title: { mainTitle: 'DNS 直连与分流优化' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4269,6 +4301,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '屏蔽标签' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4344,6 +4378,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '编辑资料' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4461,6 +4497,8 @@ struct ProfilePage {
       content: { title: { mainTitle: '账号与安全' } },
       style: {
         scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -5391,6 +5429,8 @@ struct IndexPage {
     .barFloatingStyle({
       // 全屏窗口下抬起至手势条上方，再向下 10vp
       barBottomMargin: Math.max(0, this.bottomSafeHeight - 6),
+      // 只移除颜色渐隐蒙版，保留原生模糊及默认采样范围。
+      gradientMask: { maskColor: Color.Transparent },
       adaptToHandedness: true,
       lightColor: '#FF7CA8',
       systemMaterialEffect: {
