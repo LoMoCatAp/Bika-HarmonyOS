@@ -176,6 +176,8 @@ struct ReaderPage {
   private progressAppliedPage: number = -1;
   private progressRestoreTimer: number = -1;
   private progressNavigationId: number = 0;
+  /** 本次漫画区触摸已用于收起滑条，随后 click 不再关闭上下栏。 */
+  private readerContentTouchRestoredProgress: boolean = false;
   /** 底部弹窗（单例，按类型分发：settings/saveImage/export/saveFile） */
   @State showSheet: boolean = false;
   @State sheetKind: string = '';
@@ -449,6 +451,29 @@ struct ReaderPage {
     } else {
       this.showControls = !this.showControls;
     }
+  }
+
+  /** 只监听漫画区，不消费手势；翻页、滚动、缩放仍交给原生组件。 */
+  private onReaderContentTouch(event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.readerContentTouchRestoredProgress = this.showControls && this.progressMode;
+      if (this.readerContentTouchRestoredProgress) {
+        this.resetProgressControl();
+      }
+    } else if (event.type === TouchType.Cancel) {
+      this.readerContentTouchRestoredProgress = false;
+    }
+    // Up 后保留标记，直到本次 click 或下一次 Down，避免同一次轻触再关掉工具栏。
+  }
+
+  private onReaderContentClick(): void {
+    if (this.showControls && this.progressMode) {
+      // 兼容没有 TouchDown 的点击激活，同样走已有的恢复动画。
+      this.resetProgressControl();
+    } else if (!this.readerContentTouchRestoredProgress) {
+      this.toggleControls();
+    }
+    this.readerContentTouchRestoredProgress = false;
   }
 
   private updateChapterButtons(): void {
@@ -1498,7 +1523,8 @@ struct ReaderPage {
             this.persistPageIndex();
             this.publishCurrentReading();
           })
-          .onClick(() => this.toggleControls())
+          .onTouch((event: TouchEvent) => this.onReaderContentTouch(event))
+          .onClick(() => this.onReaderContentClick())
         } else {
           // ── 连续滚动模式（无缝 / 有隙） ──
           Scroll(this.scrollScroller) {
@@ -1570,7 +1596,8 @@ struct ReaderPage {
               this.isZoomed = zoomed;
             }
           })
-          .onClick(() => this.toggleControls())
+          .onTouch((event: TouchEvent) => this.onReaderContentTouch(event))
+          .onClick(() => this.onReaderContentClick())
         }
       }
 

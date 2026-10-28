@@ -50,7 +50,7 @@ import {
   adaptiveChannelColumns,
   adaptiveListColumns
 } from '../common/Constants';
-import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, HdsNavigationTitleMode, ScrollEffectType } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy } from '@kit.UIDesignKit';
 
 /**
  * 主入口 — HdsTabs 悬浮页签（首页 / 我的）
@@ -496,6 +496,8 @@ struct HomePage {
           .columnsTemplate(adaptiveChannelColumns())
           .columnsGap(14)
           .rowsGap(18)
+          // 网格只负责排布，所有拖动与惯性由绑定 HDS 的外层 Scroll 处理。
+          .enableScrollInteraction(false)
           .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 76 })
           }
         }
@@ -506,7 +508,8 @@ struct HomePage {
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .nestedScroll({ scrollForward: NestedScrollMode.SELF_FIRST, scrollBackward: NestedScrollMode.SELF_FIRST })
-      .edgeEffect(EdgeEffect.None, { alwaysEnabled: true })
+      // 顶部交给 Refresh 下拉，底部使用原生弹簧回弹。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true, effectEdge: EffectEdge.END })
       .translate({ y: this.refreshPullOffset })
       .backgroundColor(COLOR_BG)
 
@@ -523,8 +526,12 @@ struct HomePage {
         scrollEffectOpts: {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          // 自定义刷新仅平移内容；标题模糊只跟随 homeScroller，避免刷新偏移回零覆盖滚动效果。
+          enableRefreshOffsetChange: false,
           blurEffectiveEndOffset: LengthMetrics.vp(64)
         },
+        // 原生模糊显式启用，保留现有渐变模糊类型与透明颜色蒙版。
+        blurStrategy: BlurStrategy.ENABLE,
         originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
         systemMaterialEffect: {
