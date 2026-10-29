@@ -1,10 +1,11 @@
+import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
 import { router, window, CommonModifier, uiMaterial } from '@kit.ArkUI';
 import { unifiedDataChannel } from '@kit.ArkData';
 import { inputConsumer, KeyCode } from '@kit.InputKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
-import { supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
+import { supportsComponentImmersiveMaterial, compatibleSheetMaterial } from '../common/CompatibleMaterial';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
@@ -107,17 +108,10 @@ class ReaderBarBackground extends CommonModifier {
 
 /** 阅读器胶囊：仅用于标题栏和底部 TabBar 内的独立表面。 */
 class ReaderCapsuleMaterial extends CommonModifier {
-  private readonly level: string;
-
-  constructor(level: string) {
-    super();
-    this.level = level;
-  }
 
   applyNormalAttribute(instance: CommonAttribute): void {
-    // 阅读器保持深色表面与白色图标；弱档增加底色，保证白底漫画上的可读性。
-    const tint = this.level === 'EXQUISITE' ? '#991C1C1E'
-      : this.level === 'SMOOTH' ? '#CC1C1C1E' : '#B31C1C1E';
+    // 原生玻璃基础层保持不变，白色图标的对比度由独立深色底色层补充。
+    const tint = '#991C1C1E';
     if (supportsComponentImmersiveMaterial()) {
       try {
         if (uiMaterial.getMaterialInfo().state !== uiMaterial.MaterialState.DISABLE) {
@@ -1619,6 +1613,7 @@ struct ReaderPage {
     .height('100%')
     .backgroundColor(COLOR_READER_BG)
     .bindSheet($$this.showSheet, this.unifiedSheet(), {
+      systemMaterial: compatibleSheetMaterial(),
       // 范围下载与详情页采用同一个表面及内容组件，不叠加第二层圆角背景。
       backgroundColor: this.sheetKind === 'download' ? COLOR_BG : undefined,
       blurStyle: this.sheetKind === 'download' ? BlurStyle.NONE : undefined,
@@ -1673,6 +1668,18 @@ struct ReaderPage {
   readerBottomBar() {
     Stack({ alignContent: Alignment.Top }) {
       Stack({ alignContent: Alignment.Center }) {
+        Row()
+          .width('100%').height(52)
+          .borderRadius(26)
+          .attributeModifier(new ReaderCapsuleMaterial())
+          .hitTestBehavior(HitTestMode.None)
+          .accessibilityLevel('no-hide-descendants')
+        Row()
+          .width('100%').height(52)
+          .borderRadius(26)
+          .backgroundColor(immersiveCapsuleTint(this.readerMaterialLevel, true, '1C1C1E'))
+          .hitTestBehavior(HitTestMode.None)
+          .accessibilityLevel('no-hide-descendants')
         if (this.progressMode) {
           Row() {
             Slider({
@@ -1767,7 +1774,6 @@ struct ReaderPage {
       .constraintSize({ maxWidth: 360 })
       .height(52)
       .borderRadius(26)
-      .attributeModifier(new ReaderCapsuleMaterial(this.readerMaterialLevel))
     }
     .width('100%')
     .height(60 + Math.max(0, this.readerBottomInset - 7))
@@ -1780,86 +1786,115 @@ struct ReaderPage {
 
   @Builder
   readerInfoCapsule() {
-    Row({ space: 4 }) {
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([COLOR_WHITE])
+    Stack() {
+      Row()
+        .width('100%').height(52)
+        .borderRadius(26)
+        .attributeModifier(new ReaderCapsuleMaterial())
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no-hide-descendants')
+      Row()
+        .width('100%').height(52)
+        .borderRadius(26)
+        .backgroundColor(immersiveCapsuleTint(this.readerMaterialLevel, true, '1C1C1E'))
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no-hide-descendants')
+      Row({ space: 4 }) {
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([COLOR_WHITE])
+        }
+        .width(40)
+        .height(48)
+        .accessibilityGroup(true)
+        .accessibilityText('返回')
+        .onClick(() => this.onBack())
+        Column({ space: 2 }) {
+          Text('第' + this.currentOrder + '话')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_WHITE)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Text(this.comicTitle)
+            .fontSize(13)
+            .fontColor('#D9FFFFFF')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
-      .width(40)
-      .height(48)
-      .accessibilityGroup(true)
-      .accessibilityText('返回')
-      .onClick(() => this.onBack())
-
-      Column({ space: 2 }) {
-        Text('第' + this.currentOrder + '话')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_WHITE)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.comicTitle)
-          .fontSize(13)
-          .fontColor('#D9FFFFFF')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .height(52)
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 6, right: 14 })
+      .borderRadius(26)
     }
-    .width('100%')
-    .height(52)
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: 6, right: 14 })
+    .width('100%').height(52)
     .borderRadius(26)
-    .attributeModifier(new ReaderCapsuleMaterial(this.readerMaterialLevel))
   }
 
   @Builder
   readerActionCapsule() {
-    Row() {
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
-          .fontSize(24)
-          .fontColor([COLOR_WHITE])
-      }
-      .width(48)
-      .height(48)
-      .accessibilityGroup(true)
-      .accessibilityText('下载章节')
-      .bindMenu(this.readerDownloadMenu(), {
-        placement: Placement.BottomRight,
-        offset: { x: 0, y: 8 },
-        showInSubWindow: false,
-        onAppear: (): void => {
-          this.downloadMenuVisible = true;
-          this.resetProgressControl();
-        },
-        onDisappear: (): void => {
-          this.downloadMenuVisible = false;
+    Stack() {
+      Row()
+        .width('100%').height(52)
+        .borderRadius(26)
+        .attributeModifier(new ReaderCapsuleMaterial())
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no-hide-descendants')
+      Row()
+        .width('100%').height(52)
+        .borderRadius(26)
+        .backgroundColor(immersiveCapsuleTint(this.readerMaterialLevel, true, '1C1C1E'))
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no-hide-descendants')
+      Row() {
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            .fontSize(24)
+            .fontColor([COLOR_WHITE])
         }
-      })
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.gearshape'))
-          .fontSize(24)
-          .fontColor([COLOR_WHITE])
+        .width(48)
+        .height(48)
+        .accessibilityGroup(true)
+        .accessibilityText('下载章节')
+        .bindMenu(this.readerDownloadMenu(), {
+          placement: Placement.BottomRight,
+          offset: { x: 0, y: 8 },
+          showInSubWindow: false,
+          onAppear: (): void => {
+            this.downloadMenuVisible = true;
+            this.resetProgressControl();
+          },
+          onDisappear: (): void => {
+            this.downloadMenuVisible = false;
+          }
+        })
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(24)
+            .fontColor([COLOR_WHITE])
+        }
+        .width(48)
+        .height(48)
+        .accessibilityGroup(true)
+        .accessibilityText('阅读设置')
+        .onClick(() => this.openReaderSettings())
       }
-      .width(48)
-      .height(48)
-      .accessibilityGroup(true)
-      .accessibilityText('阅读设置')
-      .onClick(() => this.openReaderSettings())
+      .width('100%')
+      .height(52)
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 6, right: 6 })
+      .borderRadius(26)
     }
-    .width('100%')
-    .height(52)
-    .alignItems(VerticalAlign.Center)
-    .justifyContent(FlexAlign.Center)
-    .padding({ left: 6, right: 6 })
+    .width('100%').height(52)
     .borderRadius(26)
-    .attributeModifier(new ReaderCapsuleMaterial(this.readerMaterialLevel))
   }
 
   /** 材质仅在两个胶囊各自的标题栏范围内绘制，不再创建横贯顶部的标题栏背板。 */

@@ -1,5 +1,8 @@
+import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
+import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { router } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
+import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
+import { DetailGlassCapsule } from '../components/DetailGlassCapsule';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
 import { publishContinuationRoute, ROUTE_SEARCH } from '../common/ContinuationState';
@@ -8,10 +11,9 @@ import {
   COLOR_BG,
   COLOR_CARD,
   COLOR_DIVIDER,
-  COLOR_INPUT_BG,
   COLOR_TEXT_TITLE,
   COLOR_TEXT_HINT,
-  COLOR_WHITE
+  COLOR_TEXT_SECONDARY
 } from '../common/Constants';
 
 /**
@@ -24,6 +26,9 @@ struct SearchPage {
   @State keywords: string[] = [];
   @State searchHistory: string[] = [];
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  @StorageProp('bika_animations') animationsOn: boolean = true;
+  private searchScroller: Scroller = new Scroller();
   private apiService: ApiService = ApiService.getInstance();
   private stack: NavPathStack = new NavPathStack();
 
@@ -86,56 +91,63 @@ struct SearchPage {
     });
   }
 
-  private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
-    return {
-      content: { title: { mainTitle: title } },
-      enableComponentSafeArea: true,
-      avoidLayoutSafeArea: true,
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: $r('app.color.bika_bg')
-          },
-          contentStyle: {
-            titleStyle: { mainTitleColor: $r('app.color.bika_text_title') },
-            backIconStyle: { iconColor: $r('app.color.bika_text_title') }
-          }
-        },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      }
-    };
+  @Builder
+  navigationHeaderSlot() {
+    Row().width('100%').height(56)
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no-hide-descendants')
   }
 
-  build() {
-    HdsNavigation(this.stack) {
-      Column() {
-        // 搜索框
-        Row({ space: 10 }) {
-          TextInput({ placeholder: '搜索漫画 / 作者 / 标签', text: this.keyword })
-            .fontSize(14)
-            .backgroundColor(COLOR_INPUT_BG)
-            .borderRadius(20)
-            .height(40)
-            .layoutWeight(1)
-            .onChange((value: string) => {
-              this.keyword = value;
-            })
-            .onSubmit(() => this.goSearch(this.keyword))
-          Button('搜索', { type: ButtonType.Normal })
-            .fontSize(14)
-            .fontColor(COLOR_WHITE)
-            .backgroundColor(COLOR_PRIMARY)
-            .borderRadius(20)
-            .height(40)
-            .padding({ left: 18, right: 18 })
-            .onClick(() => this.goSearch(this.keyword))
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+  @Builder
+  searchInputContent() {
+    Row({ space: 6 }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(19)
+        .fontColor([COLOR_TEXT_SECONDARY])
+      TextInput({ placeholder: '搜索漫画 / 作者 / 标签', text: this.keyword })
+        .fontSize(14)
+        .fontColor(COLOR_TEXT_TITLE)
+        .placeholderColor(COLOR_TEXT_HINT)
+        .caretColor(COLOR_PRIMARY)
+        .backgroundColor(Color.Transparent)
+        .height(44)
+        .layoutWeight(1)
+        .enterKeyType(EnterKeyType.Search)
+        .onChange((value: string): void => { this.keyword = value; })
+        .onSubmit((): void => this.goSearch(this.keyword))
+    }
+    .width('100%').height(44)
+    .padding({ left: 14, right: 4 })
+  }
 
+  @Builder
+  searchSubmitContent() {
+    Button('搜索', { type: ButtonType.Capsule })
+      .width('100%').height(44)
+      .fontSize(14)
+      .fontColor(COLOR_PRIMARY)
+      .backgroundColor(Color.Transparent)
+      .enabled(this.keyword.trim().length > 0)
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.96 : 1 })
+      .onClick((): void => this.goSearch(this.keyword))
+  }
+
+  @Builder
+  searchControls() {
+    Row({ space: 10 }) {
+      DetailGlassCapsule({ content: (): void => { this.searchInputContent(); } }).layoutWeight(1)
+      DetailGlassCapsule({ capsuleWidth: 68, content: (): void => { this.searchSubmitContent(); } })
+    }
+    .width('100%').height(60)
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .position({ x: 0, y: this.topSafeHeight + 56 })
+    .zIndex(2)
+  }
+
+  @Builder
+  searchSuggestions() {
+    Scroll(this.searchScroller) {
+      Column() {
         // 搜索历史
         if (this.searchHistory.length > 0) {
             Column() {
@@ -200,15 +212,37 @@ struct SearchPage {
         .padding({ left: 16, right: 16, top: 8 })
       }
       .width('100%')
-      .height('100%')
-      .backgroundColor(COLOR_BG)
+      .padding({ top: this.topSafeHeight + 56 + 68, bottom: this.bottomSafeHeight + 24 })
     }
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .titleBar(this.immersiveTitleBar('搜索'))
-    .hideTitleBar(false)
-    .hideBackButton(false)
-    .width('100%')
-    .height('100%')
+    .width('100%').height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .clip(false)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      HdsNavigation(this.stack) {
+        this.searchSuggestions()
+      }
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
+      .hideTitleBar(false)
+      .hideBackButton(true)
+      .bindToScrollable([this.searchScroller])
+      .backgroundColor(COLOR_BG)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+      .width('100%').height('100%')
+      GlassNavigationHeader({ title: '搜索', onBack: (): void => router.back() })
+        .position({ x: 0, y: this.topSafeHeight })
+        .zIndex(3)
+      // 控件独立位于模糊层上方，文字与输入内容不会被标题栏滤镜处理。
+      this.searchControls()
+    }
+    .backgroundColor(COLOR_BG)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .width('100%').height('100%')
   }
 }

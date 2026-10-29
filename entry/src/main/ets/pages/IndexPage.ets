@@ -1,4 +1,4 @@
-import { router, display, promptAction, curves, LengthMetrics, ComponentContent } from '@kit.ArkUI';
+import { router, display, promptAction, curves, ComponentContent } from '@kit.ArkUI';
 import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
@@ -8,6 +8,9 @@ import { ApiService, ComicsPageResult } from '../network/ApiService';
 import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, BikaComment, BikaComicDetail } from '../models/Comic';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
+import { DetailGlassCapsule } from '../components/DetailGlassCapsule';
+import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
+import { navigationBlurStyle, navigationBlurTitleBar } from '../common/NavigationBlur';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
 import {
   publishContinuationRoute,
@@ -50,7 +53,7 @@ import {
   adaptiveChannelColumns,
   adaptiveListColumns
 } from '../common/Constants';
-import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial, HdsNavigation, HdsNavDestination, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 
 /**
  * 主入口 — HdsTabs 悬浮页签（首页 / 我的）
@@ -72,6 +75,7 @@ function homeRefreshPlaceholder() {
 struct HomePage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  @StorageProp('bika_animations') animationsOn: boolean = true;
   @StorageProp('isLoggedIn') @Watch('onHomeAuthChanged') isLoggedIn: boolean = false;
   @StorageProp('avatarUrl') avatarUrl: string = '';
   @StorageProp('bika_material_rev') materialRev: number = 0;
@@ -316,6 +320,36 @@ struct HomePage {
   }
 
   @Builder
+  homeEditAction() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph($r('sys.symbol.square_and_pencil')).fontSize(20).fontColor([COLOR_TEXT_TITLE])
+    }
+    .width(40).height(40)
+    .backgroundColor(Color.Transparent)
+    .accessibilityText('编辑频道')
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.94 : 1 })
+    .onClick((): void => { this.showChannelEdit = true; })
+  }
+
+  @Builder
+  homeSearchAction() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize(22).fontColor([COLOR_TEXT_TITLE])
+    }
+    .width(40).height(40)
+    .backgroundColor(Color.Transparent)
+    .accessibilityText('搜索')
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.94 : 1 })
+    .onClick((): void => { router.pushUrl({ url: 'pages/SearchPage' }); })
+  }
+
+  /** 仅为 HDS 保留原有标题栏尺寸，实际按钮在外层独立绘制。 */
+  @Builder
+  homeHeaderSlot() {
+    Row().width('100%').height(56)
+  }
+
+  @Builder
   homeHeader() {
     Row({ space: 8 }) {
       Text('Bika')
@@ -323,28 +357,14 @@ struct HomePage {
         .fontWeight(FontWeight.Bold)
         .fontColor(COLOR_TEXT_TITLE)
         .layoutWeight(1)
-      Button({ type: ButtonType.Circle }) {
-        SymbolGlyph($r('sys.symbol.square_and_pencil'))
-          .fontSize(20)
-          .fontColor([COLOR_TEXT_TITLE])
-      }
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .attributeModifier(compatibleImmersiveMaterial('#FF7CA8', false, true))
-      .accessibilityText('编辑频道')
-      .onClick(() => { this.showChannelEdit = true; })
-      Button({ type: ButtonType.Circle }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(22)
-          .fontColor([COLOR_TEXT_TITLE])
-      }
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .attributeModifier(compatibleImmersiveMaterial('#FF7CA8', false, true))
-      .accessibilityText('搜索')
-      .onClick(() => { router.pushUrl({ url: 'pages/SearchPage' }); })
+      DetailGlassCapsule({
+        capsuleWidth: 40, capsuleHeight: 40,
+        content: (): void => { this.homeEditAction(); }
+      })
+      DetailGlassCapsule({
+        capsuleWidth: 40, capsuleHeight: 40,
+        content: (): void => { this.homeSearchAction(); }
+      })
       if (this.isLoggedIn) {
         if (this.avatarUrl.length > 0) {
           NetImage({ src: this.avatarUrl, fit: ImageFit.Cover, radius: 18, fillParent: true })
@@ -366,6 +386,8 @@ struct HomePage {
     .width('100%')
     .height(56)
     .padding({ left: 20, right: 20 })
+    .position({ x: 0, y: this.topSafeHeight })
+    .zIndex(2)
   }
 
   @Builder
@@ -496,8 +518,10 @@ struct HomePage {
           .columnsTemplate(adaptiveChannelColumns())
           .columnsGap(14)
           .rowsGap(18)
-          // 网格只负责排布，所有拖动与惯性由绑定 HDS 的外层 Scroll 处理。
+          // 滚动统一交给外层 Scroll；越过标题边界的节点继续绘制，供 HDS 模糊采样。
           .enableScrollInteraction(false)
+          .clip(false)
+          .cachedCount(3, true)
           .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 76 })
           }
         }
@@ -507,6 +531,7 @@ struct HomePage {
       .height('100%')
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
+      .clip(false)
       .nestedScroll({ scrollForward: NestedScrollMode.SELF_FIRST, scrollBackward: NestedScrollMode.SELF_FIRST })
       // 顶部交给 Refresh 下拉，底部使用原生弹簧回弹。
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true, effectEdge: EffectEdge.END })
@@ -519,26 +544,10 @@ struct HomePage {
     .hideTitleBar(false)
     .hideBackButton(true)
     .titleBar({
-      content: { title: { mainTitle: '' }, stackBuilder: () => this.homeHeader() },
+      content: { title: { mainTitle: '' }, stackBuilder: () => this.homeHeaderSlot() },
       enableComponentSafeArea: false,
       avoidLayoutSafeArea: true,
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
-          // 自定义刷新仅平移内容；标题模糊只跟随 homeScroller，避免刷新偏移回零覆盖滚动效果。
-          enableRefreshOffsetChange: false,
-          blurEffectiveEndOffset: LengthMetrics.vp(64)
-        },
-        // 原生模糊显式启用，保留现有渐变模糊类型与透明颜色蒙版。
-        blurStrategy: BlurStrategy.ENABLE,
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      }
+      style: navigationBlurStyle()
     })
     .bindToScrollable([this.homeScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
@@ -561,12 +570,15 @@ struct HomePage {
       .onOffsetChange((offset: number) => { this.refreshPullOffset = Math.max(0, offset); })
       .onRefreshing(() => { this.refreshHome(); })
       this.refreshHeader()
+      // 光感按钮是 HDS 背景模糊的上层兄弟节点，避免共同参与标题栏滤镜。
+      this.homeHeader()
     }
     .width('100%')
     .height('100%')
     .backgroundColor(COLOR_BG)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .bindSheet($$this.showChannelEdit, this.channelEditSheet(), {
+      systemMaterial: compatibleSheetMaterial(),
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
       showClose: false,
@@ -1088,6 +1100,14 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+    {
+    version: '1.4.7',
+    date: '2026-10-29',
+    items: [
+      '全页面适配沉浸光感视效。',
+      '修复了一些已知问题。'
+    ]
+  },
   {
     version: '1.4.6',
     date: '2026-10-28',
@@ -1411,12 +1431,13 @@ const COLOR_MODE_OPTIONS: MaterialOption[] = [
 
 @Component
 struct ProfilePage {
+  @StorageProp(CONTINUATION_PROFILE_SUBPAGE_KEY) visibleSubpage: string = '';
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
-  /** 登录态是否已确定：未置位前不渲染「未登录」这类确定性文案（防御性） */
+  /** 登录态是否已确定：未置位前不渲染「未登录」这类确定性文案 */
   @StorageProp('auth_resolved') authResolved: boolean = false;
-  // 主题强调色：哔咔粉（保留哔咔主题色）
+  // 主题强调色：哔咔粉
   private accentColor: ResourceColor = $r('app.color.bika_primary');
   /** 强调色 hex（沉浸光感点光用） */
   private accentHex: string = '#FF7CA8';
@@ -2466,110 +2487,150 @@ struct ProfilePage {
     .padding({ top: 4, bottom: 4 })
   }
 
+  private subpageHeaderTitle(): string {
+    switch (this.visibleSubpage) {
+      case 'favourites': return '我的收藏';
+      case 'history': return '浏览历史';
+      case 'downloads': return '我的下载';
+      case 'notifications': return '通知';
+      case 'comments': return '我的评论';
+      case 'settings': return '设置';
+      case 'about': return '关于';
+      case 'storage': return '存储与空间';
+      case 'dns': return 'DNS 直连与分流优化';
+      case 'blocked': return '屏蔽标签';
+      case 'profile_edit': return '编辑资料';
+      case 'account': return '账号与安全';
+      default: return '';
+    }
+  }
+
+  @Builder
+  navigationHeaderSlot() {
+    Row().width('100%').height(56)
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no-hide-descendants')
+  }
+
   build() {
-    HdsNavigation(this.stack) {
-      Column() {
-        Scroll() {
-          Column({ space: 12 }) {
-            if (this.isLoggedIn) {
-              this.userCard()
-            } else {
-              Row() {
-                Image($r('app.media.ic_default_avatar'))
-                  .width(56)
-                  .height(56)
-                  .borderRadius(28)
-                  .objectFit(ImageFit.Cover)
-                Column({ space: 2 }) {
-                  Text(this.authResolved ? '未登录' : '正在确认登录状态')
-                    .fontSize(17)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(COLOR_TEXT_TITLE)
-                  Text(this.authResolved ? '登录后同步收藏与评论' : ' ')
-                    .fontSize(12)
-                    .fontColor(COLOR_TEXT_HINT)
-                }
-                .alignItems(HorizontalAlign.Start)
-                .margin({ left: 14 })
-                .layoutWeight(1)
-
-                if (this.authResolved) {
-                  Button('登录', { type: ButtonType.Normal })
-                    .fontSize(14)
-                    .fontColor(COLOR_WHITE)
-                    .backgroundColor(COLOR_PRIMARY)
-                    .borderRadius(18)
-                    .height(36)
-                    .padding({ left: 20, right: 20 })
-                    .onClick(() => this.onLogin())
-                }
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-              .backgroundColor(Color.Transparent)
-              .borderRadius(18)
-              .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
-            }
-
-            this.menuList()
-
-            // 退出登录：紧跟菜单卡下方，与上部平齐
-            if (this.isLoggedIn) {
-              Row() {
-                SymbolGlyph($r('sys.symbol.rectangle_portrait_on_rectangle_portrait'))
-                  .fontSize(20)
-                  .fontColor([COLOR_TEXT_SECONDARY])
-                Text('退出登录')
-                  .fontSize(15)
-                  .fontColor(COLOR_LOGOUT_TEXT)
-                  .margin({ left: 12 })
+    Stack({ alignContent: Alignment.TopStart }) {
+      HdsNavigation(this.stack) {
+        Column() {
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.isLoggedIn) {
+                this.userCard()
+              } else {
+                Row() {
+                  Image($r('app.media.ic_default_avatar'))
+                    .width(56)
+                    .height(56)
+                    .borderRadius(28)
+                    .objectFit(ImageFit.Cover)
+                  Column({ space: 2 }) {
+                    Text(this.authResolved ? '未登录' : '正在确认登录状态')
+                      .fontSize(17)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(COLOR_TEXT_TITLE)
+                    Text(this.authResolved ? '登录后同步收藏与评论' : ' ')
+                      .fontSize(12)
+                      .fontColor(COLOR_TEXT_HINT)
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .margin({ left: 14 })
                   .layoutWeight(1)
+
+                  if (this.authResolved) {
+                    Button('登录', { type: ButtonType.Normal })
+                      .fontSize(14)
+                      .fontColor(COLOR_WHITE)
+                      .backgroundColor(COLOR_PRIMARY)
+                      .borderRadius(18)
+                      .height(36)
+                      .padding({ left: 20, right: 20 })
+                      .onClick(() => this.onLogin())
+                  }
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                .backgroundColor(Color.Transparent)
+                .borderRadius(18)
+                .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
               }
-              .width('100%')
-              .height(52)
-              .padding({ left: 16, right: 16 })
-              .backgroundColor(Color.Transparent)
-              .borderRadius(18)
-              .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
-              .onClick(() => this.onLogout())
+
+              this.menuList()
+
+              // 退出登录：紧跟菜单卡下方，与上部平齐
+              if (this.isLoggedIn) {
+                Row() {
+                  SymbolGlyph($r('sys.symbol.rectangle_portrait_on_rectangle_portrait'))
+                    .fontSize(20)
+                    .fontColor([COLOR_TEXT_SECONDARY])
+                  Text('退出登录')
+                    .fontSize(15)
+                    .fontColor(COLOR_LOGOUT_TEXT)
+                    .margin({ left: 12 })
+                    .layoutWeight(1)
+                }
+                .width('100%')
+                .height(52)
+                .padding({ left: 16, right: 16 })
+                .backgroundColor(Color.Transparent)
+                .borderRadius(18)
+                .backgroundColor(COLOR_CARD).border({ width: 1, color: COLOR_DIVIDER })
+                .onClick(() => this.onLogout())
+              }
             }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 40 })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 40 })
+          .layoutWeight(1)
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .backgroundColor(COLOR_BG)
         }
         .width('100%')
-        .layoutWeight(1)
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .height('100%')
         .backgroundColor(COLOR_BG)
       }
+      .hideTitleBar(true)
+      .mode(NavigationMode.Stack)
+      .navDestination(this.pageMap)
       .width('100%')
       .height('100%')
-      .backgroundColor(COLOR_BG)
-    }
-    .hideTitleBar(true)
-    .mode(NavigationMode.Stack)
-    .navDestination(this.pageMap)
-    .width('100%')
-    .height('100%')
-    .bindSheet($$this.showAboutSheet, this.profileBottomSheet(), {
-      detents: [SheetSize.FIT_CONTENT],
-      preferType: SheetType.BOTTOM,
-      showClose: true,
-      dragBar: false,
-      // 仅更新提示统一系统表面；更新日志与隐私政策保留原有配置。
-      backgroundColor: this.aboutSheetKind === 0 ? COLOR_BG : undefined,
-      blurStyle: this.aboutSheetKind === 0 ? BlurStyle.NONE : undefined,
-      borderWidth: this.aboutSheetKind === 0 ? 0 : undefined,
-      systemMaterial: this.aboutSheetKind === 0 ? undefined : compatibleSheetMaterial(this.materialLevel),
-      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
-      onWillDismiss: (): void => {
-        this.showAboutSheet = false;
-        this.aboutEntered = false;
-        this.aboutSheetKind = 0;
+      .bindSheet($$this.showAboutSheet, this.profileBottomSheet(), {
+        detents: [SheetSize.FIT_CONTENT],
+        preferType: SheetType.BOTTOM,
+        showClose: true,
+        dragBar: false,
+        // 仅更新提示统一系统表面；更新日志与隐私政策保留原有配置。
+        backgroundColor: this.aboutSheetKind === 0 ? COLOR_BG : undefined,
+        blurStyle: this.aboutSheetKind === 0 ? BlurStyle.NONE : undefined,
+        borderWidth: this.aboutSheetKind === 0 ? 0 : undefined,
+        systemMaterial: compatibleSheetMaterial(),
+        scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+        onWillDismiss: (): void => {
+          this.showAboutSheet = false;
+          this.aboutEntered = false;
+          this.aboutSheetKind = 0;
+        }
+      })
+
+      if (this.subpageHeaderTitle().length > 0) {
+        GlassNavigationHeader({
+          title: this.subpageHeaderTitle(), onBack: (): void => this.closeSubpage()
+        })
+          .position({ x: 0, y: this.topSafeHeight })
+          .zIndex(2)
+          .transition(TransitionEffect.OPACITY)
+          .animation({ duration: this.animationsEnabled ? 180 : 0, curve: Curve.EaseOut })
       }
-    })
+    }
+    .width('100%').height('100%')
+    .backgroundColor(COLOR_BG)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 
   /** 底部弹窗统一分发（单 bindSheet 避免多实例互顶）：aboutSheetKind 0=更新 1=更新日志 2=隐私政策 */
@@ -2653,6 +2714,9 @@ struct ProfilePage {
             }, (comic: ComicViewModel) => comic.id + '_' + this.favSort)
           }
           .columnsTemplate(adaptiveListColumns())
+          .enableScrollInteraction(false)
+          .clip(false)
+          .cachedCount(3, true)
           .columnsGap(10)
           .rowsGap(12)
           .padding({ left: 12, right: 12, top: 8, bottom: this.bottomSafeHeight + 76 })
@@ -2662,6 +2726,7 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .onReachEnd(() => {
@@ -2673,21 +2738,8 @@ struct ProfilePage {
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '我的收藏' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.favouritesScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -2809,21 +2861,8 @@ struct ProfilePage {
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '浏览历史' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.historyScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -2840,21 +2879,8 @@ struct ProfilePage {
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '我的下载' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.downloadsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -2939,21 +2965,8 @@ struct ProfilePage {
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '通知' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.notificationsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -3028,21 +3041,8 @@ struct ProfilePage {
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '我的评论' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.commentsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -3105,7 +3105,7 @@ struct ProfilePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(COLOR_TEXT_TITLE)
-                Text('底部导航栏的材质强度')
+                Text('导航档位与胶囊通透度')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_SECONDARY)
               }
@@ -3585,28 +3585,13 @@ struct ProfilePage {
       .width('100%').height('100%')
       .backgroundColor(COLOR_BG)
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '设置' } },
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .backgroundColor(COLOR_BG)
     .bindToScrollable([this.settingsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
@@ -3750,26 +3735,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '关于' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.aboutScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -3874,26 +3847,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '存储与空间' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.storageScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -4171,26 +4132,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: 'DNS 直连与分流优化' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.dnsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -4298,26 +4247,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '屏蔽标签' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.blockedTagsScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -4375,26 +4312,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '编辑资料' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.profileEditScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {
@@ -4494,26 +4419,14 @@ struct ProfilePage {
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
+      .clip(false)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .backgroundColor(COLOR_BG)
     .hideTitleBar(false)
-    .hideBackButton(false)
-    .titleBar({
-      content: { title: { mainTitle: '账号与安全' } },
-      style: {
-        scrollEffectOpts: { enableScrollEffect: true, scrollEffectType: ScrollEffectType.GRADIENT_BLUR },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false
-    })
+    .hideBackButton(true)
+    .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
     .bindToScrollable([this.accountScroller])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed((): boolean => {

@@ -1,8 +1,12 @@
-import { router } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, DividerShowType, hdsMaterial } from '@kit.UIDesignKit';
+import { compatibleSheetMaterial } from '../common/CompatibleMaterial';
+import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
+import { navigationBlurTitleBar } from '../common/NavigationBlur';
+import { router, ComponentContent } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { ApiService } from '../network/ApiService';
 import { ComicViewModel, BikaComicSummary, BikaKnightUser, buildImageUrl, isBlockedComic } from '../models/Comic';
 import { ComicCard } from '../components/ComicCard';
+import { ChannelControlCapsule } from '../components/ChannelControlCapsule';
 import { NetImage } from '../components/NetImage';
 import { publishContinuationRoute, ROUTE_CHANNEL_LIST } from '../common/ContinuationState';
 import {
@@ -36,6 +40,12 @@ interface ChannelListParams {
 const LEADERBOARD_TABS: string[] = ['H24', 'D7', 'D30', 'knights'];
 const LEADERBOARD_TAB_LABELS: string[] = ['日榜 (24H)', '周榜 (7D)', '月榜 (30D)', '骑士榜'];
 
+// 原生 Refresh 仅管理拉动与刷新状态；可见提示单独按实际拉动距离绘制。
+@Builder
+function channelRefreshPlaceholder() {
+  Row().width('100%').height(0)
+}
+
 @Entry
 @Component
 struct ChannelListPage {
@@ -46,6 +56,7 @@ struct ChannelListPage {
   @State isLoading: boolean = false;
   /** 下拉刷新中 */
   @State refreshing: boolean = false;
+  @State refreshPullOffset: number = 0;
   @State errorMsg: string = '';
   @State currentPage: number = 1;
   @State hasMore: boolean = false;
@@ -70,15 +81,24 @@ struct ChannelListPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private listScroller: Scroller = new Scroller();
+  private knightsScroller: Scroller = new Scroller();
   private stack: NavPathStack = new NavPathStack();
+  private refreshContent: ComponentContent<Object> | undefined = undefined;
 
   aboutToAppear(): void {
+    this.refreshContent = new ComponentContent(this.getUIContext(), wrapBuilder(channelRefreshPlaceholder));
     let params = router.getParams() as ChannelListParams;
     if (params) {
       this.label = params.label || '';
       this.kind = params.kind || 'topic';
     }
     this.load(true);
+  }
+
+  aboutToDisappear(): void {
+    this.refreshContent?.dispose();
+    this.refreshContent = undefined;
+    this.refreshPullOffset = 0;
   }
 
   /** 应用接续：本页可见即发布「当前页面」（从二级页返回时也会重新发布） */
@@ -310,61 +330,66 @@ struct ChannelListPage {
     .width('100%')
     .height(44)
     .justifyContent(FlexAlign.Center)
+    .position({ x: 0, y: this.topSafeHeight + 56 + this.controlsHeight() + Math.max(0, (this.refreshPullOffset - 44) / 2) })
+    .opacity(Math.min(1, Math.max(0, (this.refreshPullOffset - 24) / 24)))
+    .hitTestBehavior(HitTestMode.None)
+    .accessibilityLevel('no-hide-descendants')
+  }
+
+  private onRefreshOffsetChange(offset: number): void {
+    this.refreshPullOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
+  }
+
+  private controlsHeight(): number {
+    return this.kind === 'leaderboard' || this.isFilterableChannel() || this.isSortableChannel() ? 52 : 0;
   }
 
   @Builder
   filterBar() {
-    Row() {
-      if (this.kind === 'leaderboard') {
-        ForEach(LEADERBOARD_TAB_LABELS, (tab: string, index: number) => {
-          Text(tab)
-            .fontSize(13)
-            .fontColor(this.leaderboardTab === index ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.leaderboardTab === index ? COLOR_PRIMARY : COLOR_CARD)
-            .borderRadius(15)
-            .margin({ right: 8 })
-            .onClick(() => this.onLeaderboardTab(index))
-        }, (tab: string) => tab)
-      } else {
-        // 筛选按钮（仅支持筛选的频道）
-        if (this.isFilterableChannel()) {
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-              .fontSize(16)
-              .fontColor([this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
-            Text(this.hasFilter() ? '已筛选' : '筛选')
-              .fontSize(13)
-              .fontColor(this.hasFilter() ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+    Scroll() {
+      Row({ space: 8 }) {
+        if (this.kind === 'leaderboard') {
+          ForEach(LEADERBOARD_TAB_LABELS, (tab: string, index: number) => {
+            ChannelControlCapsule({
+              label: tab,
+              selected: this.leaderboardTab === index,
+              onActivate: (): void => this.onLeaderboardTab(index)
+            })
+          }, (tab: string) => tab)
+        } else {
+          if (this.isFilterableChannel()) {
+            ChannelControlCapsule({
+              label: this.hasFilter() ? '已筛选' : '筛选',
+              selected: this.hasFilter(),
+              filterIcon: true,
+              onActivate: (): void => { this.showFilter = true; }
+            })
           }
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor(COLOR_CARD)
-          .border({ width: 1, color: this.hasFilter() ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 15 })
-          .margin({ right: 8 })
-          .onClick(() => {
-            this.showFilter = true;
-          })
-        }
-
-        // 排序（仅支持排序的频道）
-        if (this.isSortableChannel()) {
-          ForEach(SORT_OPTIONS, (item: SortOption) => {
-            Text(item.label)
-              .fontSize(13)
-              .fontColor(this.currentSort === item.key ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .backgroundColor(this.currentSort === item.key ? COLOR_PRIMARY : COLOR_CARD)
-              .borderRadius(15)
-              .margin({ right: 8 })
-              .onClick(() => this.onSortChange(item.key))
-          }, (item: SortOption) => item.key)
+          if (this.isSortableChannel()) {
+            ForEach(SORT_OPTIONS, (item: SortOption) => {
+              ChannelControlCapsule({
+                label: item.label,
+                selected: this.currentSort === item.key,
+                onActivate: (): void => this.onSortChange(item.key)
+              })
+            }, (item: SortOption) => item.key)
+          }
         }
       }
+      .height(36)
+      .justifyContent(FlexAlign.Start)
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .justifyContent(FlexAlign.Start)
+    .height(52)
+    .scrollable(ScrollDirection.Horizontal)
+    .align(Alignment.Start)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor(COLOR_BG)
+    .backgroundColor(Color.Transparent)
+    .position({ x: 0, y: this.topSafeHeight + 56 })
+    .zIndex(2)
   }
 
   @Builder
@@ -385,7 +410,7 @@ struct ChannelListPage {
           .onClick(() => this.load(true))
       }
       .width('100%')
-      .padding({ top: 60 })
+      .padding({ top: this.controlsHeight() + 60 })
       .alignItems(HorizontalAlign.Center)
     } else if (this.kind === 'leaderboard' && this.leaderboardTab === 3) {
       if (this.knights.length === 0 && this.isLoading) {
@@ -393,11 +418,11 @@ struct ChannelListPage {
           LoadingProgress().width(40).height(40).color(COLOR_PRIMARY)
         }
         .width('100%')
-        .padding({ top: 60 })
+        .padding({ top: this.controlsHeight() + 60 })
         .alignItems(HorizontalAlign.Center)
       } else {
         Column() {
-        List({ space: 0 }) {
+        List({ space: 0, scroller: this.knightsScroller }) {
           ForEach(this.knights, (knight: BikaKnightUser, index: number) => {
             ListItem() {
               Row() {
@@ -455,6 +480,9 @@ struct ChannelListPage {
         }
         .width('100%')
         .height('100%')
+        .contentStartOffset(this.controlsHeight())
+        .clip(false)
+        .cachedCount(3, true)
         .backgroundColor(COLOR_CARD)
         .borderRadius(18)
         .border({ width: 1, color: COLOR_DIVIDER })
@@ -468,7 +496,7 @@ struct ChannelListPage {
         LoadingProgress().width(40).height(40).color(COLOR_PRIMARY)
       }
       .width('100%')
-      .padding({ top: 60 })
+      .padding({ top: this.controlsHeight() + 60 })
       .alignItems(HorizontalAlign.Center)
     } else if (this.comics.length === 0 && !this.isLoading) {
       Column({ space: 10 }) {
@@ -490,7 +518,7 @@ struct ChannelListPage {
           .onClick(() => this.load(true))
       }
       .width('100%')
-      .padding({ top: 70 })
+      .padding({ top: this.controlsHeight() + 70 })
       .alignItems(HorizontalAlign.Center)
     } else {
       // 这里必须让 Scroll 成为 Refresh 的直接子节点：中间再夹一层 Stack 会截断下拉手势，导致下拉刷新永远不触发
@@ -509,13 +537,18 @@ struct ChannelListPage {
           }, (comic: ComicViewModel) => comic.id + '_' + this.currentSort + '_' + this.leaderboardTab)
         }
         .columnsTemplate(adaptiveListColumns())
+        .enableScrollInteraction(false)
+        .clip(false)
+        .cachedCount(3, true)
         .columnsGap(10)
         .rowsGap(12)
-        .padding({ left: 12, right: 12, top: 8, bottom: 24 })
+        .padding({ left: 12, right: 12, top: this.controlsHeight() + 8, bottom: 24 })
       }
       .width('100%')
       .height('100%')
       .align(Alignment.Top)
+      // 允许内容穿透到原生标题栏后方，供渐变模糊采样。
+      .clip(false)
       .scrollBar(BarState.Off)
       .onReachEnd(() => {
         if (!this.isFixedChannel() && this.hasMore && !this.isLoading) {
@@ -526,91 +559,92 @@ struct ChannelListPage {
     }
   }
 
-  /** HDS 系统沉浸光感标题栏（官方材质） */
-  private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
-    return {
-      content: {
-        title: { mainTitle: title },
-        divider: { showType: DividerShowType.OFF }
-      },
-      enableComponentSafeArea: true,
-      avoidLayoutSafeArea: true,
-      style: {
-        scrollEffectOpts: { enableScrollEffect: false },
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: $r('app.color.bika_bg')
-          },
-          contentStyle: {
-            titleStyle: { mainTitleColor: $r('app.color.bika_text_title') },
-            backIconStyle: { iconColor: $r('app.color.bika_text_title') }
-          }
-        },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.IMMERSIVE,
-          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
-        }
-      }
-    };
+  /** 与主页一致的透明渐变模糊标题栏；内容依靠组件安全区避让。 */
+  @Builder
+  navigationHeaderSlot() {
+    Row().width('100%').height(56)
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no-hide-descendants')
   }
 
   build() {
-    HdsNavigation(this.stack) {
-      Column() {
-        this.filterBar()
+    Stack({ alignContent: Alignment.TopStart }) {
+      HdsNavigation(this.stack) {
+        Stack({ alignContent: Alignment.Top }) {
+          // Stack 只负责把「上拉加载更多」指示器浮在底部；Refresh 必须直接包住 contentArea（内部 Scroll），
+          // 否则下拉手势会被中间层截断，刷新不会触发
+          Stack({ alignContent: Alignment.Bottom }) {
+            Refresh({ refreshing: $$this.refreshing, refreshingContent: this.refreshContent }) {
+              this.contentArea()
+            }
+            .width('100%')
+            .height('100%')
+            .refreshOffset(64)
+            .maxPullDownDistance(128)
+            .onOffsetChange((offset: number) => this.onRefreshOffsetChange(offset))
+            .clip(false)
+            .onRefreshing(() => { this.onPullRefresh(); })
 
-        // Stack 只负责把「上拉加载更多」指示器浮在底部；Refresh 必须直接包住 contentArea（内部 Scroll），
-        // 否则下拉手势会被中间层截断，刷新不会触发
-        Stack({ alignContent: Alignment.Bottom }) {
-          Refresh({ refreshing: $$this.refreshing, builder: this.refreshIndicator() }) {
-            this.contentArea()
+            if (this.isLoading) {
+              Row({ space: 6 }) {
+                LoadingProgress()
+                  .width(16)
+                  .height(16)
+                  .color(COLOR_PRIMARY)
+                Text('加载中…')
+                  .fontSize(12)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .padding({ left: 14, right: 16, top: 8, bottom: 8 })
+              .margin({ bottom: 20 })
+              .backgroundColor(COLOR_CARD)
+              .borderRadius(18)
+              .border({ width: 1, color: COLOR_DIVIDER })
+            }
           }
           .width('100%')
           .height('100%')
-          .refreshOffset(64)
-          .onRefreshing(() => { this.onPullRefresh(); })
 
-          if (this.isLoading) {
-            Row({ space: 6 }) {
-              LoadingProgress()
-                .width(16)
-                .height(16)
-                .color(COLOR_PRIMARY)
-              Text('加载中…')
-                .fontSize(12)
-                .fontColor(COLOR_TEXT_SECONDARY)
-            }
-            .padding({ left: 14, right: 16, top: 8, bottom: 8 })
-            .margin({ bottom: 20 })
-            .backgroundColor(COLOR_CARD)
-            .borderRadius(18)
-            .border({ width: 1, color: COLOR_DIVIDER })
-          }
         }
-        .layoutWeight(1)
         .width('100%')
+        .height('100%')
+        .backgroundColor(COLOR_BG)
       }
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }, true))
+      .hideTitleBar(false)
+      .hideBackButton(true)
+      .bindToScrollable([this.listScroller, this.knightsScroller])
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+      .bindSheet($$this.showFilter, this.filterSheet(), {
+        systemMaterial: compatibleSheetMaterial(),
+        detents: [SheetSize.FIT_CONTENT],
+        preferType: SheetType.BOTTOM,
+        showClose: true,
+        dragBar: false,
+        scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+        onWillDismiss: (): void => {
+          this.showFilter = false;
+        }
+      })
       .width('100%')
       .height('100%')
       .backgroundColor(COLOR_BG)
-    }
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .titleBar(this.immersiveTitleBar(this.label.length > 0 ? this.label : '列表'))
-    .hideTitleBar(false)
-    .hideBackButton(false)
-    .bindSheet($$this.showFilter, this.filterSheet(), {
-      detents: [SheetSize.FIT_CONTENT],
-      preferType: SheetType.BOTTOM,
-      showClose: true,
-      dragBar: false,
-      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
-      onWillDismiss: (): void => {
-        this.showFilter = false;
+
+      if (this.controlsHeight() > 0) {
+        this.filterBar()
       }
-    })
-    .width('100%')
-    .height('100%')
+      if (this.refreshPullOffset > 0) {
+        this.refreshIndicator()
+      }
+      GlassNavigationHeader({ title: this.label.length > 0 ? this.label : '列表', onBack: (): void => router.back() })
+        .position({ x: 0, y: this.topSafeHeight })
+        .zIndex(3)
+    }
+    .width('100%').height('100%')
+    .backgroundColor(COLOR_BG)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 
   /** 筛选面板：主面板（入口行）+ 子面板（标签列表，ArkUI 弹窗列表式） */

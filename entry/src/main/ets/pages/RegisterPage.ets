@@ -1,5 +1,7 @@
-import { router, LengthMetrics } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial, ScrollEffectType } from '@kit.UIDesignKit';
+import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
+import { navigationBlurTitleBar } from '../common/NavigationBlur';
+import { router } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import {
@@ -62,28 +64,11 @@ struct RegisterPage {
     return true;
   }
 
-  private immersiveTitleBar(title: string): HdsNavigationTitleBarOptions {
-    return {
-      content: {
-        title: { mainTitle: title },
-        backIcon: { action: () => this.backToLogin() }
-      },
-      enableComponentSafeArea: false,
-      avoidLayoutSafeArea: true,
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
-          blurEffectiveEndOffset: LengthMetrics.vp(64)
-        },
-        originalStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: Color.Transparent } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      }
-    };
+  @Builder
+  navigationHeaderSlot() {
+    Row().width('100%').height(56)
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no-hide-descendants')
   }
 
   private apiService: ApiService = ApiService.getInstance();
@@ -225,117 +210,129 @@ struct RegisterPage {
   }
 
   build() {
-    HdsNavigation(this.stack) {
-      Scroll(this.scroller) {
-        Column() {
-          this.fieldTitle('昵称')
-          this.inputField('显示在评论与个人主页', this.name, false, (v: string) => {
-            this.name = v;
-          })
-          this.fieldHint('2-50 个字符')
-          this.fieldTitle('用户名')
-          this.inputField('用于登录', this.email, false, (v: string) => {
-            this.email = v;
-          })
-          this.fieldHint('只能包含字母和数字')
-          this.fieldTitle('密码')
-          this.inputField('至少需要 8 个字符', this.password, true, (v: string) => {
-            this.password = v;
-          })
-          this.fieldHint('登录时使用，请牢记')
-
-          this.fieldTitle('生日')
-          this.fieldHint('需年满 18 周岁')
-          Row() {
-            Text(this.birthday)
-              .fontSize(15)
-              .fontColor(COLOR_TEXT_TITLE)
-              .layoutWeight(1)
-            SymbolGlyph($r('sys.symbol.calendar'))
-              .fontSize(20)
-              .fontColor([COLOR_PRIMARY])
-          }
-          .width('100%')
-          .height(52)
-          .padding({ left: 16, right: 16 })
-          .backgroundColor(COLOR_CARD)
-          .borderRadius(12)
-          .border({ width: 1, color: COLOR_DIVIDER })
-          .onClick(() => this.pickBirthday())
-
-          this.fieldTitle('性别')
-          Row({ space: 10 }) {
-            this.genderChip('m', '男')
-            this.genderChip('f', '女')
-            this.genderChip('bot', '机器人')
-          }
-          .width('100%')
-
-          this.fieldTitle('密保问题一（用于找回账号）')
-          this.inputField('例如：我的出生地是？', this.question1, false, (v: string) => {
-            this.question1 = v;
-          })
-          this.inputField('答案', this.answer1, false, (v: string) => {
-            this.answer1 = v;
-          }, 10)
-          this.fieldTitle('密保问题二')
-          this.inputField('例如：我的小学是？', this.question2, false, (v: string) => {
-            this.question2 = v;
-          })
-          this.inputField('答案', this.answer2, false, (v: string) => {
-            this.answer2 = v;
-          }, 10)
-          this.fieldTitle('密保问题三')
-          this.inputField('例如：我最喜欢的食物是？', this.question3, false, (v: string) => {
-            this.question3 = v;
-          })
-          this.inputField('答案', this.answer3, false, (v: string) => {
-            this.answer3 = v;
-          }, 10)
-
-          Button(this.registering ? '注册中…' : '注册', { type: ButtonType.Normal })
-            .fontSize(16)
-            .fontColor(COLOR_WHITE)
-            .backgroundColor(this.registering ? COLOR_TEXT_HINT : COLOR_PRIMARY)
-            .borderRadius(28)
-            .height(56)
-            .width('100%')
-            .margin({ top: 24 })
-            .enabled(!this.registering)
-            .onClick(() => {
-              this.doRegister();
+    Stack({ alignContent: Alignment.TopStart }) {
+      HdsNavigation(this.stack) {
+        Scroll(this.scroller) {
+          Column() {
+            this.fieldTitle('昵称')
+            this.inputField('显示在评论与个人主页', this.name, false, (v: string) => {
+              this.name = v;
             })
-          if (this.registerError.length > 0) {
-            Text(this.registerError)
-              .fontSize(13)
-              .fontColor(COLOR_LOGOUT_TEXT)
+            this.fieldHint('2-50 个字符')
+            this.fieldTitle('用户名')
+            this.inputField('用于登录', this.email, false, (v: string) => {
+              this.email = v;
+            })
+            this.fieldHint('只能包含字母和数字')
+            this.fieldTitle('密码')
+            this.inputField('至少需要 8 个字符', this.password, true, (v: string) => {
+              this.password = v;
+            })
+            this.fieldHint('登录时使用，请牢记')
+
+            this.fieldTitle('生日')
+            this.fieldHint('需年满 18 周岁')
+            Row() {
+              Text(this.birthday)
+                .fontSize(15)
+                .fontColor(COLOR_TEXT_TITLE)
+                .layoutWeight(1)
+              SymbolGlyph($r('sys.symbol.calendar'))
+                .fontSize(20)
+                .fontColor([COLOR_PRIMARY])
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
+            .backgroundColor(COLOR_CARD)
+            .borderRadius(12)
+            .border({ width: 1, color: COLOR_DIVIDER })
+            .onClick(() => this.pickBirthday())
+
+            this.fieldTitle('性别')
+            Row({ space: 10 }) {
+              this.genderChip('m', '男')
+              this.genderChip('f', '女')
+              this.genderChip('bot', '机器人')
+            }
+            .width('100%')
+
+            this.fieldTitle('密保问题一（用于找回账号）')
+            this.inputField('例如：我的出生地是？', this.question1, false, (v: string) => {
+              this.question1 = v;
+            })
+            this.inputField('答案', this.answer1, false, (v: string) => {
+              this.answer1 = v;
+            }, 10)
+            this.fieldTitle('密保问题二')
+            this.inputField('例如：我的小学是？', this.question2, false, (v: string) => {
+              this.question2 = v;
+            })
+            this.inputField('答案', this.answer2, false, (v: string) => {
+              this.answer2 = v;
+            }, 10)
+            this.fieldTitle('密保问题三')
+            this.inputField('例如：我最喜欢的食物是？', this.question3, false, (v: string) => {
+              this.question3 = v;
+            })
+            this.inputField('答案', this.answer3, false, (v: string) => {
+              this.answer3 = v;
+            }, 10)
+
+            Button(this.registering ? '注册中…' : '注册', { type: ButtonType.Normal })
+              .fontSize(16)
+              .fontColor(COLOR_WHITE)
+              .backgroundColor(this.registering ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+              .borderRadius(28)
+              .height(56)
               .width('100%')
-              .textAlign(TextAlign.Center)
-              .margin({ top: 12, bottom: 40 })
+              .margin({ top: 24 })
+              .enabled(!this.registering)
+              .onClick(() => {
+                this.doRegister();
+              })
+            if (this.registerError.length > 0) {
+              Text(this.registerError)
+                .fontSize(13)
+                .fontColor(COLOR_LOGOUT_TEXT)
+                .width('100%')
+                .textAlign(TextAlign.Center)
+                .margin({ top: 12, bottom: 40 })
+            }
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
+          .padding({
+            left: 24, right: 24,
+            top: this.topSafeHeight + (this.gateMode ? 0 : 56),
+            bottom: this.bottomSafeHeight + 24
+          })
         }
-        .width('100%')
-        .justifyContent(FlexAlign.Start)
-        .padding({
-          left: 24, right: 24,
-          top: this.topSafeHeight + (this.gateMode ? 0 : 56),
-          bottom: this.bottomSafeHeight + 24
-        })
-      }
-      .width('100%').height('100%')
-      .align(Alignment.Top)
+        .width('100%').height('100%')
+        .align(Alignment.Top)
+        .clip(false)
       .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      }
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .titleBar(navigationBlurTitleBar((): void => { this.navigationHeaderSlot(); }))
+      .hideTitleBar(this.gateMode)
+      .hideBackButton(true)
+      .bindToScrollable([this.scroller])
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+      .width('100%')
+      .height('100%')
+      .backgroundColor(COLOR_CARD)
+
+      if (!this.gateMode) {
+        GlassNavigationHeader({ title: '注册', onBack: (): void => this.backToLogin() })
+          .position({ x: 0, y: this.topSafeHeight })
+          .zIndex(2)
+      }
     }
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .titleBar(this.immersiveTitleBar('注册'))
-    .hideTitleBar(this.gateMode)
-    .hideBackButton(this.gateMode)
-    .bindToScrollable([this.scroller])
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-    .width('100%')
-    .height('100%')
+    .width('100%').height('100%')
     .backgroundColor(COLOR_CARD)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 }
