@@ -138,7 +138,7 @@
 ## 源码运行
 
 1. 安装 DevEco Studio，并在 SDK Manager 中安装 HarmonyOS SDK API 26 或更新版本。
-2. 将 `build-profile.json5.example` 复制为本机的 `build-profile.json5`，并在 DevEco Studio 中配置自己的签名材料；该文件已被 Git 忽略。
+2. 将 `build-profile.json5.example` 复制为本机的 `build-profile.json5`，并在 DevEco Studio 中配置自己的签名材料。
 3. 使用 DevEco Studio 打开项目根目录，选择 `entry` 模块和已连接设备或模拟器后运行。
 
 也可以在 PowerShell 中构建：
