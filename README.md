@@ -15,7 +15,7 @@
 
 哔咔漫画的 HarmonyOS NEXT 第三方客户端，使用 ArkTS 与 ArkUI 原生构建。
 
-学习ArkTS/ArkUI的练手项目，如果觉得项目有帮助，欢迎**star**⭐支持。
+学习ArkTS/ArkUI的练手项目，如果觉得项目有帮助，欢迎**star**支持。
 
 ## 界面预览
 
