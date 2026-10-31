@@ -12,6 +12,7 @@ import { ApiService } from '../network/ApiService';
 import { WidgetData } from '../common/WidgetData';
 import { WidgetExtraData } from '../common/WidgetExtraData';
 import { DownloadManager } from '../common/DownloadManager';
+import { FollowUpdateManager } from '../common/FollowUpdateManager';
 
 const DOMAIN = 0x0000;
 
@@ -80,14 +81,26 @@ export default class EntryAbility extends UIAbility {
     ApiService.registerLogoutCleanup((): void => {
       // 退出登录时清掉主应用进程内缓存的旧作品信息（卡片内存态）
       WidgetData.resetMemo();
+      FollowUpdateManager.getInstance().reset();
       hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'logout cleanup: WidgetData.resetMemo done');
     });
     let authCache: CacheManager = CacheManager.initSync(this.context);
-    let bootTokenPresent: boolean = authCache.getToken().length > 0;
-    let bootTokenInvalid: boolean = authCache.isTokenInvalid();
-    let bootLoggedIn: boolean = bootTokenPresent && !bootTokenInvalid;
+    authCache.migrateAuthStorage();
+    FollowUpdateManager.getInstance().initialize(this.context);
+    let bootTokenPresent: boolean = false;
+    let bootTokenInvalid: boolean = false;
+    let bootLoggedIn: boolean = false;
     // 同步句柄就绪才算「登录态已确定」；未就绪则由下面的异步复检置位
-    let bootResolved: boolean = authCache.isReady();
+    let bootResolved: boolean = false;
+    try {
+      const saved = authCache.getAuthCredentials();
+      bootTokenPresent = saved.token.length > 0;
+      bootTokenInvalid = saved.tokenInvalid;
+      bootLoggedIn = bootTokenPresent && !bootTokenInvalid;
+      bootResolved = authCache.isReady();
+    } catch (_err) {
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Secure credentials unavailable; auth state remains unresolved.');
+    }
     AppStorage.setOrCreate('isLoggedIn', bootLoggedIn);
     AppStorage.setOrCreate('auth_resolved', bootResolved);
     // 顺序打点：证明同步置位发生在页面首帧之前（只打印布尔与时间戳，不打印令牌内容）
@@ -379,6 +392,7 @@ export default class EntryAbility extends UIAbility {
   onDestroy(): void {
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onDestroy');
     // 释放共享 HTTP 连接池
+    FollowUpdateManager.getInstance().release();
     BikaHttpClient.destroySharedRequest();
   }
 
@@ -558,6 +572,13 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Ability onForeground');
+    CacheManager.getInstance(this.context).then(async (cache: CacheManager): Promise<void> => {
+      cache.migrateAuthStorage();
+      await ApiService.getInstance().resolveAuthState();
+      FollowUpdateManager.getInstance().checkForUpdates();
+    }).catch((_err: Error): void => {
+      hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'Foreground auth retry deferred.');
+    });
   }
 
   onBackground(): void {

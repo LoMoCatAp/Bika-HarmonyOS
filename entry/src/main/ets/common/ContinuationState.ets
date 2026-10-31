@@ -52,6 +52,8 @@ export interface ContinuationRouteParams {
   tab?: number;
   /** SearchResultPage：关键词 */
   keyword?: string;
+  /** SearchResultPage：保留作者/标签/分类检索类型，旧版本缺省为关键词。 */
+  searchKind?: string;
 }
 
 /** 当前页面描述符 */

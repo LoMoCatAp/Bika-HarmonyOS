@@ -16,6 +16,7 @@ import {
   BikaKnightUser,
   BikaComment,
   BikaNotification,
+  ComicSearchKind,
   toNum
 } from '../models/Comic';
 
@@ -91,6 +92,7 @@ export class ApiService {
   private static appContext: Context | null = null;
   /** 登录态是否已完成「读取凭据 + 首次有效性判定」 */
   private authResolved: boolean = false;
+  private authMutationId: number = 0;
   /** 首次登录态判定单飞 Promise */
   private authResolvePromise: Promise<void> | null = null;
   /** 退出登录后的清理钩子（卡片内存态等）。
@@ -179,11 +181,19 @@ export class ApiService {
   }
 
   private constructor() {
+    if (ApiService.appContext === null) {
+      // 独立卡片进程只接收调用方注入的安全 Token，不加载密码、不写凭据。
+      return;
+    }
     // ① 优先走「同步已就绪」的偏好库：EntryAbility.onCreate 已 CacheManager.initSync(context)，
     //    凭据在任何 UI 首帧之前就绪，isLoggedIn 初值不再依赖异步回调（修复冷启动先显示未登录）。
     let ready: CacheManager | null = CacheManager.getInstanceIfReady();
     if (ready !== null) {
-      this.applyCredentials(ready);
+      try {
+        this.applyCredentials(ready);
+      } catch (_err) {
+        console.info('[BikaAuth] secure credentials temporarily unavailable');
+      }
       return;
     }
     // ② 卡片等非 UI 进程：没有有效 context，绝不调用无参 getInstance()（其全局
@@ -208,9 +218,10 @@ export class ApiService {
 
   /** 从同步可用的偏好库读入凭据（不打印任何令牌内容） */
   private applyCredentials(cache: CacheManager): void {
-    this.token = cache.getToken();
-    this.email = cache.getEmail();
-    this.password = cache.getPassword();
+    const saved = cache.getAuthCredentials();
+    this.token = saved.tokenInvalid ? '' : saved.token;
+    this.email = saved.email;
+    this.password = saved.password;
   }
 
   /** 取偏好库：优先同步已就绪的句柄，其次用注入的 AbilityContext 异步打开 */
@@ -243,13 +254,20 @@ export class ApiService {
    *  - 令牌存在且未被服务端标记失效 → 已登录；
    *  - 令牌缺失 / 已被 401、1005 标记失效 → 未登录，并把 isLoggedIn 置回 false；
    *  - IO / 网络异常不改判（异常不等同于令牌失效），保留同步初值。
-   * 无论结果如何都会置位 auth_resolved，供 UI 决定能否渲染确定性未登录态。
+   * 安全存储暂不可访问时保持未确定，回前台重试，避免误弹登录门。
    */
   async resolveAuthState(): Promise<void> {
+    if (this.authResolved) {
+      return;
+    }
     if (this.authResolvePromise === null) {
       this.authResolvePromise = this.doResolveAuthState();
     }
-    await this.authResolvePromise;
+    try {
+      await this.authResolvePromise;
+    } finally {
+      this.authResolvePromise = null;
+    }
   }
 
   private async doResolveAuthState(): Promise<void> {
@@ -257,27 +275,19 @@ export class ApiService {
       let cache: CacheManager | null = await this.obtainCache();
       if (cache !== null) {
         // 异步凭据恢复：同步路径已就绪时为幂等复核，同步路径失败时是兜底来源
-        if (this.token.length === 0) {
-          this.token = cache.getToken();
-        }
-        if (this.email.length === 0) {
-          this.email = cache.getEmail();
-        }
-        if (this.password.length === 0) {
-          this.password = cache.getPassword();
-        }
+        this.applyCredentials(cache);
         // 首次有效性判定：令牌存在，且未被服务端判定失效
         let valid: boolean = this.token.length > 0 && !cache.isTokenInvalid();
         if (!valid) {
           this.token = '';
         }
         ApiService.setAppStorageBool('isLoggedIn', valid);
+        this.authResolved = true;
       }
     } catch (err) {
       console.info('[BikaAuth] 凭据复检跳过: ' + JSON.stringify(err));
     } finally {
-      this.authResolved = true;
-      ApiService.setAppStorageBool('auth_resolved', true);
+      ApiService.setAppStorageBool('auth_resolved', this.authResolved);
       let logged: boolean = false;
       try {
         logged = AppStorage.get<boolean>('isLoggedIn') === true;
@@ -298,9 +308,17 @@ export class ApiService {
       return;
     }
     this.token = '';
+    if (ApiService.appContext === null) {
+      // 卡片请求失败只影响本进程，不清除主应用的有效登录态。
+      return;
+    }
     let cache: CacheManager | null = CacheManager.getInstanceIfReady();
     if (cache !== null) {
-      cache.markTokenInvalid();
+      try {
+        cache.markTokenInvalid();
+      } catch (_err) {
+        console.warn('[BikaAuth] rejected-token persistence deferred');
+      }
     }
     this.authResolved = true;
     ApiService.setAppStorageBool('isLoggedIn', false);
@@ -352,6 +370,7 @@ export class ApiService {
    * @returns token
    */
   async signIn(email: string, password: string): Promise<string> {
+    const mutation = ++this.authMutationId;
     // 冷窗口等待：保证 sign-in 是哔咔低频窗口内第 1 个请求（否则必撞 1023）
     let wait = ApiService.lastApiRequestAt + ApiService.SIGNIN_COOLDOWN_MS - Date.now();
     if (wait > 0) {
@@ -363,12 +382,14 @@ export class ApiService {
     if (!data || !data.token) {
       throw new Error('登录响应异常：未返回 token');
     }
+    let cache = await CacheManager.getInstance();
+    if (mutation !== this.authMutationId) {
+      throw new Error('登录操作已取消');
+    }
+    cache.saveAuth(email, password, data.token);
     this.token = data.token;
     this.email = email;
     this.password = password;
-    let cache = await CacheManager.getInstance();
-    cache.saveToken(this.token);
-    cache.saveCredentials(email, password);
     this.authResolved = true;
     ApiService.setAppStorageBool('isLoggedIn', true);
     ApiService.setAppStorageBool('auth_resolved', true);
@@ -379,11 +400,12 @@ export class ApiService {
    * 退出登录
    */
   async logout(): Promise<void> {
+    this.authMutationId++;
+    let cache = await CacheManager.getInstance();
+    cache.clearAuth();
     this.token = '';
     this.email = '';
     this.password = '';
-    let cache = await CacheManager.getInstance();
-    cache.clearAuth();
     // 清空卡片离线降级会读到的历史 / 进度 / 卡片缓存快照，
     // 否则退出登录后桌面仍显示上一账号的作品名、进度、封面与收藏。
     // 只删与账号阅读数据相关的键，其它用户设置保持不变。
@@ -409,19 +431,33 @@ export class ApiService {
    * @returns 是否重登成功
    */
   private ensureRelogin(): Promise<boolean> {
+    if (ApiService.appContext === null) {
+      return Promise.resolve(false);
+    }
     if (!this.reloginPromise) {
+      const mutation = this.authMutationId;
+      const email = this.email;
+      const password = this.password;
       this.reloginPromise = (async (): Promise<boolean> => {
         try {
-          if (this.email.length === 0 || this.password.length === 0) {
+          if (email.length === 0 || password.length === 0) {
             return false;
           }
           console.info('[ApiService] token 失效，自动重新登录');
-          let body = JSON.stringify({ email: this.email, password: this.password });
+          let body = JSON.stringify({ email: email, password: password });
           let data = await this.request<BikaSignInData>('auth/sign-in', 'POST', body, false);
           if (data && data.token) {
-            this.token = data.token;
             let cache = await CacheManager.getInstance();
-            cache.saveToken(this.token);
+            if (mutation !== this.authMutationId || email !== this.email || password !== this.password) {
+              return false;
+            }
+            try {
+              cache.saveAuth(email, password, data.token);
+            } catch (_err) {
+              // 服务端已登录成功时继续使用内存新令牌；旧安全凭据保留供下次自动重登。
+              console.warn('[BikaAuth] renewed-token persistence deferred');
+            }
+            this.token = data.token;
             return true;
           }
           return false;
@@ -584,8 +620,12 @@ export class ApiService {
    */
   async getKeywords(): Promise<string[]> {
     let data = await this.request<Record<string, Object>>('keywords', 'GET', null, true);
-    let keywords = data['keywords'] as string[];
-    return keywords || [];
+    if (data === null || data === undefined || !Array.isArray(data['keywords'])) {
+      return [];
+    }
+    const keywords = data['keywords'] as string[];
+    return Array.from(new Set<string>(keywords.filter((value: string): boolean => typeof value === 'string')
+      .map((value: string): string => value.trim()).filter((value: string): boolean => value.length > 0)));
   }
 
   /**
@@ -596,6 +636,25 @@ export class ApiService {
     let body = JSON.stringify({ keyword: keyword, sort: sort, categories: [] });
     let data = await this.request<Record<string, Object>>(
       'comics/advanced-search?page=' + page, 'POST', body, true);
+    return ApiService.pickPage(data);
+  }
+
+  /** 作者入口与手动输入共用高级搜索，标签和分类使用各自筛选。 */
+  async searchComics(keyword: string, sort: string, page: number, kind: ComicSearchKind = 'keyword'): Promise<ComicsPageResult> {
+    const value = keyword.trim();
+    if (value.length === 0) {
+      return { comics: [], pages: 0 };
+    }
+    if (kind === 'keyword' || kind === 'author') {
+      // 参考客户端的作者点击也走 advancedSearch；a=作者名 对部分作者无法得到可展示结果。
+      return this.advancedSearch(value, sort, page);
+    }
+    if (kind === 'category') {
+      return this.getComics(value, sort, page);
+    }
+    const data = await this.request<Record<string, Object>>(
+      'comics?page=' + page + '&s=' + encodeURIComponent(sort) + '&t=' + encodeURIComponent(value),
+      'GET', null, true);
     return ApiService.pickPage(data);
   }
 
@@ -836,6 +895,7 @@ export class ApiService {
     body: string | null,
     allowRelogin: boolean
   ): Promise<T> {
+    const authMutation = this.authMutationId;
     // 默认直连池立即可用；init 引导后台异步刷新（非阻塞）
     ApiRouteManager.getInstance().ensureInitialized();
 
@@ -848,9 +908,13 @@ export class ApiService {
 
     let lastErr: Error | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
+      const requestToken = this.token;
       // 记录真实发请求时间（sign-in 冷窗口依据）
       ApiService.lastApiRequestAt = Date.now();
-      let headers = await BikaSigner.buildHeaders(path, method, this.token);
+      let headers = await BikaSigner.buildHeaders(path, method, requestToken);
+      if (allowRelogin && authMutation !== this.authMutationId) {
+        throw new Error('登录状态已变化，请重试');
+      }
       // 只记录方法与路径，便于定位请求；time / nonce / signature 属签名敏感信息，禁止打印
       console.debug('[ApiService] ' + method + ' ' + path);
 
@@ -913,10 +977,21 @@ export class ApiService {
       }
 
       // HTTP 401：TokenAuthenticator 语义 —— 重登一次并重放（sign-in 自身不重登）
+      if (allowRelogin && authMutation !== this.authMutationId) {
+        throw new Error('登录状态已变化，请重试');
+      }
       if (resp.responseCode === 401 && allowRelogin) {
-        let ok = await this.ensureRelogin();
-        if (ok && attempt === 0) {
-          continue;
+        if (attempt === 0) {
+          if (requestToken !== this.token && this.token.length > 0) {
+            continue;
+          }
+          const ok = await this.ensureRelogin();
+          if (authMutation !== this.authMutationId) {
+            throw new Error('登录状态已变化，请重试');
+          }
+          if (ok) {
+            continue;
+          }
         }
         // 服务端明确拒绝且无法自动重登：令牌失效，登录态置回未登录并落盘失效标记
         this.handleTokenRejected();
@@ -937,11 +1012,21 @@ export class ApiService {
 
       // 信封内的 code 可能是数字或字符串
       let code = Number(envelope.code);
-      if (code === 401 && allowRelogin) {
-        let ok = await this.ensureRelogin();
-        if (ok && attempt === 0) {
-          continue;
+      if ((code === 401 || code === 1005) && allowRelogin) {
+        if (attempt === 0) {
+          if (requestToken !== this.token && this.token.length > 0) {
+            continue;
+          }
+          const ok = await this.ensureRelogin();
+          if (authMutation !== this.authMutationId) {
+            throw new Error('登录状态已变化，请重试');
+          }
+          if (ok) {
+            continue;
+          }
         }
+        this.handleTokenRejected();
+        throw new Error(ERROR_MESSAGES['1005']);
       }
       if (code !== 200) {
         let msg = envelope.message || '';
@@ -962,10 +1047,6 @@ export class ApiService {
         }
         console.error('[ApiService] 请求失败 path=' + path + ' code=' + envelope.code + ' message=' + envelope.message);
         let key = String(envelope.code);
-        // 业务码鉴权失败（401 / 1005 登录已过期）：令牌已失效，置回未登录并落盘
-        if (allowRelogin && (code === 401 || key === '1005')) {
-          this.handleTokenRejected();
-        }
         let friendly = ERROR_MESSAGES[key];
         if (!friendly && envelope.error && envelope.error.length > 0) {
           friendly = ERROR_MESSAGES[String(envelope.error)];

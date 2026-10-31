@@ -2,6 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from './CacheManager';
+import { CredentialStore } from './CredentialStore';
 import { BikaComicSummary, buildImageUrl } from '../models/Comic';
 import { WidgetCover, WidgetCoverBundle, WidgetCoverFormData, WidgetCoverRequest } from './WidgetCover';
 import { WidgetData } from './WidgetData';
@@ -19,7 +20,7 @@ import { WidgetData } from './WidgetData';
  *
  * 统一约束：
  * - 所有网络请求 3.5 秒超时，超时立即返回安全默认值；
- * - 未登录（preferences 里没有 auth_token）不发任何网络请求，直接读本地缓存；
+ * - 安全存储没有 Token 或暂不可读时不发网络请求，直接读本地缓存；
  * - 所有异常都被吞掉并返回安全默认值（空列表 / 上次缓存），绝不向上抛异常；
  * - 网络失败时回退到本类写入的本地缓存（setting_widget_extra_*_json）；
  * - 封面走 common/WidgetCover.ets：下载到沙箱 → fd → formImages，
@@ -71,7 +72,6 @@ export class WidgetRecommendFormData extends WidgetCoverFormData {
 
 export class WidgetExtraData {
   private static readonly PREF_NAME: string = 'BikaCache';
-  private static readonly KEY_TOKEN: string = 'auth_token';
   private static readonly PREFIX_SETTING: string = 'setting_';
 
   /** 本地列表缓存 key（写入 setting_ 前缀下） */
@@ -140,11 +140,7 @@ export class WidgetExtraData {
   /** 登录令牌（空串 = 未登录，任何网络请求都不发） */
   private static readToken(ctx?: Context): string {
     try {
-      let prefs = WidgetExtraData.openPrefsSync(ctx);
-      if (prefs === null) {
-        return '';
-      }
-      return WidgetExtraData.readString(prefs, WidgetExtraData.KEY_TOKEN, '');
+      return CredentialStore.readWidgetToken();
     } catch (err) {
       return '';
     }

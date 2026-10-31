@@ -240,6 +240,9 @@ struct ReaderPage {
   async aboutToAppear(): Promise<void> {
     this.observeReaderInsets();
     let cache = await CacheManager.getInstance();
+    if (!this.readerWindowActive) {
+      return;
+    }
     const savedMode = cache.getSetting('reader_mode', '4');
     this.readingMode = /^[0-4]$/.test(savedMode) ? Number(savedMode) : 4;
     this.volumeTurnEnabled = cache.getSetting('reader_volume_turn', 'true') === 'true';
@@ -339,6 +342,7 @@ struct ReaderPage {
   private loadLocalChapter(): void {
     let task = DownloadManager.getInstance().hasTask(this.comicId, this.currentOrder);
     if (task !== undefined && task.status === 'completed') {
+      this.localMode = true;
       this.localDir = task.dir;
       this.localCount = task.total;
       this.loadLocalImages();
@@ -350,7 +354,14 @@ struct ReaderPage {
 
   /** 本地下载模式：直接读取本地图片文件 */
   private loadLocalImages(): void {
+    const generation = ++this.generation;
+    const comicId = this.comicId;
+    const order = this.currentOrder;
+    const title = this.comicTitle;
+    const cover = this.coverUrl;
+    const account = CacheManager.getInstanceIfReady()?.getEmail() ?? '';
     this.resetProgressControl();
+    this.errorText = '';
     let list: ReaderImage[] = [];
     this.candidateUrls = [];
     this.candidateIndex = [];
@@ -363,19 +374,38 @@ struct ReaderPage {
     this.swiperIndex = 0;
     this.isLoading = false;
     this.showControls = true;
+    if (list.length === 0) {
+      this.errorText = '本地章节没有可阅读的图片';
+      return;
+    }
     // 本地阅读同样记录进度与历史，并恢复上次阅读页
     CacheManager.getInstance().then(cache => {
-      cache.saveReadProgress(this.comicId, this.currentOrder);
-      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
+      if (!this.isCurrentChapterLoad(generation, comicId, order, account)) {
+        return;
+      }
+      cache.saveReadProgress(comicId, order);
+      cache.saveHistoryItem(comicId, title, order, cover);
       this.restoreLastPage(cache);
       this.publishCurrentReading();
+    }).catch((_err: Error): void => {
+      console.warn('[ReaderPage] local reading progress could not be saved');
     });
+  }
+
+  private isCurrentChapterLoad(generation: number, comicId: string, order: number, account: string): boolean {
+    return this.readerWindowActive && generation === this.generation
+      && comicId === this.comicId && order === this.currentOrder
+      && (CacheManager.getInstanceIfReady()?.getEmail() ?? '') === account;
   }
 
   private async loadImagesWithCache(): Promise<void> {
     this.resetProgressControl();
-    this.generation++;
-    let gen = this.generation;
+    const gen = ++this.generation;
+    const comicId = this.comicId;
+    const order = this.currentOrder;
+    const title = this.comicTitle;
+    const cover = this.coverUrl;
+    const account = CacheManager.getInstanceIfReady()?.getEmail() ?? '';
     this.isLoading = true;
     this.errorText = '';
     this.imageDataSource.reload([]);
@@ -385,8 +415,12 @@ struct ReaderPage {
 
     try {
       let cache = await CacheManager.getInstance();
-      let cached = cache.loadChapterPages(this.comicId, this.currentOrder);
+      if (!this.isCurrentChapterLoad(gen, comicId, order, account)) {
+        return;
+      }
+      let cached = cache.loadChapterPages(comicId, order);
       let docs: BikaPageDoc[] = [];
+      let fetched = false;
       if (cached) {
         try {
           docs = JSON.parse(cached) as BikaPageDoc[];
@@ -394,12 +428,15 @@ struct ReaderPage {
           docs = [];
         }
       }
-      if (!docs || docs.length === 0) {
-        docs = await this.apiService.getChapterPages(this.comicId, this.currentOrder);
-        cache.saveChapterPages(this.comicId, this.currentOrder, JSON.stringify(docs));
+      if (!Array.isArray(docs) || docs.length === 0) {
+        docs = await this.apiService.getChapterPages(comicId, order);
+        fetched = true;
       }
-      if (gen !== this.generation) {
+      if (!this.isCurrentChapterLoad(gen, comicId, order, account)) {
         return;
+      }
+      if (!Array.isArray(docs) || docs.length === 0) {
+        throw new Error('章节暂无可阅读的图片，请稍后重试');
       }
 
       let list: ReaderImage[] = [];
@@ -411,21 +448,25 @@ struct ReaderPage {
         this.candidateIndex.push(0);
         list.push({ url: candidates[0], failed: false });
       }
+      // 只提交仍属于当前话的完整结果，过期请求不能污染下一话的持久化缓存。
+      if (fetched) {
+        cache.saveChapterPages(comicId, order, JSON.stringify(docs));
+      }
       this.imageDataSource.reload(list);
       this.totalImages = list.length;
-      cache.saveReadProgress(this.comicId, this.currentOrder);
-      cache.saveHistoryItem(this.comicId, this.comicTitle, this.currentOrder, this.coverUrl);
+      cache.saveReadProgress(comicId, order);
+      cache.saveHistoryItem(comicId, title, order, cover);
       this.restoreLastPage(cache);
       this.publishCurrentReading();
     } catch (err) {
-      if (gen !== this.generation) {
+      if (!this.isCurrentChapterLoad(gen, comicId, order, account)) {
         return;
       }
       let errMsg = (err as Error).message || '加载图片失败，请重试';
       console.error('[ReaderPage] loadImages error:', errMsg);
       this.errorText = errMsg;
     } finally {
-      if (gen === this.generation) {
+      if (this.isCurrentChapterLoad(gen, comicId, order, account)) {
         this.isLoading = false;
       }
     }
@@ -486,11 +527,7 @@ struct ReaderPage {
     this.zoomScale = 1.0;
     this.isZoomed = false;
     this.scrollScroller.scrollEdge(Edge.Top);
-    if (this.localMode) {
-      this.loadLocalChapter();
-    } else {
-      this.loadImagesWithCache();
-    }
+    this.loadLocalChapter();
   }
 
   goNextChapter(): void {
@@ -504,11 +541,7 @@ struct ReaderPage {
     this.zoomScale = 1.0;
     this.isZoomed = false;
     this.scrollScroller.scrollEdge(Edge.Top);
-    if (this.localMode) {
-      this.loadLocalChapter();
-    } else {
-      this.loadImagesWithCache();
-    }
+    this.loadLocalChapter();
   }
 
   private onImageFailed(index: number): void {
@@ -753,18 +786,20 @@ struct ReaderPage {
     if (!this.progressMode) {
       return;
     }
-    this.progressDragging = false;
     if (commit && !this.progressCancelled) {
       const target = this.clampProgressPage(this.progressPage);
-      if (this.progressAppliedPage !== target && this.jumpToReaderPage(target)) {
+      if (this.progressAppliedPage === target || this.jumpToReaderPage(target)) {
         this.progressAppliedPage = target;
+        this.progressPage = target;
+      } else {
+        this.progressPage = this.currentReaderPage();
       }
-      this.progressPage = this.currentReaderPage();
       this.showPageTip(this.progressPage - 1);
     } else {
       this.progressPage = this.currentReaderPage();
       this.hidePageTip();
     }
+    this.progressDragging = false;
     this.scheduleProgressRestore();
   }
 
@@ -772,7 +807,7 @@ struct ReaderPage {
     if (!this.showControls || !this.progressMode || this.totalImages <= 1 || this.isLoading) {
       return;
     }
-    if (this.progressCancelled && mode !== SliderChangeMode.Begin) {
+    if (this.progressCancelled && mode !== SliderChangeMode.Begin && mode !== SliderChangeMode.Click) {
       return;
     }
     this.progressPage = this.clampProgressPage(value);
@@ -787,13 +822,9 @@ struct ReaderPage {
     } else if (mode === SliderChangeMode.End) {
       this.finishProgressSeek(true);
     } else if (mode === SliderChangeMode.Click) {
-      if (this.progressTouching) {
-        this.progressDragging = true;
-        this.showPageTip(this.progressPage - 1, true);
-      } else {
-        this.progressAppliedPage = -1;
-        this.finishProgressSeek(true);
-      }
+      this.progressCancelled = false;
+      this.progressAppliedPage = -1;
+      this.finishProgressSeek(true);
     }
   }
 
@@ -806,16 +837,14 @@ struct ReaderPage {
       this.progressTouching = true;
       this.progressCancelled = false;
       this.progressAppliedPage = -1;
-      this.progressPage = this.currentReaderPage();
       this.progressDragging = true;
       this.showPageTip(this.progressPage - 1, true);
     } else if (event.type === TouchType.Up) {
       this.progressTouching = false;
-      if (this.progressDragging) {
-        this.finishProgressSeek(true);
-      } else {
-        this.scheduleProgressRestore();
-      }
+      // 原始 Up 可能早于 Slider.End，只有 End/Click 的最终值负责跳页。
+      this.progressDragging = false;
+      this.showPageTip(this.progressPage - 1);
+      this.scheduleProgressRestore();
     } else if (event.type === TouchType.Cancel) {
       this.progressTouching = false;
       this.progressCancelled = true;
@@ -1382,12 +1411,20 @@ struct ReaderPage {
     if (page < 0 || this.totalImages <= 0) {
       return;
     }
+    const comicId = this.comicId;
+    const order = this.currentOrder;
+    const account = CacheManager.getInstanceIfReady()?.getEmail() ?? '';
     CacheManager.getInstance().then(cache => {
-      cache.savePageProgress(this.comicId, this.currentOrder, page);
+      if (cache.getEmail() === account) {
+        cache.savePageProgress(comicId, order, page);
+      }
+    }).catch((_err: Error): void => {
+      console.warn('[ReaderPage] page progress could not be saved');
     });
   }
 
   aboutToDisappear(): void {
+    this.generation++;
     this.readerDownloadActionId++;
     this.downloadMenuVisible = false;
     this.resetProgressControl();
@@ -1683,7 +1720,7 @@ struct ReaderPage {
         if (this.progressMode) {
           Row() {
             Slider({
-              value: this.progressDragging ? this.progressPage : Math.max(1, this.currentReaderPage()),
+              value: this.progressPage,
               min: 1,
               max: Math.max(2, this.totalImages),
               step: 1,

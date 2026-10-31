@@ -1,12 +1,37 @@
 import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
+import { AuthCredentials, CredentialStore } from './CredentialStore';
+
+export interface ChapterUpdateChapter {
+  id: string;
+  order: number;
+}
+
+interface ChapterUpdateState {
+  epsCount: number;
+  /** 尚未拿到完整章节列表的新增段，按列表位置记录；-1 表示已解析。 */
+  pendingFromCount: number;
+  /** 已解析的未读更新，按章节 ID 保存，避免把话数当成列表下标。 */
+  chapters: ChapterUpdateChapter[];
+  /** 完整章节快照用于识别补发/插入章节；缺省兼容只有章节数的旧记录。 */
+  knownChapterIds?: string[];
+}
+
+interface FollowChapterSnapshot {
+  comicId: string;
+  epsCount: number;
+}
+
+interface FollowChapterState {
+  snapshots: FollowChapterSnapshot[];
+}
 
 /**
  * 本地缓存管理器
- * 基于 Preferences 实现数据持久化，减少网络请求
+ * 普通缓存使用 Preferences，登录凭据使用 Asset Store Kit。
  *
  * 缓存策略：
- * - 凭据：token、邮箱、密码（自动登录用）
+ * - 凭据：安全资产中的 Token、邮箱、密码（自动登录用）；兼容旧版无损迁移
  * - 分类列表：带 TTL 缓存
  * - 首页漫画：按 分类+排序 分 key 缓存，带 TTL
  * - 章节图片列表：长期缓存
@@ -19,6 +44,7 @@ export class CacheManager {
 
   private static instance: CacheManager | null = null;
   private prefs: preferences.Preferences | null = null;
+  private lastAuthSnapshot: AuthCredentials | null = null;
 
   private constructor() {
   }
@@ -108,33 +134,74 @@ export class CacheManager {
 
   // ─── 登录凭据 ───
 
+  getAuthCredentials(): AuthCredentials {
+    if (this.prefs === null) {
+      throw new Error('登录存储尚未就绪，请稍后重试');
+    }
+    try {
+      const saved = CredentialStore.read(this.prefs);
+      this.lastAuthSnapshot = saved;
+      return saved;
+    } catch (err) {
+      // 已成功恢复的会话在临时服务故障期间继续使用内存快照；冷启动无快照时保持未确定。
+      if (this.lastAuthSnapshot !== null) {
+        return this.lastAuthSnapshot;
+      }
+      throw err as Error;
+    }
+  }
+
+  /** 只迁移凭据，不更改阅读、下载、搜索或用户设置等其它数据。 */
+  migrateAuthStorage(): boolean {
+    return this.prefs !== null && CredentialStore.migrateLegacy(this.prefs);
+  }
+
+  isAuthReady(): boolean {
+    try {
+      this.getAuthCredentials();
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  /** 完整登录快照一次提交，防止账号、密码和 Token 出现半写入状态。 */
+  saveAuth(email: string, password: string, token: string): void {
+    if (this.prefs === null) {
+      throw new Error('登录存储尚未就绪，请稍后重试');
+    }
+    const saved: AuthCredentials = { email: email, password: password, token: token, tokenInvalid: false };
+    CredentialStore.save(this.prefs, saved);
+    this.lastAuthSnapshot = saved;
+  }
+
   saveToken(token: string): void {
-    this.put('auth_token', token);
-    // 新令牌尚未被服务端拒绝：清掉历史失效标记，避免下次冷启动同步判定被误判为未登录
-    this.put('auth_token_invalid', 'false');
+    const previous = this.getAuthCredentials();
+    this.saveAuth(previous.email, previous.password, token);
   }
 
   getToken(): string {
-    return this.getString('auth_token');
+    return this.getAuthCredentials().token;
   }
 
   saveCredentials(email: string, password: string): void {
-    this.put('auth_email', email);
-    this.put('auth_password', password);
+    this.saveAuth(email, password, this.getAuthCredentials().token);
   }
 
   getEmail(): string {
-    return this.getString('auth_email');
+    return this.getAuthCredentials().email;
   }
 
   getPassword(): string {
-    return this.getString('auth_password');
+    return this.getAuthCredentials().password;
   }
 
   clearAuth(): void {
-    this.prefs?.deleteSync('auth_token');
-    this.prefs?.deleteSync('auth_email');
-    this.prefs?.deleteSync('auth_password');
+    if (this.prefs === null) {
+      throw new Error('登录存储尚未就绪，请稍后重试');
+    }
+    CredentialStore.clear(this.prefs);
+    this.lastAuthSnapshot = { email: '', password: '', token: '', tokenInvalid: false };
     this.prefs?.deleteSync('auth_token_invalid');
     this.prefs?.flushSync();
   }
@@ -145,7 +212,7 @@ export class CacheManager {
    * 避免已知失效的令牌被当成已登录、先渲染已登录再闪回未登录。
    */
   isTokenInvalid(): boolean {
-    return this.getString('auth_token_invalid', 'false') === 'true';
+    return this.getAuthCredentials().tokenInvalid;
   }
 
   /**
@@ -153,8 +220,12 @@ export class CacheManager {
    * 与 clearAuth()（用户主动彻底退出登录）区分开。
    */
   markTokenInvalid(): void {
-    this.prefs?.deleteSync('auth_token');
-    this.put('auth_token_invalid', 'true');
+    const previous = this.getAuthCredentials();
+    if (this.prefs !== null) {
+      const saved: AuthCredentials = { email: previous.email, password: previous.password, token: '', tokenInvalid: true };
+      CredentialStore.save(this.prefs, saved);
+      this.lastAuthSnapshot = saved;
+    }
   }
 
   /**
@@ -181,6 +252,9 @@ export class CacheManager {
           || k.startsWith('history_time_')
           || k.startsWith('history_cover_')
           || k.startsWith('progress_')
+          || k.startsWith('read_chapters_')
+          || k.startsWith('chapter_updates_')
+          || k === 'setting_follow_update_state'
           || k.startsWith('page_')
           || k === 'setting_widget_recent_json'
           || k === 'setting_widget_extra_rank_json'
@@ -301,12 +375,16 @@ export class CacheManager {
   // ─── 搜索历史 ───
 
   saveSearchHistory(keyword: string): void {
+    const value = keyword.trim();
+    if (value.length === 0) {
+      return;
+    }
     let arr = this.loadSearchHistory();
-    let idx = arr.indexOf(keyword);
+    let idx = arr.indexOf(value);
     if (idx >= 0) {
       arr.splice(idx, 1);
     }
-    arr.unshift(keyword);
+    arr.unshift(value);
     if (arr.length > 20) {
       arr = arr.slice(0, 20);
     }
@@ -316,7 +394,12 @@ export class CacheManager {
   loadSearchHistory(): string[] {
     let raw = this.getString('search_history', '[]');
     try {
-      return JSON.parse(raw) as string[];
+      const history = JSON.parse(raw) as string[];
+      if (!Array.isArray(history)) {
+        return [];
+      }
+      return Array.from(new Set<string>(history.filter((value: string): boolean => typeof value === 'string')
+        .map((value: string): string => value.trim()).filter((value: string): boolean => value.length > 0))).slice(0, 20);
     } catch {
       return [];
     }
@@ -382,9 +465,157 @@ export class CacheManager {
 
   // ─── 阅读进度 ───
 
+  private loadChapterUpdateState(comicId: string): ChapterUpdateState | null {
+    const state = this.getObject<ChapterUpdateState>('chapter_updates_' + comicId);
+    if (state === null || !Number.isInteger(state.epsCount) || state.epsCount < 0
+      || !Number.isInteger(state.pendingFromCount) || state.pendingFromCount < -1
+      || (state.pendingFromCount >= 0 && state.pendingFromCount >= state.epsCount)
+      || (state.knownChapterIds !== undefined && (!Array.isArray(state.knownChapterIds)
+        || !state.knownChapterIds.every((id: string): boolean => typeof id === 'string' && id.length > 0)))
+      || !Array.isArray(state.chapters)
+      || !state.chapters.every((chapter: ChapterUpdateChapter): boolean => chapter !== null
+        && typeof chapter.id === 'string' && chapter.id.length > 0
+        && Number.isInteger(chapter.order) && chapter.order > 0)) {
+      return null;
+    }
+    return state;
+  }
+
+  /** 首次启用章节标记时，沿用已有追更检查基线，不把已有收藏全部标为更新。 */
+  private previousFollowChapterCount(comicId: string, fallback: number): number {
+    try {
+      const state = JSON.parse(this.getSetting('follow_update_state', 'null')) as FollowChapterState;
+      if (state !== null && Array.isArray(state.snapshots)) {
+        const comic = state.snapshots.find((snapshot: FollowChapterSnapshot): boolean =>
+          snapshot !== null && snapshot.comicId === comicId);
+        if (comic !== undefined && Number.isInteger(comic.epsCount) && comic.epsCount >= 0) {
+          return comic.epsCount;
+        }
+      }
+    } catch (_err) {
+      // 没有旧版追更快照时，首次成功检查仅建立基线。
+    }
+    return fallback;
+  }
+
+  /** 只按章节数增长生成新增段；计数回退时保留高水位，恢复后不重复标记。 */
+  recordChapterCount(comicId: string, count: number): void {
+    if (!comicId || !Number.isInteger(count) || count < 0) {
+      return;
+    }
+    const saved = this.loadChapterUpdateState(comicId);
+    const state: ChapterUpdateState = saved ?? {
+      epsCount: this.previousFollowChapterCount(comicId, count), pendingFromCount: -1, chapters: []
+    };
+    if (count > state.epsCount) {
+      if (state.pendingFromCount < 0) {
+        state.pendingFromCount = state.epsCount;
+      }
+      state.epsCount = count;
+    } else if (saved !== null) {
+      return;
+    }
+    this.putObject('chapter_updates_' + comicId, state);
+  }
+
+  /** 完整章节列表与详情计数一致才推进基线；未读更新保留到实际阅读。 */
+  getUpdatedChapterOrders(comicId: string, chapters: ChapterUpdateChapter[], expectedCount: number): number[] {
+    if (!comicId || !Number.isInteger(expectedCount) || expectedCount < 0) {
+      return [];
+    }
+    const ids = new Set<string>();
+    const orders = new Set<number>();
+    for (const chapter of chapters) {
+      if (!chapter.id || !Number.isInteger(chapter.order) || chapter.order <= 0
+        || ids.has(chapter.id) || orders.has(chapter.order)) {
+        return [];
+      }
+      ids.add(chapter.id);
+      orders.add(chapter.order);
+    }
+    const sorted = chapters.slice().sort((a: ChapterUpdateChapter, b: ChapterUpdateChapter): number => a.order - b.order);
+    const complete = chapters.length === expectedCount;
+    if (complete) {
+      this.recordChapterCount(comicId, expectedCount);
+    }
+    const state = this.loadChapterUpdateState(comicId);
+    if (state === null) {
+      return [];
+    }
+    const before = JSON.stringify(state);
+    const updatedIds = new Set<string>(state.chapters.map((chapter: ChapterUpdateChapter): string => chapter.id));
+    if (complete && chapters.length >= state.epsCount && state.pendingFromCount >= 0) {
+      const knownIds = state.knownChapterIds === undefined ? undefined : new Set<string>(state.knownChapterIds);
+      const added = knownIds === undefined ? sorted.slice(state.pendingFromCount, state.epsCount)
+        : sorted.filter((chapter: ChapterUpdateChapter): boolean => !knownIds.has(chapter.id));
+      for (const chapter of added) {
+        if (!updatedIds.has(chapter.id)) {
+          state.chapters.push({ id: chapter.id, order: chapter.order });
+          updatedIds.add(chapter.id);
+        }
+      }
+      state.pendingFromCount = -1;
+    }
+    if (complete && chapters.length >= state.epsCount) {
+      state.knownChapterIds = sorted.map((chapter: ChapterUpdateChapter): string => chapter.id);
+      state.chapters = state.chapters.filter((chapter: ChapterUpdateChapter): boolean => ids.has(chapter.id));
+    }
+    const readOrders = this.getReadChapters(comicId);
+    state.chapters = state.chapters.filter((chapter: ChapterUpdateChapter): boolean => readOrders.indexOf(chapter.order) < 0);
+    if (JSON.stringify(state) !== before) {
+      this.putObject('chapter_updates_' + comicId, state);
+    }
+    const remainingIds = new Set<string>(state.chapters.map((chapter: ChapterUpdateChapter): string => chapter.id));
+    return sorted.filter((chapter: ChapterUpdateChapter): boolean => remainingIds.has(chapter.id))
+      .map((chapter: ChapterUpdateChapter): number => chapter.order);
+  }
+
   saveReadProgress(comicId: string, order: number): void {
+    if (!comicId || !Number.isInteger(order) || order <= 0) {
+      return;
+    }
+    const chapters: number[] = this.getReadChapters(comicId);
+    if (chapters.indexOf(order) < 0) {
+      chapters.push(order);
+    }
+    this.putObject('read_chapters_' + comicId, chapters);
+    const updates = this.loadChapterUpdateState(comicId);
+    if (updates !== null && updates.chapters.some((chapter: ChapterUpdateChapter): boolean => chapter.order === order)) {
+      updates.chapters = updates.chapters.filter((chapter: ChapterUpdateChapter): boolean => chapter.order !== order);
+      this.putObject('chapter_updates_' + comicId, updates);
+    }
     this.put('progress_' + comicId, order.toString());
     this.put('history_time_' + comicId, Date.now().toString());
+  }
+
+  /** 逐章已读记录；旧版本只迁移有页级记录的章节与最后阅读章节，不推断前面的章节。 */
+  getReadChapters(comicId: string): number[] {
+    if (!comicId) {
+      return [];
+    }
+    const saved = this.getObject<number[]>('read_chapters_' + comicId);
+    if (saved !== null && Array.isArray(saved)) {
+      return saved.filter((order: number, index: number): boolean =>
+        Number.isInteger(order) && order > 0 && saved.indexOf(order) === index);
+    }
+    const chapters: number[] = [];
+    const last = this.getReadProgress(comicId);
+    if (Number.isInteger(last) && last > 0) {
+      chapters.push(last);
+    }
+    if (this.prefs !== null) {
+      const prefix = 'page_' + comicId + '_';
+      for (const key of Object.keys(this.prefs.getAllSync())) {
+        if (key.startsWith(prefix)) {
+          const order = Number(key.substring(prefix.length));
+          if (Number.isInteger(order) && order > 0 && chapters.indexOf(order) < 0) {
+            chapters.push(order);
+          }
+        }
+      }
+      this.putObject('read_chapters_' + comicId, chapters);
+    }
+    return chapters;
   }
 
   /** 页级进度：某话读到第几页 */

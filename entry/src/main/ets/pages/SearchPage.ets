@@ -5,6 +5,7 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { DetailGlassCapsule } from '../components/DetailGlassCapsule';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
+import { showImmersiveToast } from '../common/ImmersiveToast';
 import { publishContinuationRoute, ROUTE_SEARCH } from '../common/ContinuationState';
 import {
   COLOR_PRIMARY,
@@ -31,6 +32,7 @@ struct SearchPage {
   private searchScroller: Scroller = new Scroller();
   private apiService: ApiService = ApiService.getInstance();
   private stack: NavPathStack = new NavPathStack();
+  private openingSearch: boolean = false;
 
   aboutToAppear(): void {
     this.loadKeywords();
@@ -39,13 +41,15 @@ struct SearchPage {
 
   /** 应用接续：本页可见即发布「当前页面」 */
   onPageShow(): void {
+    this.openingSearch = false;
+    this.loadSearchHistory();
     publishContinuationRoute(ROUTE_SEARCH, {});
   }
 
   private loadSearchHistory(): void {
     CacheManager.getInstance().then(cache => {
       this.searchHistory = cache.loadSearchHistory();
-    });
+    }).catch((_err: Error): void => { console.warn('[SearchPage] history unavailable'); });
   }
 
   private saveSearchKeyword(): void {
@@ -63,7 +67,7 @@ struct SearchPage {
     CacheManager.getInstance().then(cache => {
       cache.clearSearchHistory();
       this.searchHistory = [];
-    });
+    }).catch((_err: Error): void => { console.warn('[SearchPage] history could not be cleared'); });
   }
 
   private async loadKeywords(): Promise<void> {
@@ -77,17 +81,21 @@ struct SearchPage {
   /** 执行搜索：保存历史并跳转独立的搜索结果页 */
   private goSearch(kw: string): void {
     let keyword = kw.trim();
-    if (keyword.length === 0) {
+    if (this.openingSearch || keyword.length === 0) {
       return;
     }
     this.keyword = keyword;
+    this.openingSearch = true;
     CacheManager.getInstance().then(cache => {
       cache.saveSearchHistory(keyword);
       this.searchHistory = cache.loadSearchHistory();
-    });
+    }).catch((_err: Error): void => { console.warn('[SearchPage] keyword history could not be saved'); });
     router.pushUrl({
       url: 'pages/SearchResultPage',
       params: { keyword: keyword }
+    }).catch((_err: Error): void => {
+      this.openingSearch = false;
+      showImmersiveToast({ message: '打开搜索失败，请重试', duration: 1600 });
     });
   }
 

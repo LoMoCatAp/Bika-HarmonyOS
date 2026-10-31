@@ -5,8 +5,9 @@ import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { systemShare } from '@kit.ShareKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
-import { ComicDetailViewModel, EpViewModel, ComicViewModel, BikaComicSummary, BikaComment, buildImageUrl } from '../models/Comic';
+import { ComicDetailViewModel, EpViewModel, ComicViewModel, ComicSearchKind, BikaComicSummary, BikaComment, buildImageUrl } from '../models/Comic';
 import { CacheManager } from '../common/CacheManager';
+import { ChapterUpdateBadge } from '../components/ChapterUpdateBadge';
 import { DownloadManager } from '../common/DownloadManager';
 import { publishContinuationRoute, ROUTE_COMIC_DETAIL } from '../common/ContinuationState';
 import { NetImage } from '../components/NetImage';
@@ -106,6 +107,8 @@ struct ComicDetailPage {
   @StorageProp('bika_color_mode') colorMode: string = 'system';
   @StorageProp('system_color_mode') systemColorMode: string = 'light';
   @State lastReadOrder: number = 0;
+  @State readChapterOrders: number[] = [];
+  @State updatedChapterOrders: number[] = [];
   @State detailTitleVisible: boolean = false;
   @State detailWidth: number = 360;
   @State detailTopInset: number = 0;
@@ -119,6 +122,8 @@ struct ComicDetailPage {
   private detailWindowSizeListener = (_size: window.Size): void => this.updateDetailInsets();
   private detailAvoidAreaListener = (_options: window.AvoidAreaOptions): void => this.updateDetailInsets();
   private comicId: string = '';
+  private detailRequestId: number = 0;
+  private openingMetadataSearch: boolean = false;
   private apiService: ApiService = ApiService.getInstance();
   private cacheManager: CacheManager | null = null;
   private detailScroller: Scroller = new Scroller();
@@ -128,6 +133,7 @@ struct ComicDetailPage {
 
   /** 应用接续：本页可见即发布「当前页面」（从阅读器返回时也会重新发布） */
   onPageShow(): void {
+    this.openingMetadataSearch = false;
     this.loadReadStatus();
     this.updateDetailInsets();
     publishContinuationRoute(ROUTE_COMIC_DETAIL, { comicId: this.comicId, comicTitle: this.comicTitle });
@@ -147,6 +153,7 @@ struct ComicDetailPage {
   }
 
   aboutToDisappear(): void {
+    this.detailRequestId++;
     this.commentRefreshContent?.dispose();
     this.commentRefreshContent = undefined;
     this.observingWindow = false;
@@ -253,13 +260,19 @@ struct ComicDetailPage {
   }
 
   async loadDetail(): Promise<void> {
+    const requestId = ++this.detailRequestId;
+    const comicId = this.comicId;
+    const account = this.cacheManager?.getEmail() ?? '';
     this.isLoading = true;
     this.errorMsg = '';
     try {
       let results = await Promise.all([
-        this.apiService.getComicDetail(this.comicId),
-        this.apiService.getAllEps(this.comicId)
+        this.apiService.getComicDetail(comicId),
+        this.apiService.getAllEps(comicId)
       ]);
+      if (!this.isCurrentDetailRequest(requestId, comicId, account)) {
+        return;
+      }
       this.comic = ComicDetailViewModel.fromDetail(results[0]);
       this.comicTitle = this.comic.title;
       this.isFavourited = !!results[0].isFavourite;
@@ -272,22 +285,46 @@ struct ComicDetailPage {
       this.chapters = eps;
       this.loadReadStatus();
       try {
-        let recs = await this.apiService.getRecommendationsFor(this.comicId);
+        let recs = await this.apiService.getRecommendationsFor(comicId);
         if (recs.length === 0) {
           // 推荐接口未返回时回退到「全部最新」列表，保证详情页始终有相关作品
           let fallback = await this.apiService.getComics('', 'dd', 1);
           recs = fallback.comics.slice(0, 10);
         }
-        this.recommendations = recs.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+        if (this.isCurrentDetailRequest(requestId, comicId, account)) {
+          this.recommendations = recs.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+        }
       } catch (recErr) {
         console.warn('[ComicDetailPage] recommendations failed: ' + JSON.stringify(recErr));
       }
     } catch (err) {
-      this.errorMsg = (err as Error).message || '加载失败';
-      console.error('[ComicDetailPage] loadDetail error: ' + this.errorMsg);
+      if (this.isCurrentDetailRequest(requestId, comicId, account)) {
+        this.errorMsg = (err as Error).message || '加载失败';
+        console.error('[ComicDetailPage] loadDetail error: ' + this.errorMsg);
+      }
     } finally {
-      this.isLoading = false;
+      if (this.isCurrentDetailRequest(requestId, comicId, account)) {
+        this.isLoading = false;
+      }
     }
+  }
+
+  private isCurrentDetailRequest(requestId: number, comicId: string, account: string): boolean {
+    return requestId === this.detailRequestId && comicId === this.comicId
+      && (this.cacheManager?.getEmail() ?? '') === account;
+  }
+
+  private openMetadataSearch(value: string, kind: ComicSearchKind): void {
+    const keyword = value.trim();
+    if (this.openingMetadataSearch || keyword.length === 0 || (kind === 'author' && keyword === '未知作者')) {
+      return;
+    }
+    this.openingMetadataSearch = true;
+    router.pushUrl({ url: 'pages/SearchResultPage', params: { keyword: keyword, searchKind: kind } })
+      .catch((_err: Error): void => {
+        this.openingMetadataSearch = false;
+        showImmersiveToast({ message: '打开搜索失败，请重试', duration: 1600 });
+      });
   }
 
   async loadComments(reset: boolean = true): Promise<void> {
@@ -514,6 +551,9 @@ struct ComicDetailPage {
       return;
     }
     this.lastReadOrder = this.cacheManager.getReadProgress(this.comicId);
+    this.readChapterOrders = this.cacheManager.getReadChapters(this.comicId);
+    this.updatedChapterOrders = this.comic === null ? []
+      : this.cacheManager.getUpdatedChapterOrders(this.comicId, this.chapters, this.comic.epsCount);
   }
 
   onChapterClick(ep: EpViewModel): void {
@@ -674,8 +714,13 @@ struct ComicDetailPage {
             .lineHeight(29)
           Text(this.comic.author)
             .fontSize(13)
-            .fontColor(COLOR_TEXT_SECONDARY)
+            .fontColor(this.comic.author === '未知作者' ? COLOR_TEXT_SECONDARY : COLOR_PRIMARY)
             .maxLines(2)
+            .decoration({ type: this.comic.author === '未知作者' ? TextDecorationType.None : TextDecorationType.Underline })
+            .enabled(this.comic.author !== '未知作者')
+            .accessibilityText('搜索作者：' + this.comic.author)
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.97 : 1 })
+            .onClick((): void => { this.openMetadataSearch(this.comic?.author ?? '', 'author'); })
           Text((this.comic.finished ? '已完结' : '连载中') + ' · 共 ' + this.chapters.length + ' 话')
             .fontSize(12)
             .fontColor(this.comic.finished ? COLOR_TEXT_HINT : COLOR_PRIMARY)
@@ -690,6 +735,23 @@ struct ComicDetailPage {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 20, right: 20, top: 12, bottom: 20 })
     }
+  }
+
+  @Builder
+  metadataSearchTag(value: string, kind: ComicSearchKind) {
+    Text(value)
+      .fontSize(12)
+      .fontColor(COLOR_PRIMARY)
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      .backgroundColor(COLOR_PRIMARY_TINT)
+      .borderRadius(10)
+      .margin({ right: 8, bottom: 8 })
+      .constraintSize({ maxWidth: '100%' })
+      .maxLines(2)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .accessibilityText((kind === 'category' ? '搜索分类：' : '搜索标签：') + value)
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.96 : 1 })
+      .onClick((): void => { this.openMetadataSearch(value, kind); })
   }
 
   @Builder
@@ -746,18 +808,24 @@ struct ComicDetailPage {
                   .lineHeight(23)
                   .width('100%')
               }
-              Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
-                ForEach(this.comic.categories, (cat: string): void => {
-                  Text(cat)
-                    .fontSize(12)
-                    .fontColor(COLOR_PRIMARY)
-                    .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                    .backgroundColor(COLOR_PRIMARY_TINT)
-                    .borderRadius(10)
-                    .margin({ right: 8, bottom: 8 })
-                }, (cat: string): string => cat)
+              if (this.comic.categories.length > 0) {
+                Text('分类').fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+                Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
+                  ForEach(this.comic.categories, (cat: string): void => {
+                    this.metadataSearchTag(cat, 'category')
+                  }, (cat: string): string => cat)
+                }
+                .width('100%')
               }
-              .width('100%')
+              if (this.comic.tags.length > 0) {
+                Text('标签').fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+                Flex({ wrap: FlexWrap.Wrap, direction: FlexDirection.Row }) {
+                  ForEach(this.comic.tags, (tag: string): void => {
+                    this.metadataSearchTag(tag, 'tag')
+                  }, (tag: string): string => tag)
+                }
+                .width('100%')
+              }
             }
             .width('100%')
             .alignItems(HorizontalAlign.Start)
@@ -780,6 +848,8 @@ struct ComicDetailPage {
                         this.recommendations = [];
                         this.comments = [];
                         this.lastReadOrder = 0;
+                        this.readChapterOrders = [];
+                        this.updatedChapterOrders = [];
                         this.detailTitleVisible = false;
                         this.detailScroller.scrollTo({ xOffset: 0, yOffset: 0 });
                         this.loadDetail();
@@ -931,14 +1001,16 @@ struct ComicDetailPage {
             Column({ space: 2 }) {
               Text(ep.title)
                 .fontSize(15)
-                .fontColor(this.lastReadOrder >= ep.order ? COLOR_TEXT_SECONDARY : COLOR_TEXT_TITLE)
+                .fontColor(this.readChapterOrders.indexOf(ep.order) >= 0 ? COLOR_TEXT_SECONDARY : COLOR_TEXT_TITLE)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
 
-            if (this.lastReadOrder >= ep.order) {
+            if (this.updatedChapterOrders.indexOf(ep.order) >= 0) {
+              ChapterUpdateBadge()
+            } else if (this.readChapterOrders.indexOf(ep.order) >= 0) {
               Text('已读')
                 .fontSize(11)
                 .fontColor(COLOR_PRIMARY)

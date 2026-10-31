@@ -1,5 +1,19 @@
 import { IMAGE_HOST_POOL } from '../common/Constants';
 
+export type ComicSearchKind = 'keyword' | 'author' | 'tag' | 'category';
+
+export function normalizeComicSearchKind(value: string | undefined): ComicSearchKind {
+  return value === 'author' || value === 'tag' || value === 'category' ? value : 'keyword';
+}
+
+function uniqueMetadataLabels(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return Array.from(new Set<string>(values.filter((value: string): boolean => typeof value === 'string')
+    .map((value: string): string => value.trim()).filter((value: string): boolean => value.length > 0)));
+}
+
 /**
  * 哔咔数据模型
  * 原始接口（Bika* 前缀，对应服务端 JSON 字段，snake_case 保持原样）
@@ -141,7 +155,7 @@ export interface BikaUserProfile {
 
 /** 漫画是否命中屏蔽标签（标签列表从 AppStorage 读取，实时生效） */
 export function isBlockedComic(tags: string[] | undefined): boolean {
-  if (!tags || tags.length === 0) {
+  if (!Array.isArray(tags) || tags.length === 0) {
     return false;
   }
   let raw = AppStorage.get<string>('bika_blocked_tags') ?? '[]';
@@ -151,7 +165,7 @@ export function isBlockedComic(tags: string[] | undefined): boolean {
   } catch {
     blocked = [];
   }
-  if (blocked.length === 0) {
+  if (!Array.isArray(blocked) || blocked.length === 0) {
     return false;
   }
   for (let t of tags) {
@@ -200,6 +214,7 @@ export class ComicViewModel {
  */
 export class ComicDetailViewModel extends ComicViewModel {
   description: string = '';
+  tags: string[] = [];
   chineseTeam: string = '';
   updated_at: string = '';
 
@@ -207,8 +222,9 @@ export class ComicDetailViewModel extends ComicViewModel {
     let vm = new ComicDetailViewModel();
     vm.id = detail._id;
     vm.title = detail.title;
-    vm.author = detail.author || '未知作者';
-    vm.categories = detail.categories || [];
+    vm.author = detail.author?.trim() || '未知作者';
+    vm.categories = uniqueMetadataLabels(detail.categories);
+    vm.tags = uniqueMetadataLabels(detail.tags);
     vm.finished = !!detail.finished;
     vm.epsCount = toNum(detail.epsCount);
     vm.pagesCount = toNum(detail.pagesCount);

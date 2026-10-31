@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
 import { CacheManager } from './CacheManager';
+import { CredentialStore } from './CredentialStore';
 import { ApiService } from '../network/ApiService';
 import { BikaComicSummary, buildImageUrl } from '../models/Comic';
 import { WidgetCover, WidgetCoverBundle, WidgetCoverFormData, WidgetCoverRequest } from './WidgetCover';
@@ -81,7 +82,6 @@ export class WidgetRecentFormData extends WidgetCoverFormData {
 export class WidgetData {
   private static readonly PREF_NAME: string = 'BikaCache';
   private static readonly KEY_HISTORY_IDS: string = 'history_ids';
-  private static readonly KEY_TOKEN: string = 'auth_token';
   private static readonly PREFIX_HISTORY_TITLE: string = 'history_title_';
   private static readonly PREFIX_HISTORY_ORDER: string = 'history_order_';
   private static readonly PREFIX_HISTORY_TIME: string = 'history_time_';
@@ -675,10 +675,11 @@ export class WidgetData {
     // 这里先用卡片自身有效的 context 预热 CacheManager 单例，ApiService 随后复用同一实例，
     // 凭据恢复走正常路径；token 仍由下面的 syncToken 无条件覆盖兜底。
     await WidgetData.warmCache(ctx);
-    let prefs = WidgetData.openPrefsSync(ctx);
     let token: string = '';
-    if (prefs !== null) {
-      token = WidgetData.readString(prefs, WidgetData.KEY_TOKEN, '');
+    try {
+      token = CredentialStore.readWidgetToken();
+    } catch (_err) {
+      // 安全存储暂不可用时清空进程内旧令牌，并使用本地内容降级。
     }
     // 卡片进程里 ApiService 自己是拿不到令牌的（构造函数依赖 getContext()），这里显式覆盖同步：
     // 即使令牌为空也要同步（清空旧值），否则卡片进程跨登出存活时会继续用上一账号的令牌请求。

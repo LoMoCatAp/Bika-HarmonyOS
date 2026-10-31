@@ -1,17 +1,19 @@
 import { router, display, promptAction, curves, ComponentContent } from '@kit.ArkUI';
 import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ConfigurationConstant, common } from '@kit.AbilityKit';
 import { ApiService, ComicsPageResult } from '../network/ApiService';
+import { AppUpdateService } from '../network/AppUpdateService';
 import { ComicViewModel, buildImageUrl, BikaComicSummary, BikaNotification, BikaComment, BikaComicDetail } from '../models/Comic';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import { DetailGlassCapsule } from '../components/DetailGlassCapsule';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
+import { ChannelControlCapsule } from '../components/ChannelControlCapsule';
 import { navigationBlurStyle, navigationBlurTitleBar } from '../common/NavigationBlur';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
+import { FollowUpdateManager } from '../common/FollowUpdateManager';
 import {
   publishContinuationRoute,
   CONTINUATION_PROFILE_SUBPAGE_KEY,
@@ -73,6 +75,8 @@ function homeRefreshPlaceholder() {
 // 首页 — 频道网格
 @Component
 struct HomePage {
+  /** 由根页协调底栏收起与频道路由，避免频道与子页显隐各走一套。 */
+  onOpenChannel: (label: string, kind: string) => void = (): void => {};
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('bika_animations') animationsOn: boolean = true;
@@ -507,10 +511,7 @@ struct HomePage {
                     showImmersiveToast({ message: '该功能已下线', duration: 1600 });
                     return;
                   }
-                  router.pushUrl({
-                    url: 'pages/ChannelListPage',
-                    params: { label: ch.label, kind: ch.kind }
-                  });
+                  this.onOpenChannel(ch.label, ch.kind);
                 })
               }
             }, (ch: BikaChannel) => ch.label)
@@ -1100,6 +1101,16 @@ interface MdRun {
 
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.5.0',
+    date: '2026-10-31',
+    items: [
+      '新增收藏追更通知与章节「有更新」标记。',
+      '支持点击作者、标签和分类搜索，优化收藏页沉浸光感。',
+      '修复已读标记、阅读进度滑条、底部导航及检查更新问题。',
+      '登录凭据改用系统安全存储，兼容旧版数据迁移。'
+    ]
+  },
     {
     version: '1.4.7',
     date: '2026-10-29',
@@ -1474,6 +1485,8 @@ struct ProfilePage {
   @State favPage: number = 1;
   @State favHasMore: boolean = false;
   @State favLoading: boolean = false;
+  private favRequestId: number = 0;
+  private readonly favouritesControlsHeight: number = 52;
   @State notifications: BikaNotification[] = [];
   @State notifLoading: boolean = false;
   @State myComments: BikaComment[] = [];
@@ -1485,6 +1498,8 @@ struct ProfilePage {
   @State downloadConcurrent: number = 1;
   /** 常规设置 */
   @State autoPunch: boolean = false;
+  @State followUpdates: boolean = false;
+  @State followUpdatesBusy: boolean = false;
   @State secureScreen: boolean = false;
   /** 桌面卡片设置（与 CacheManager 的 setting_ 前缀约定一致） */
   @State widgetShowRealData: boolean = true;
@@ -1551,6 +1566,7 @@ struct ProfilePage {
   ];
 
   aboutToAppear(): void {
+    this.stack.setInterception({ didShow: (): void => this.syncSubpageState() });
     AppStorage.set('isLoggedIn', this.apiService.isLoggedIn());
     this.downloadWifiOnly = DownloadManager.getInstance().getWifiOnly();
     this.downloadConcurrent = DownloadManager.getInstance().getMaxConcurrent();
@@ -1566,6 +1582,7 @@ struct ProfilePage {
       // 否则新装 / 升级后卡片已经在显示真实内容与封面，设置页却显示关闭，
       // 用户第一次拨动是空操作（写入 true 而本就是 true）却提示已保存。
       this.widgetShowRealData = cache.getSetting('widget_show_real_data', 'true') === 'true';
+      this.followUpdates = cache.getSetting('follow_updates', 'false') === 'true';
       this.widgetShowCover = cache.getSetting('widget_show_cover', 'true') === 'true';
     });
     // 冷启动时页面可能晚于信号创建，@Watch 不会补发，这里主动检查一次
@@ -1576,6 +1593,12 @@ struct ProfilePage {
   onLoginStateChanged(): void {
     if (this.isLoggedIn) {
       this.loadProfile();
+    } else {
+      this.favRequestId++;
+      this.favComics = [];
+      this.favPage = 1;
+      this.favHasMore = false;
+      this.favLoading = false;
     }
   }
 
@@ -1603,6 +1626,26 @@ struct ProfilePage {
     } catch (err) {
       this.profileError = (err as Error).message || '加载失败';
       console.warn('[ProfilePage] loadProfile failed: ' + this.profileError);
+    }
+  }
+
+  private async changeFollowUpdates(enabled: boolean): Promise<void> {
+    if (this.followUpdatesBusy || this.followUpdates === enabled) {
+      return;
+    }
+    this.followUpdatesBusy = true;
+    this.followUpdates = enabled;
+    try {
+      this.followUpdates = await FollowUpdateManager.getInstance().setEnabled(enabled);
+      showImmersiveToast({ message: enabled
+        ? this.followUpdates ? '已开启追更通知'
+          : this.apiService.isLoggedIn() ? '请允许系统通知后重试' : '请先登录后开启追更通知'
+        : '已关闭追更通知', duration: 2000 });
+    } catch (_err) {
+      this.followUpdates = false;
+      showImmersiveToast({ message: '追更通知设置失败，请重试', duration: 1600 });
+    } finally {
+      this.followUpdatesBusy = false;
     }
   }
 
@@ -1999,13 +2042,12 @@ struct ProfilePage {
   }
 
   onLogout(): void {
-    this.apiService.logout();
-    this.isLoggedIn = false;
-    try {
+    this.apiService.logout().then((): void => {
+      this.isLoggedIn = false;
       showImmersiveToast({ message: '已退出登录', duration: 2000 });
-    } catch (e) {
-      console.error('[ProfilePage] toast error:', JSON.stringify(e));
-    }
+    }).catch((_err: Error): void => {
+      showImmersiveToast({ message: '退出登录未完成，请稍后重试', duration: 2000 });
+    });
   }
 
   /** 签到 */
@@ -2098,18 +2140,21 @@ struct ProfilePage {
 
   private closeSubpage(): void {
     this.stack.pop();
-    // 只有完全退出子页面栈才恢复底部导航（设置→存储→返回时仍停留在设置页，导航保持隐藏）
-    if (this.stack.size() === 0) {
-      AppStorage.set('bika_subpage_open', false);
+    this.syncSubpageState();
+  }
+
+  /** 原生侧滑返回也以真实导航栈同步状态，不能只依赖自绘返回按钮。 */
+  private syncSubpageState(): void {
+    const names = this.stack.getAllPathName();
+    const top = names.length > 0 ? names[names.length - 1] : '';
+    AppStorage.setOrCreate('bika_subpage_open', names.length > 0);
+    AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, top);
+    if (AppStorage.get<number>('bika_active_tab') !== 1) {
+      return;
     }
-    // 应用接续：同步「当前我的子页」描述符（退回根页则发布「我的」根页）
-    if (this.stack.size() === 0) {
-      AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, '');
+    if (top.length === 0) {
       publishContinuationRoute(ROUTE_HOME, { tab: 1 });
     } else {
-      let names: string[] = this.stack.getAllPathName();
-      let top: string = names.length > 0 ? names[names.length - 1] : '';
-      AppStorage.setOrCreate(CONTINUATION_PROFILE_SUBPAGE_KEY, top);
       publishContinuationRoute(ROUTE_PROFILE_SUBPAGE, { subpage: top });
     }
   }
@@ -2147,22 +2192,47 @@ struct ProfilePage {
 
   // ── 子页面数据加载 ──
   private async loadFavourites(reset: boolean): Promise<void> {
-    if (this.favLoading) {
+    if (this.favLoading && !reset) {
       return;
     }
+    const requestId = ++this.favRequestId;
+    const sort = this.favSort;
+    const account = (this.cache ?? CacheManager.getInstanceIfReady())?.getEmail() ?? '';
+    const page = reset ? 1 : this.favPage + 1;
     this.favLoading = true;
     if (reset) {
-      this.favPage = 1;
+      this.favComics = [];
+      this.favHasMore = false;
     }
     try {
-      let result = await this.apiService.getFavourites(this.favSort, this.favPage);
-      let vms = result.comics.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
+      const result = await this.apiService.getFavourites(sort, page);
+      if (requestId !== this.favRequestId || sort !== this.favSort || !this.isLoggedIn
+        || (CacheManager.getInstanceIfReady()?.getEmail() ?? '') !== account) {
+        return;
+      }
+      const known = new Set<string>(reset ? [] : this.favComics.map((comic: ComicViewModel): string => comic.id));
+      const vms = result.comics.filter((comic: BikaComicSummary): boolean => {
+        if (known.has(comic._id)) {
+          return false;
+        }
+        known.add(comic._id);
+        return true;
+      }).map((comic: BikaComicSummary): ComicViewModel => ComicViewModel.fromSummary(comic));
       this.favComics = reset ? vms : this.favComics.concat(vms);
-      this.favHasMore = this.favPage < result.pages;
+      this.favPage = page;
+      this.favHasMore = page < result.pages;
     } catch (err) {
-      console.warn('[ProfilePage] favourites failed: ' + JSON.stringify(err));
+      if (requestId === this.favRequestId && this.isLoggedIn
+        && (CacheManager.getInstanceIfReady()?.getEmail() ?? '') === account) {
+        console.warn('[ProfilePage] favourites failed: ' + JSON.stringify(err));
+        if (this.visibleSubpage === 'favourites') {
+          showImmersiveToast({ message: '收藏加载失败，请重试', duration: 1600 });
+        }
+      }
     } finally {
-      this.favLoading = false;
+      if (requestId === this.favRequestId) {
+        this.favLoading = false;
+      }
     }
   }
 
@@ -2294,7 +2364,7 @@ struct ProfilePage {
   private applyMaterialLevel(value: string): void {
     this.materialLevel = value;
     CacheManager.getInstance().then(c => c.saveSetting('material_level', value));
-    // 修订号 +1：所有监听组件（含 IndexPage 的 HdsTabs key）立即重建应用新档位
+    // 修订号 +1：胶囊立即更新，HdsTabs 在安全回到根页时应用新档位
     let rev = AppStorage.get<number>('bika_material_rev') ?? 0;
     AppStorage.setOrCreate('bika_material_rev', rev + 1);
   }
@@ -2627,6 +2697,9 @@ struct ProfilePage {
           .transition(TransitionEffect.OPACITY)
           .animation({ duration: this.animationsEnabled ? 180 : 0, curve: Curve.EaseOut })
       }
+      if (this.visibleSubpage === 'favourites') {
+        this.favouritesSortControls()
+      }
     }
     .width('100%').height('100%')
     .backgroundColor(COLOR_BG)
@@ -2673,33 +2746,53 @@ struct ProfilePage {
     }
   }
 
+  /** 与频道页一致，排序胶囊独立位于 HDS 模糊层上方。 */
+  @Builder
+  favouritesSortControls() {
+    Scroll() {
+      Row({ space: 8 }) {
+        ForEach(SORT_OPTIONS, (item: SortOption): void => {
+          ChannelControlCapsule({
+            label: item.label,
+            selected: this.favSort === item.key,
+            onActivate: (): void => {
+              if (this.favSort !== item.key) {
+                this.favSort = item.key;
+                this.favouritesScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+                this.loadFavourites(true);
+              } else if (!this.favLoading && this.favComics.length === 0) {
+                this.loadFavourites(true);
+              }
+            }
+          })
+        }, (item: SortOption): string => item.key)
+      }
+      .height(36)
+    }
+    .width('100%').height(this.favouritesControlsHeight)
+    .align(Alignment.Start)
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .position({ x: 0, y: this.topSafeHeight + 56 })
+    .zIndex(2)
+    .transition(TransitionEffect.OPACITY)
+    .animation({ duration: this.animationsEnabled ? 180 : 0, curve: Curve.EaseOut })
+  }
+
   /** 我的收藏 */
   @Builder
   favouritesDestination() {
     HdsNavDestination() {
       Scroll(this.favouritesScroller) {
         Column() {
-        Row() {
-          ForEach(SORT_OPTIONS, (item: SortOption) => {
-            Text(item.label)
-              .fontSize(13)
-              .fontColor(this.favSort === item.key ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .backgroundColor(this.favSort === item.key ? COLOR_PRIMARY : COLOR_CARD)
-              .borderRadius(15)
-              .margin({ right: 8 })
-              .onClick(() => {
-                if (this.favSort !== item.key) {
-                  this.favSort = item.key;
-                  this.loadFavourites(true);
-                }
-              })
-          }, (item: SortOption) => item.key)
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Start)
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
 
+          if (this.favLoading && this.favComics.length === 0) {
+            LoadingProgress()
+              .width(28).height(28).color(COLOR_PRIMARY)
+              .margin({ top: 24, bottom: 16 })
+          }
           Grid() {
             ForEach(this.favComics, (comic: ComicViewModel) => {
               GridItem() {
@@ -2722,7 +2815,7 @@ struct ProfilePage {
           .padding({ left: 12, right: 12, top: 8, bottom: this.bottomSafeHeight + 76 })
         }
         .width('100%')
-        .padding({ top: this.topSafeHeight + this.subpageContentTop - 8 })
+        .padding({ top: this.topSafeHeight + 56 + this.favouritesControlsHeight })
       }
       .width('100%').height('100%')
       .align(Alignment.Top)
@@ -2731,7 +2824,6 @@ struct ProfilePage {
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .onReachEnd(() => {
         if (this.favHasMore && !this.favLoading) {
-          this.favPage++;
           this.loadFavourites(false);
         }
       })
@@ -3187,6 +3279,33 @@ struct ProfilePage {
             }
             .width('100%')
             .height(58)
+            .padding({ left: 16, right: 16 })
+
+            Divider().margin({ left: 16, right: 16 })
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.bell'))
+                .fontSize(20)
+                .fontColor([this.accentColor])
+              Column({ space: 3 }) {
+                Text('追更通知')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(COLOR_TEXT_TITLE)
+                Text('回到应用时检查收藏的新章节')
+                  .fontSize(13)
+                  .fontColor(COLOR_TEXT_SECONDARY)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.followUpdates })
+                .selectedColor(COLOR_PRIMARY)
+                .enabled(!this.followUpdatesBusy)
+                .onChange((isOn: boolean): void => { this.changeFollowUpdates(isOn); })
+            }
+            .width('100%')
+            .height(64)
             .padding({ left: 16, right: 16 })
 
             Divider().margin({ left: 16, right: 16 })
@@ -4477,7 +4596,7 @@ struct ProfilePage {
     try {
       await this.apiService.changePassword(this.oldPassword, this.newPassword);
       showImmersiveToast({ message: '密码已修改，请重新登录', duration: 2000 });
-      this.apiService.logout();
+      await this.apiService.logout();
       this.isLoggedIn = false;
       router.pushUrl({ url: 'pages/LoginPage' });
     } catch (err) {
@@ -4493,34 +4612,27 @@ struct ProfilePage {
       return;
     }
     this.checkingUpdate = true;
-    let request = http.createHttp();
     try {
-      let response = await request.request(
-        'https://api.github.com/repos/LoMoCatAp/Bika-HarmonyOS/releases/latest', {
-        method: http.RequestMethod.GET,
-        expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 10000,
-        readTimeout: 10000
-      });
-      if (response.responseCode !== 200) {
-        showImmersiveToast({ message: '检查更新失败 (HTTP ' + response.responseCode + ')', duration: 2000 });
+      const current = AppStorage.get<string>('bika_current_version') ?? '';
+      // 当前版本未知时不能拿历史兜底版本参与比较，否则可能提示错误的更新。
+      AppUpdateService.isNewer(current, current);
+      const release = await AppUpdateService.latest(ApiService.isProxyMode());
+      if (this.visibleSubpage !== 'settings') {
         return;
       }
-      let data = JSON.parse(response.result as string) as Record<string, Object>;
-      let tag = String(data['tag_name'] ?? '');
-      let version = tag.startsWith('v') ? tag.substring(1) : tag;
-      let current = AppStorage.get<string>('bika_current_version') ?? '1.1.0';
-      if (version.length > 0 && version !== current) {
-        this.updateVersion = version;
-        this.updateBody = String(data['body'] ?? '');
-        this.updateUrl = String(data['html_url'] ?? '');
+      if (AppUpdateService.isNewer(release.version, current)) {
+        this.updateVersion = release.version;
+        this.updateBody = release.body;
+        this.updateUrl = release.url;
         this.aboutSheetKind = 0;
         this.showAboutSheet = true;
       } else {
-        showImmersiveToast({ message: '当前已是最新版本 v' + current, duration: 2000 });
+        showImmersiveToast({ message: '暂无更新，当前版本 v' + current, duration: 2000 });
       }
     } catch (err) {
-      showImmersiveToast({ message: '检查更新失败：' + (err as Error).message, duration: 2000 });
+      if (this.visibleSubpage === 'settings') {
+        showImmersiveToast({ message: (err as Error).message || '检查更新失败，请稍后重试', duration: 2500 });
+      }
     } finally {
       this.checkingUpdate = false;
     }
@@ -4823,7 +4935,7 @@ struct ProfilePage {
         .width('100%')
         .height(350)
         .align(Alignment.Top)
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
       .width('100%')
@@ -4872,7 +4984,7 @@ struct ProfilePage {
               .fontWeight(FontWeight.Medium)
               .fontColor(COLOR_TEXT_TITLE)
               .width('100%')
-            Text('登录凭据仅保存在本机应用私有目录，用于访问哔咔 API。头像、昵称、等级等资料由哔咔服务器提供，本应用不作额外收集与上传。')
+            Text('登录密码与 Token 使用系统 Asset Store Kit 在本机加密保存，用于自动登录和访问哔咔 API。头像、昵称、等级等资料由哔咔服务器提供，本应用不作额外收集与上传。')
               .fontSize(14)
               .lineHeight(21)
               .fontColor(COLOR_TEXT_SECONDARY)
@@ -4960,12 +5072,21 @@ struct IndexPage {
   @StorageLink('bika_widget_action') @Watch('onWidgetActionChanged') widgetAction: string = '';
   @StorageLink('bika_subpage_open') @Watch('onSubpageChanged') subpageOpen: boolean = false;
   @StorageLink('bika_goto_profile') @Watch('onGotoProfile') gotoProfile: number = 0;
-  @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
-  @StorageProp('bika_material_rev') materialRev: number = 0;
+  @StorageLink('bika_material_level') @Watch('onTabsMaterialChanged') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_rev') @Watch('onTabsMaterialChanged') materialRev: number = 0;
   @StorageLink('bika_animations') animationsEnabled: boolean = true;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
   private tabsController: HdsTabsController = new HdsTabsController();
+  /** 只有安全回到根页才应用材质变更；进出子页不切换 HdsTabs 的 key。 */
+  @State appliedTabsMaterial: string = 'EXQUISITE';
+  @State appliedTabsRevision: number = 0;
+  private tabsPageVisible: boolean = false;
+  private tabsNodeReady: boolean = false;
+  private tabsSyncGeneration: number = 0;
+  private lastTabBarVisible: boolean | undefined = undefined;
+  private channelOpening: boolean = false;
+  private channelNavigationGeneration: number = 0;
   private apiService: ApiService = ApiService.getInstance();
 
   aboutToAppear(): void {
@@ -4974,6 +5095,8 @@ struct IndexPage {
       + (AppStorage.get<boolean>('isLoggedIn') === true ? 'true' : 'false')
       + ', auth_resolved=' + (AppStorage.get<boolean>('auth_resolved') === true ? 'true' : 'false'));
     AppStorage.setOrCreate('bika_material_level', this.materialLevel);
+    this.appliedTabsMaterial = this.materialLevel;
+    this.appliedTabsRevision = this.materialRev;
     let saved: number | undefined = AppStorage.get<number>('bika_active_tab') as number | undefined;
     if (saved === 0 || saved === 1) {
       this.currentTab = saved;
@@ -4986,13 +5109,142 @@ struct IndexPage {
     }
   }
 
-  /** 子页面开合 → 页签收起/恢复动画 */
-  onSubpageChanged(): void {
-    if (this.subpageOpen) {
-      this.tabsController.applyHideAnimation(HdsAnimationMode.SCROLL_ANIMATION);
-    } else {
-      this.tabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION);
+  /** 页面路由、内部子页和 HDS 节点重建共用同一个显隐判断。 */
+  private shouldShowTabBar(): boolean {
+    return this.tabsPageVisible && this.canSwipeRootTabs() && !this.channelOpening;
+  }
+
+  /** 子页内横滑交给导航返回；主页不受后台「我的」导航栈影响。 */
+  private canSwipeRootTabs(): boolean {
+    return this.currentTab === 0 || !this.subpageOpen;
+  }
+
+  private onRootTabChanged(index: number): void {
+    this.currentTab = index;
+    AppStorage.set('bika_active_tab', index);
+    this.syncTabBarVisibility(true);
+    this.publishCurrentRoute();
+  }
+
+  private applyTabBarVisibility(force: boolean = false): void {
+    if (!this.tabsNodeReady) {
+      return;
     }
+    const visible = this.shouldShowTabBar();
+    if (!force && visible === this.lastTabBarVisible) {
+      return;
+    }
+    try {
+      if (visible) {
+        this.tabsController.applyShowAnimation(HdsAnimationMode.CLICK_ANIMATION);
+      } else {
+        this.tabsController.applyHideAnimation(HdsAnimationMode.CLICK_ANIMATION);
+      }
+      this.lastTabBarVisible = visible;
+    } catch (_err) {
+      this.lastTabBarVisible = undefined;
+      console.warn('[IndexPage] tab bar is not ready; retry on the next frame');
+    }
+  }
+
+  /** 隐藏先执行；恢复等下一帧控制器重新绑定，过期帧不再改变新页面的状态。 */
+  private syncTabBarVisibility(force: boolean = false): void {
+    const generation = ++this.tabsSyncGeneration;
+    if (!this.shouldShowTabBar()) {
+      this.applyTabBarVisibility();
+    }
+    if (!this.tabsPageVisible) {
+      return;
+    }
+    this.getUIContext().postFrameCallback({
+      onFrame: (_time: number): void => {
+        if (generation === this.tabsSyncGeneration && this.tabsPageVisible) {
+          this.applyTabBarVisibility(force);
+        }
+      },
+      onIdle: (_time: number): void => {}
+    });
+  }
+
+  private applyPendingTabsMaterial(): boolean {
+    if (!this.tabsPageVisible || this.subpageOpen || this.channelOpening) {
+      return false;
+    }
+    if (this.appliedTabsMaterial === this.materialLevel && this.appliedTabsRevision === this.materialRev) {
+      return false;
+    }
+    this.appliedTabsMaterial = this.materialLevel;
+    this.appliedTabsRevision = this.materialRev;
+    this.lastTabBarVisible = undefined;
+    return true;
+  }
+
+  onTabsMaterialChanged(): void {
+    if (this.applyPendingTabsMaterial()) {
+      this.syncTabBarVisibility(true);
+    }
+  }
+
+  private onTabsAppear(): void {
+    this.tabsNodeReady = true;
+    this.lastTabBarVisible = undefined;
+    this.syncTabBarVisibility(true);
+  }
+
+  /** 子页仍在栈中时保持收起；仅回到根页才恢复并应用待处理的材质档位。 */
+  onSubpageChanged(): void {
+    const changed = this.applyPendingTabsMaterial();
+    this.syncTabBarVisibility(changed);
+  }
+
+  private openChannel(label: string, kind: string): void {
+    if (!this.tabsPageVisible || this.channelOpening) {
+      return;
+    }
+    this.channelOpening = true;
+    const generation = ++this.channelNavigationGeneration;
+    this.syncTabBarVisibility();
+    const navigate = (): void => {
+      if (generation !== this.channelNavigationGeneration || !this.tabsPageVisible) {
+        return;
+      }
+      const failed = (): void => {
+        if (generation !== this.channelNavigationGeneration) {
+          return;
+        }
+        this.channelOpening = false;
+        this.syncTabBarVisibility(true);
+        if (this.tabsPageVisible) {
+          showImmersiveToast({ message: '频道打开失败，请重试', duration: 1600 });
+        }
+      };
+      try {
+        router.pushUrl({ url: 'pages/ChannelListPage', params: { label: label, kind: kind } }).catch(failed);
+      } catch (_err) {
+        failed();
+      }
+    };
+    if (this.animationsEnabled) {
+      // 先让底栏收起命令提交到一帧，再启动系统页面过渡，不添加固定毫秒延迟。
+      this.getUIContext().postFrameCallback({
+        onFrame: (_time: number): void => navigate(),
+        onIdle: (_time: number): void => {}
+      });
+    } else {
+      navigate();
+    }
+  }
+
+  onPageHide(): void {
+    this.tabsPageVisible = false;
+    this.syncTabBarVisibility();
+  }
+
+  aboutToDisappear(): void {
+    this.tabsPageVisible = false;
+    this.tabsNodeReady = false;
+    this.tabsSyncGeneration++;
+    this.channelNavigationGeneration++;
   }
 
   /** 首页头像 → 切到「我的」 */
@@ -5068,16 +5320,10 @@ struct IndexPage {
         this.openProfileSubpage('history');
       } else if (action === 'open_recommend') {
         // 快捷入口「推荐」→ 首页「推荐」频道页
-        router.pushUrl({
-          url: 'pages/ChannelListPage',
-          params: { label: '推荐', kind: 'recommend' }
-        });
+        this.openChannel('推荐', 'recommend');
       } else if (action === 'open_leaderboard') {
         // 排行榜卡片顶部 → 榜单频道页
-        router.pushUrl({
-          url: 'pages/ChannelListPage',
-          params: { label: '排行榜', kind: 'leaderboard' }
-        });
+        this.openChannel('排行榜', 'leaderboard');
       } else if (action === 'open_search') {
         // 快捷入口「搜索」→ 搜索页
         router.pushUrl({ url: 'pages/SearchPage' });
@@ -5089,10 +5335,7 @@ struct IndexPage {
           });
         } else {
           // 无作品 id → 打开「最近更新」频道页
-          router.pushUrl({
-            url: 'pages/ChannelListPage',
-            params: { label: '最近更新', kind: 'recent' }
-          });
+          this.openChannel('最近更新', 'recent');
         }
       } else if (action === 'continuation_reading') {
         // 应用接续（手机 ↔ 平板）：定位到源端的同一话、同一页；
@@ -5173,10 +5416,7 @@ struct IndexPage {
         params: { comicId: p.comicId ?? '', comicTitle: p.comicTitle ?? '' }
       });
     } else if (route === ROUTE_CHANNEL_LIST) {
-      router.pushUrl({
-        url: 'pages/ChannelListPage',
-        params: { label: p.label ?? '', kind: p.kind ?? 'topic' }
-      });
+      this.openChannel(p.label ?? '', p.kind ?? 'topic');
     } else if (route === ROUTE_PROFILE_SUBPAGE && (p.subpage ?? '').length > 0) {
       this.openProfileSubpage(p.subpage ?? '');
     } else if (route === ROUTE_SEARCH) {
@@ -5184,7 +5424,7 @@ struct IndexPage {
     } else if (route === ROUTE_SEARCH_RESULT && (p.keyword ?? '').length > 0) {
       router.pushUrl({
         url: 'pages/SearchResultPage',
-        params: { keyword: p.keyword ?? '' }
+        params: { keyword: p.keyword ?? '', searchKind: p.searchKind ?? 'keyword' }
       });
     } else {
       // home 或未知 route：回到首页并切到对应页签（安全降级）
@@ -5204,7 +5444,7 @@ struct IndexPage {
    */
   private publishCurrentRoute(): void {
     let subpage: string = AppStorage.get<string>(CONTINUATION_PROFILE_SUBPAGE_KEY) ?? '';
-    if (subpage.length > 0) {
+    if (this.currentTab === 1 && subpage.length > 0) {
       publishContinuationRoute(ROUTE_PROFILE_SUBPAGE, { subpage: subpage });
       return;
     }
@@ -5289,7 +5529,13 @@ struct IndexPage {
   }
 
   onPageShow(): void {
+    this.tabsPageVisible = true;
+    this.channelOpening = false;
+    this.channelNavigationGeneration++;
+    this.applyPendingTabsMaterial();
+    this.syncTabBarVisibility(true);
     AppStorage.set('isLoggedIn', ApiService.getInstance().isLoggedIn());
+    FollowUpdateManager.getInstance().checkForUpdates();
     // 冷启动时 onCreate 写入的卡片事件在此消费（此时页面与路由已就绪）
     this.consumeWidgetAction();
     // 应用接续：本页可见即发布「当前页面」（从子页返回时也会重新发布）
@@ -5298,13 +5544,13 @@ struct IndexPage {
 
   /** 沉浸光感档位映射 */
   private hdsMaterialLevel(): hdsMaterial.MaterialLevel {
-    if (this.materialLevel === 'EXQUISITE') {
+    if (this.appliedTabsMaterial === 'EXQUISITE') {
       return hdsMaterial.MaterialLevel.EXQUISITE;
     }
-    if (this.materialLevel === 'SMOOTH') {
+    if (this.appliedTabsMaterial === 'SMOOTH') {
       return hdsMaterial.MaterialLevel.SMOOTH;
     }
-    if (this.materialLevel === 'ADAPTIVE') {
+    if (this.appliedTabsMaterial === 'ADAPTIVE') {
       return hdsMaterial.MaterialLevel.ADAPTIVE;
     }
     return hdsMaterial.MaterialLevel.GENTLE;
@@ -5330,7 +5576,7 @@ struct IndexPage {
   build() {
     HdsTabs({ index: this.currentTab, controller: this.tabsController }) {
       TabContent() {
-        HomePage()
+        HomePage({ onOpenChannel: (label: string, kind: string): void => this.openChannel(label, kind) })
       }
       .tabBar(this.tabLabel(0, '首页', $r('sys.symbol.house')))
 
@@ -5339,10 +5585,12 @@ struct IndexPage {
       }
       .tabBar(this.tabLabel(1, '我的', $r('sys.symbol.person')))
     }
-    // 子页打开期间冻结 key：避免重建销毁当前页（设置页会被踢回），关闭子页后再应用新档位
-    .key(this.subpageOpen ? 'hds_tabs_stable' : ('hds_tabs_' + this.materialLevel + '_' + this.materialRev))
+    // 显隐不改变组件身份；仅安全回到根页后，因真实材质变更重建。
+    .key('hds_tabs_' + this.appliedTabsMaterial + '_' + this.appliedTabsRevision)
+    .onAppear((): void => this.onTabsAppear())
     .barOverlap(true)
     .animationDuration(0)
+    .scrollable(this.canSwipeRootTabs())
     .vertical(false)
     .barPosition(BarPosition.End)
     .divider({ mode: DividerMode.NONE })
@@ -5358,12 +5606,7 @@ struct IndexPage {
         materialLevel: this.hdsMaterialLevel()
       }
     })
-    .onChange((index: number): void => {
-      this.currentTab = index;
-      AppStorage.set('bika_active_tab', index);
-      // 应用接续：页签切换同步「当前页面」
-      this.publishCurrentRoute();
-    })
+    .onChange((index: number): void => this.onRootTabChanged(index))
     .backgroundColor(COLOR_BG)
     .width('100%')
     .height('100%')
