@@ -51,7 +51,7 @@ export struct NetImage {
   }
 
   private async load(): Promise<void> {
-    if (this.loading || this.src.length === 0) {
+    if (this.loading || this.src.length === 0 || this.src.startsWith('file://')) {
       return;
     }
     this.loading = true;

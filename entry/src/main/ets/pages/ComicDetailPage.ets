@@ -9,6 +9,7 @@ import { ComicDetailViewModel, EpViewModel, ComicViewModel, ComicSearchKind, Bik
 import { CacheManager } from '../common/CacheManager';
 import { ChapterUpdateBadge } from '../components/ChapterUpdateBadge';
 import { DownloadManager } from '../common/DownloadManager';
+import { ComicDetailStore } from '../common/ComicDetailStore';
 import { publishContinuationRoute, ROUTE_COMIC_DETAIL } from '../common/ContinuationState';
 import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
@@ -48,6 +49,8 @@ interface ReaderRouteParams {
   currentOrder: number;
   localDir?: string;
   localCount?: number;
+  offlineOnly?: boolean;
+  localChapterOrders?: number[];
   coverUrl?: string;
 }
 
@@ -74,6 +77,13 @@ struct ComicDetailPage {
   @State commentsPullOffset: number = 0;
   @State isLoading: boolean = true;
   @State errorMsg: string = '';
+  @State usingLocalDetail: boolean = false;
+  @State detailComplete: boolean = false;
+  @State chaptersComplete: boolean = false;
+  @State downloadedOrders: number[] = [];
+  @State localCoverUrl: string = '';
+  @State commentsError: string = '';
+  @StorageProp('download_revision') @Watch('onDownloadsChanged') downloadRevision: number = 0;
   @State comicTitle: string = '详情';
   @State isFavourited: boolean = false;
   @State isLiked: boolean = false;
@@ -254,58 +264,122 @@ struct ComicDetailPage {
       showImmersiveToast({ message: this.isLoading ? '章节加载中' : '暂无章节', duration: 1600 });
       return;
     }
-    const target = this.lastReadOrder > 0 ? this.lastReadOrder : this.chapters[0].order;
-    const ep = this.chapters.find((chapter: EpViewModel): boolean => chapter.order === target);
-    this.onChapterClick(ep ?? this.chapters[0]);
+    const available = this.usingLocalDetail
+      ? this.chapters.filter((chapter: EpViewModel): boolean => this.epDownloaded(chapter.order)) : this.chapters;
+    if (available.length === 0) {
+      showImmersiveToast({ message: '还没有下载章节', duration: 1600 });
+      return;
+    }
+    const ep = available.find((chapter: EpViewModel): boolean => chapter.order === this.lastReadOrder);
+    this.onChapterClick(ep ?? available[0]);
   }
 
+  private restoreLocalDetail(): void {
+    const local = ComicDetailStore.resolve(this.comicId, this.comicTitle, DownloadManager.getInstance().getTasks());
+    this.comic = local?.comic ?? null;
+    this.chapters = local?.chapters ?? [];
+    this.detailComplete = local?.detailComplete ?? false;
+    this.chaptersComplete = local?.chaptersComplete ?? false;
+    this.downloadedOrders = local?.downloadedOrders ?? [];
+    this.localCoverUrl = local?.localCoverUrl ?? '';
+    this.usingLocalDetail = local !== null;
+    if (local !== null) {
+      this.comicTitle = local.comic.title;
+    }
+    this.loadReadStatus();
+  }
+
+  private onDownloadsChanged(): void {
+    if (this.comicId && (this.usingLocalDetail || this.comic === null)) {
+      this.restoreLocalDetail();
+    }
+  }
+
+  /** 本地信息先呈现；详情、目录分别更新，单个接口失败不再清空可用内容。 */
   async loadDetail(): Promise<void> {
     const requestId = ++this.detailRequestId;
     const comicId = this.comicId;
     const account = this.cacheManager?.getEmail() ?? '';
     this.isLoading = true;
     this.errorMsg = '';
+    this.isFavourited = false;
+    this.isLiked = false;
+    this.restoreLocalDetail();
+    const loaded = await Promise.all([
+      this.loadOnlineDetail(requestId, comicId, account),
+      this.loadOnlineChapters(requestId, comicId, account)
+    ]);
+    if (!this.isCurrentDetailRequest(requestId, comicId, account)) {
+      return;
+    }
+    this.isLoading = false;
+    this.usingLocalDetail = !loaded[0] || !loaded[1];
+    if (loaded[0] && loaded[1]) {
+      this.errorMsg = '';
+    } else if (this.comic === null) {
+      this.errorMsg = '加载失败，点按重试';
+    }
+    // 只有联网拿到同一次请求的完整详情和目录，才允许推进追更基线。
+    this.loadReadStatus();
+    if (loaded[0]) {
+      this.loadRecommendations(requestId, comicId, account);
+    }
+  }
+
+  private async loadOnlineDetail(requestId: number, comicId: string, account: string): Promise<boolean> {
     try {
-      let results = await Promise.all([
-        this.apiService.getComicDetail(comicId),
-        this.apiService.getAllEps(comicId)
-      ]);
+      const detail = await this.apiService.getComicDetail(comicId);
       if (!this.isCurrentDetailRequest(requestId, comicId, account)) {
-        return;
+        return false;
       }
-      this.comic = ComicDetailViewModel.fromDetail(results[0]);
+      this.comic = ComicDetailViewModel.fromDetail(detail);
+      const local = ComicDetailStore.resolve(comicId, this.comicTitle, DownloadManager.getInstance().getTasks());
+      this.localCoverUrl = local?.localCoverUrl ?? '';
       this.comicTitle = this.comic.title;
-      this.isFavourited = !!results[0].isFavourite;
-      this.isLiked = !!results[0].isLiked;
-      let eps: EpViewModel[] = [];
-      for (let doc of results[1]) {
-        eps.push(EpViewModel.fromDoc(doc));
-      }
-      eps.sort((a: EpViewModel, b: EpViewModel) => a.order - b.order);
-      this.chapters = eps;
-      this.loadReadStatus();
-      try {
-        let recs = await this.apiService.getRecommendationsFor(comicId);
-        if (recs.length === 0) {
-          // 推荐接口未返回时回退到「全部最新」列表，保证详情页始终有相关作品
-          let fallback = await this.apiService.getComics('', 'dd', 1);
-          recs = fallback.comics.slice(0, 10);
-        }
-        if (this.isCurrentDetailRequest(requestId, comicId, account)) {
-          this.recommendations = recs.map((c: BikaComicSummary) => ComicViewModel.fromSummary(c));
-        }
-      } catch (recErr) {
-        console.warn('[ComicDetailPage] recommendations failed: ' + JSON.stringify(recErr));
-      }
+      this.detailComplete = true;
+      this.isFavourited = !!detail.isFavourite;
+      this.isLiked = !!detail.isLiked;
+      return true;
     } catch (err) {
       if (this.isCurrentDetailRequest(requestId, comicId, account)) {
-        this.errorMsg = (err as Error).message || '加载失败';
-        console.error('[ComicDetailPage] loadDetail error: ' + this.errorMsg);
+        this.errorMsg = (err as Error).message || '作品信息加载失败';
       }
-    } finally {
+      console.warn('[ComicDetailPage] detail unavailable, retaining local metadata');
+      return false;
+    }
+  }
+
+  private async loadOnlineChapters(requestId: number, comicId: string, account: string): Promise<boolean> {
+    try {
+      const docs = await this.apiService.getAllEps(comicId);
+      if (!this.isCurrentDetailRequest(requestId, comicId, account)) {
+        return false;
+      }
+      this.chapters = docs.map((doc): EpViewModel => EpViewModel.fromDoc(doc))
+        .sort((a: EpViewModel, b: EpViewModel): number => a.order - b.order);
+      this.chaptersComplete = true;
+      return true;
+    } catch (err) {
+      if (this.isCurrentDetailRequest(requestId, comicId, account) && !this.errorMsg) {
+        this.errorMsg = (err as Error).message || '章节目录加载失败';
+      }
+      console.warn('[ComicDetailPage] chapters unavailable, retaining local directory');
+      return false;
+    }
+  }
+
+  private async loadRecommendations(requestId: number, comicId: string, account: string): Promise<void> {
+    try {
+      let recs = await this.apiService.getRecommendationsFor(comicId);
+      if (recs.length === 0) {
+        const fallback = await this.apiService.getComics('', 'dd', 1);
+        recs = fallback.comics.slice(0, 10);
+      }
       if (this.isCurrentDetailRequest(requestId, comicId, account)) {
-        this.isLoading = false;
+        this.recommendations = recs.map((c: BikaComicSummary): ComicViewModel => ComicViewModel.fromSummary(c));
       }
+    } catch (_err) {
+      console.warn('[ComicDetailPage] recommendations unavailable');
     }
   }
 
@@ -331,19 +405,28 @@ struct ComicDetailPage {
     if (this.commentsLoading) {
       return;
     }
+    const comicId = this.comicId;
+    const account = this.cacheManager?.getEmail() ?? '';
     this.commentsLoading = true;
+    this.commentsError = '';
     try {
       if (reset) {
         this.commentPage = 1;
       }
-      let result = await this.apiService.getComicComments(this.comicId, this.commentPage);
+      let result = await this.apiService.getComicComments(comicId, this.commentPage);
+      if (comicId !== this.comicId || account !== (this.cacheManager?.getEmail() ?? '')) {
+        return;
+      }
       this.comments = reset ? result.docs : this.comments.concat(result.docs);
       this.commentHasMore = this.commentPage < result.pages;
       if (reset) {
         this.commentPage = 1;
       }
     } catch (err) {
-      console.warn('[ComicDetailPage] comments failed: ' + JSON.stringify(err));
+      if (comicId === this.comicId && account === (this.cacheManager?.getEmail() ?? '')) {
+        this.commentsError = '评论加载失败，下拉重试';
+      }
+      console.warn('[ComicDetailPage] comments unavailable');
     } finally {
       this.commentsLoading = false;
     }
@@ -477,6 +560,10 @@ struct ComicDetailPage {
 
   /** 打开评论输入弹窗（replyTarget 为 null 时发表新评论） */
   openCommentSheet(replyTarget: BikaComment | null): void {
+    if (this.usingLocalDetail && !this.isLoading) {
+      showImmersiveToast({ message: '暂时无法发表评论，稍后重试', duration: 1600 });
+      return;
+    }
     if (!this.apiService.isLoggedIn()) {
       router.pushUrl({ url: 'pages/LoginPage' });
       return;
@@ -552,14 +639,19 @@ struct ComicDetailPage {
     }
     this.lastReadOrder = this.cacheManager.getReadProgress(this.comicId);
     this.readChapterOrders = this.cacheManager.getReadChapters(this.comicId);
-    this.updatedChapterOrders = this.comic === null ? []
-      : this.cacheManager.getUpdatedChapterOrders(this.comicId, this.chapters, this.comic.epsCount);
+    this.updatedChapterOrders = this.comic !== null && !this.usingLocalDetail && !this.isLoading
+      ? this.cacheManager.getUpdatedChapterOrders(this.comicId, this.chapters, this.comic.epsCount)
+      : this.cacheManager.getCachedUpdatedChapterOrders(this.comicId);
   }
 
   onChapterClick(ep: EpViewModel): void {
     // 已下载的话走本地离线阅读
     let task = DownloadManager.getInstance().hasTask(this.comicId, ep.order);
-    let eps = this.chapters.length;
+    if (this.usingLocalDetail && (task === undefined || task.status !== 'completed')) {
+      showImmersiveToast({ message: '这话还没下载', duration: 1600 });
+      return;
+    }
+    let eps = this.chapters.reduce((max: number, chapter: EpViewModel): number => Math.max(max, chapter.order), 0);
     if (eps === 0) {
       // 章节列表未加载（离线/失败）时，按已下载任务数估算总话数，保证翻话按钮可用
       let tasks = DownloadManager.getInstance().getTasks();
@@ -571,11 +663,17 @@ struct ComicDetailPage {
       }
       eps = maxOrder;
     }
+    // 以点击时的下载状态为准，兼容打开详情后才完成的任务。
+    const localOrders = DownloadManager.getInstance().getTasks()
+      .filter((item): boolean => item.comicId === this.comicId && item.status === 'completed' && item.total > 0)
+      .map((item): number => item.chapterOrder);
     let params: ReaderRouteParams = {
       comicId: this.comicId,
       comicTitle: this.comicTitle,
       epsCount: eps,
       currentOrder: ep.order,
+      offlineOnly: this.usingLocalDetail,
+      localChapterOrders: localOrders,
       coverUrl: this.comic !== null ? this.comic.coverUrl : ''
     };
     if (task !== undefined && task.status === 'completed') {
@@ -614,6 +712,10 @@ struct ComicDetailPage {
   }
 
   async onToggleFavourite(): Promise<void> {
+    if (this.usingLocalDetail || this.isLoading) {
+      showImmersiveToast({ message: '暂时无法收藏，稍后重试', duration: 1600 });
+      return;
+    }
     if (this.favLoading) {
       return;
     }
@@ -634,6 +736,10 @@ struct ComicDetailPage {
   }
 
   async onToggleLike(): Promise<void> {
+    if (this.usingLocalDetail || this.isLoading) {
+      showImmersiveToast({ message: '暂时无法点赞，稍后重试', duration: 1600 });
+      return;
+    }
     if (this.favLoading) {
       return;
     }
@@ -678,7 +784,7 @@ struct ComicDetailPage {
   @Builder
   detailBackdrop() {
     if (this.comic !== null) {
-      ForEach([this.comic.coverUrl], (url: string): void => {
+      ForEach([this.localCoverUrl || this.comic.coverUrl], (url: string): void => {
         NetImage({ src: url, fit: ImageFit.Cover, fillParent: true })
           .width('100%')
           .height(this.topControlsHeight() + 264)
@@ -699,7 +805,7 @@ struct ComicDetailPage {
   detailHero() {
     if (this.comic !== null) {
       Row({ space: 18 }) {
-        ForEach([this.comic.coverUrl], (url: string): void => {
+        ForEach([this.localCoverUrl || this.comic.coverUrl], (url: string): void => {
           NetImage({ src: url, fit: ImageFit.Cover, radius: 14, fillParent: true })
             .width(112)
             .height(156)
@@ -720,10 +826,11 @@ struct ComicDetailPage {
             .accessibilityText('搜索作者：' + this.comic.author)
             .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.97 : 1 })
             .onClick((): void => { this.openMetadataSearch(this.comic?.author ?? '', 'author'); })
-          Text((this.comic.finished ? '已完结' : '连载中') + ' · 共 ' + this.chapters.length + ' 话')
+          Text((this.detailComplete ? (this.comic.finished ? '已完结' : '连载中') : '完结状态未知')
+            + ' · ' + (this.chaptersComplete ? '共 ' + this.chapters.length + ' 话' : '已下载 ' + this.downloadedOrders.length + ' 话'))
             .fontSize(12)
             .fontColor(this.comic.finished ? COLOR_TEXT_SECONDARY : COLOR_PRIMARY)
-          Text('观看 ' + this.comic.totalViews + ' · 收藏 ' + this.comic.totalLikes)
+          Text(this.detailComplete ? '观看 ' + this.comic.totalViews + ' · 收藏 ' + this.comic.totalLikes : '观看／收藏暂无数据')
             .fontSize(12)
             .fontColor(COLOR_TEXT_SECONDARY)
         }
@@ -774,6 +881,17 @@ struct ComicDetailPage {
             .padding({ top: 80, bottom: 80 })
           } else if (this.comic !== null) {
             this.detailHero()
+            if (this.usingLocalDetail) {
+              Row({ space: 8 }) {
+                Text('已下载 ' + this.downloadedOrders.length + ' 话')
+                  .fontSize(12).fontColor(COLOR_TEXT_SECONDARY).layoutWeight(1)
+                Button('重试', { type: ButtonType.Normal })
+                  .fontSize(12).fontColor(COLOR_PRIMARY).backgroundColor(Color.Transparent)
+                  .enabled(!this.isLoading)
+                  .onClick((): void => { this.loadDetail(); this.loadComments(); })
+              }
+              .width('100%').padding({ left: 20, right: 20, bottom: 12 })
+            }
             Column({ space: 12 }) {
               Row() {
                 Text('作品简介')
@@ -932,6 +1050,10 @@ struct ComicDetailPage {
 
   /** 打开下载选择弹窗 */
   private openDownloadSheet(): void {
+    if (this.usingLocalDetail) {
+      showImmersiveToast({ message: '连接网络后再下载', duration: 1600 });
+      return;
+    }
     this.downloadSelected = [];
     this.showDownloadSheet = true;
     this.detailSheetKind = 'download';
@@ -969,7 +1091,8 @@ struct ComicDetailPage {
   chapterTab() {
     List({ scroller: this.chapterScroller, space: 0 }) {
       ListItem() {
-        Text('共 ' + this.chapters.length + ' 话')
+        Text(this.chaptersComplete ? '共 ' + this.chapters.length + ' 话'
+          : '已下载 ' + this.downloadedOrders.length + ' 话')
           .fontSize(13)
           .fontColor(COLOR_TEXT_HINT)
           .width('100%')
@@ -981,7 +1104,8 @@ struct ComicDetailPage {
             if (this.isLoading) {
               LoadingProgress().width(28).height(28).color(COLOR_PRIMARY)
             }
-            Text(this.isLoading ? '章节加载中…' : (this.errorMsg.length > 0 ? this.errorMsg : '暂无章节'))
+            Text(this.isLoading ? '章节加载中…' : this.usingLocalDetail ? '还没有下载章节'
+              : (this.errorMsg.length > 0 ? this.errorMsg : '暂无章节'))
               .fontSize(14)
               .fontColor(COLOR_TEXT_HINT)
           }
@@ -992,7 +1116,7 @@ struct ComicDetailPage {
       ForEach(this.chapters, (ep: EpViewModel, index: number) => {
         ListItem() {
           Row() {
-            Text(String(index + 1))
+            Text(String(ep.order))
               .fontSize(13)
               .fontColor(COLOR_TEXT_HINT)
               .width(32)
@@ -1016,6 +1140,9 @@ struct ComicDetailPage {
                 .padding({ left: 8, right: 8, top: 2, bottom: 2 })
                 .backgroundColor(COLOR_PRIMARY_TINT)
                 .borderRadius(8)
+            }
+            if (this.usingLocalDetail && !this.epDownloaded(ep.order)) {
+              Text('未下载').fontSize(11).fontColor(COLOR_TEXT_HINT).margin({ left: 8, right: 8 })
             }
             if (this.epDownloaded(ep.order)) {
               SymbolGlyph($r('sys.symbol.checkmark_circle'))
@@ -1099,7 +1226,7 @@ struct ComicDetailPage {
                   SymbolGlyph($r('sys.symbol.message'))
                     .fontSize(36)
                     .fontColor([COLOR_TEXT_DISABLED])
-                  Text('暂无评论，来抢沙发')
+                  Text(this.commentsError || '暂无评论，来抢沙发')
                     .fontSize(14)
                     .fontColor(COLOR_TEXT_HINT)
                 }

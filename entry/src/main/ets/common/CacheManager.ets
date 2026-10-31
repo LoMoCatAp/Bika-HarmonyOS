@@ -570,6 +570,14 @@ export class CacheManager {
       .map((chapter: ChapterUpdateChapter): number => chapter.order);
   }
 
+  /** 离线只读取已有更新标记，不用不完整目录覆盖追更基线。 */
+  getCachedUpdatedChapterOrders(comicId: string): number[] {
+    const state = this.loadChapterUpdateState(comicId);
+    const read = this.getReadChapters(comicId);
+    return (state?.chapters ?? []).filter((chapter: ChapterUpdateChapter): boolean => read.indexOf(chapter.order) < 0)
+      .map((chapter: ChapterUpdateChapter): number => chapter.order);
+  }
+
   saveReadProgress(comicId: string, order: number): void {
     if (!comicId || !Number.isInteger(order) || order <= 0) {
       return;

@@ -50,6 +50,8 @@ interface ReaderRouterParams {
   currentOrder: number;
   localDir?: string;
   localCount?: number;
+  offlineOnly?: boolean;
+  localChapterOrders?: number[];
   coverUrl?: string;
 }
 
@@ -224,6 +226,8 @@ struct ReaderPage {
   private coverUrl: string = '';
   private localDir: string = '';
   private localCount: number = 0;
+  private offlineOnly: boolean = false;
+  private localChapterOrders: number[] = [];
   /** 是否本地离线阅读模式 */
   private localMode: boolean = false;
   private apiService: ApiService = ApiService.getInstance();
@@ -254,6 +258,10 @@ struct ReaderPage {
       this.coverUrl = params.coverUrl || '';
       this.epsCount = params.epsCount || 1;
       this.currentOrder = params.currentOrder || 1;
+      this.offlineOnly = params.offlineOnly === true;
+      this.localChapterOrders = (params.localChapterOrders ?? [])
+        .filter((order: number): boolean => Number.isInteger(order) && order > 0)
+        .sort((a: number, b: number): number => a - b);
       if (params.localDir) {
         this.localMode = true;
         this.localDir = params.localDir;
@@ -346,6 +354,9 @@ struct ReaderPage {
       this.localDir = task.dir;
       this.localCount = task.total;
       this.loadLocalImages();
+    } else if (this.offlineOnly) {
+      this.errorText = '这话还没下载';
+      this.isLoading = false;
     } else {
       this.localMode = false;
       this.loadImagesWithCache();
@@ -512,8 +523,10 @@ struct ReaderPage {
   }
 
   private updateChapterButtons(): void {
-    this.hasPrevChapter = this.currentOrder > 1;
-    this.hasNextChapter = this.currentOrder < this.epsCount;
+    this.hasPrevChapter = this.offlineOnly
+      ? this.localChapterOrders.some((order: number): boolean => order < this.currentOrder) : this.currentOrder > 1;
+    this.hasNextChapter = this.offlineOnly
+      ? this.localChapterOrders.some((order: number): boolean => order > this.currentOrder) : this.currentOrder < this.epsCount;
   }
 
   goPrevChapter(): void {
@@ -521,7 +534,9 @@ struct ReaderPage {
       return;
     }
     this.persistPageIndex();
-    this.currentOrder--;
+    this.currentOrder = this.offlineOnly
+      ? this.localChapterOrders.filter((order: number): boolean => order < this.currentOrder).slice(-1)[0]
+      : this.currentOrder - 1;
     this.updateChapterButtons();
     this.publishCurrentReading();
     this.zoomScale = 1.0;
@@ -535,7 +550,9 @@ struct ReaderPage {
       return;
     }
     this.persistPageIndex();
-    this.currentOrder++;
+    this.currentOrder = this.offlineOnly
+      ? this.localChapterOrders.find((order: number): boolean => order > this.currentOrder) ?? this.currentOrder
+      : this.currentOrder + 1;
     this.updateChapterButtons();
     this.publishCurrentReading();
     this.zoomScale = 1.0;

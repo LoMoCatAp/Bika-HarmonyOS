@@ -1102,6 +1102,16 @@ interface MdRun {
 /** 更新日志（可折叠列表） */
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.5.1',
+    date: '2026-10-31',
+    items: [
+      '修复断网时无法打开已下载漫画详情和章节的问题。',
+      '保存作品信息与章节目录，兼容旧下载，离线翻话仅切换已下载章节。',
+      '修复 NaN 提示，精简离线与加载文案。',
+      '个人页资料加载失败时显示「Bika用户」。'
+    ]
+  },
+  {
     version: '1.5.0',
     date: '2026-10-31',
     items: [
@@ -2428,7 +2438,7 @@ struct ProfilePage {
 
         Column({ space: 4 }) {
           Text(this.profileError.length > 0
-            ? '用户信息加载失败'
+            ? 'Bika用户'
             : (this.userName.length > 0 ? this.userName : 'Bika 用户'))
             .fontSize(17)
             .fontWeight(FontWeight.Bold)

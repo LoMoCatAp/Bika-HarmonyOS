@@ -4,6 +4,7 @@ import { BikaSigner } from './BikaSigner';
 import { ApiRouteManager } from './ApiRouteManager';
 import { Context } from '@kit.AbilityKit';
 import { CacheManager } from '../common/CacheManager';
+import { ComicDetailStore } from '../common/ComicDetailStore';
 import { BIKA_API_HOST, BIKA_API_BASE } from '../common/Constants';
 import {
   BikaComicDetail,
@@ -161,6 +162,7 @@ export class ApiService {
    */
   static setAppContext(ctx: Context): void {
     ApiService.appContext = ctx;
+    ComicDetailStore.initialize(ctx.filesDir);
   }
 
   /**
@@ -807,7 +809,12 @@ export class ApiService {
    */
   async getComicDetail(comicId: string): Promise<BikaComicDetail> {
     let data = await this.request<Record<string, Object>>(`comics/${comicId}`, 'GET', null, true);
-    return data['comic'] as BikaComicDetail;
+    const detail = data ? data['comic'] as BikaComicDetail : undefined;
+    if (!detail || detail._id !== comicId || typeof detail.title !== 'string' || !detail.title.trim()) {
+      throw new Error('作品详情返回内容异常，请稍后重试');
+    }
+    ComicDetailStore.saveDetail(comicId, detail);
+    return detail;
   }
 
   /**
@@ -821,15 +828,19 @@ export class ApiService {
     do {
       let data = await this.request<Record<string, Object>>(
         `comics/${comicId}/eps?page=${page}`, 'GET', null, true);
-      let eps = data['eps'] as BikaPaged<BikaEpDoc>;
-      if (eps && eps.docs) {
-        all = all.concat(eps.docs);
-        pages = toNum(eps.pages);
-      } else {
-        break;
+      let eps = data ? data['eps'] as BikaPaged<BikaEpDoc> : undefined;
+      if (!eps || !Array.isArray(eps.docs) || !Number.isInteger(Number(eps.pages)) || Number(eps.pages) < 0) {
+        throw new Error('章节目录返回内容异常，请稍后重试');
       }
+      if (eps.docs.some((doc: BikaEpDoc): boolean => !doc || typeof doc._id !== 'string' || !doc._id
+        || !Number.isInteger(Number(doc.order)) || Number(doc.order) <= 0)) {
+        throw new Error('章节目录返回内容异常，请稍后重试');
+      }
+      all = all.concat(eps.docs);
+      pages = Number(eps.pages);
       page++;
     } while (page <= pages);
+    ComicDetailStore.saveChapters(comicId, all);
     return all;
   }
 
@@ -1010,7 +1021,11 @@ export class ApiService {
         throw new Error('服务端响应解析失败 (HTTP ' + resp.responseCode + ')');
       }
 
-      // 信封内的 code 可能是数字或字符串
+      // 代理/错误页可能返回合法 JSON，但并不是哔咔信封；不能把无效状态码显示成 NaN。
+      if (!envelope || Array.isArray(envelope) || (typeof envelope.code !== 'number' && typeof envelope.code !== 'string')
+        || String(envelope.code).trim().length === 0 || !Number.isFinite(Number(envelope.code))) {
+        throw new Error('服务器返回内容异常，请检查网络后重试 (HTTP ' + resp.responseCode + ')');
+      }
       let code = Number(envelope.code);
       if ((code === 401 || code === 1005) && allowRelogin) {
         if (attempt === 0) {
