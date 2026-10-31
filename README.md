@@ -21,14 +21,13 @@
 
 <p align="center">
   <img src="docs/screenshots/01-home.jpg" width="180" alt="首页频道">
-  <img src="docs/screenshots/04-hud.jpg" width="180" alt="阅读器 HUD">
   <img src="docs/screenshots/05-profile.jpg" width="180" alt="我的">
   <img src="docs/screenshots/02-settings.jpg" width="180" alt="设置">
   <img src="docs/screenshots/03-about.jpg" width="180" alt="关于">
 </p>
 
 <p align="center">
-  <sub>首页频道 · 阅读器 HUD · 我的 · 设置 · 关于</sub>
+  <sub>首页频道 · 我的 · 设置 · 关于</sub>
 </p>
 
 ## 版本说明
