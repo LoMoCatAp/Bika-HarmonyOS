@@ -116,13 +116,24 @@ function section(source, start, end) {
   const until = source.indexOf(end, from); assert(until > from, end);
   return source.slice(from, until);
 }
+const detailAst = ts.createSourceFile('ComicDetailPage.ets', read('pages/ComicDetailPage.ets'),
+  ts.ScriptTarget.Latest, true, ts.ScriptKind.ETS);
+const detailPage = detailAst.statements.find(node => node.name?.getText(detailAst) === 'ComicDetailPage');
+assert(detailPage?.members, 'ComicDetailPage');
+const detailMethods = [
+  'startReading', 'restoreLocalDetail', 'onDownloadsChanged', 'loadDetail',
+  'loadOnlineDetail', 'loadOnlineChapters', 'loadRecommendations', 'isCurrentDetailRequest',
+  'loadReadStatus', 'onChapterClick'
+].map(name => {
+  const method = detailPage.members.find(node => ts.isMethodDeclaration(node) && node.name.getText(detailAst) === name);
+  assert(method, name);
+  return method.getText(detailAst);
+}).join('\n');
+
 function pageHarness(t, tasks = [], api = {}) {
   const h = fixture(t), messages = [], routes = [], writes = [];
   const manager = { getTasks: () => tasks.slice(), hasTask: (id, order) => tasks.find(item => item.comicId === id && item.chapterOrder === order) };
-  const source = read('pages/ComicDetailPage.ets');
-  const methods = section(source, '  private startReading()', '  private openMetadataSearch(')
-    + section(source, '  loadReadStatus()', '  /** 收藏/点赞弹簧');
-  const { Page } = load(`export class Page {\n${methods}\n}`, {}, {
+  const { Page } = load(`export class Page {\n${detailMethods}\n}`, {}, {
     ComicDetailStore: h.store, ...models, DownloadManager: { getInstance: () => manager },
     showImmersiveToast: message => messages.push(message.message), router: { pushUrl: route => routes.push(route) }
   });
