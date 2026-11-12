@@ -114,10 +114,14 @@ test('null release notes become an empty string rather than visible null text',a
 });
 
 function pageHarness() {
-  const source=read('pages/IndexPage.ets'), start=source.indexOf('  private async checkUpdate()');
-  const end=source.indexOf('  /** Markdown',start); const h=harness(); const messages=[]; let finish;
+  const source=read('features/profile/ProfilePage.ets');
+  const ast=ts.createSourceFile('ProfilePage.ets',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.ETS);
+  const owner=ast.statements.find(node=>node.name?.getText(ast)==='ProfilePage');
+  const method=owner?.members.find(node=>node.name?.getText(ast)==='checkUpdate');
+  assert(method,'ProfilePage.checkUpdate must exist');
+  const h=harness(); const messages=[]; let finish;
   h.AppUpdateService.latest=async()=>await new Promise(resolve=>finish=resolve);
-  const {Page}=load('export class Page {\n'+source.slice(start,end)+'\n}',{}, {AppUpdateService:h.AppUpdateService,
+  const {Page}=load('export class Page {\n'+method.getText(ast)+'\n}',{}, {AppUpdateService:h.AppUpdateService,
     ApiService:{isProxyMode:()=>false},AppStorage:{get:()=> '1.5.0'},showImmersiveToast:value=>messages.push(value)});
   const page=new Page(); Object.assign(page,{checkingUpdate:false,visibleSubpage:'settings',showAboutSheet:false});
   return {page,messages,respond:release=>finish(release)};
