@@ -1,4 +1,4 @@
-/** 纸面范围均为当前阅读窗口的 px，纹理始终使用整张原始快照的 UV。 */
+/** 纸面范围均为当前阅读窗口的 px，纹理为按图片边界裁好的快照。 */
 export interface ReaderPaperRect {
   left: number;
   top: number;
@@ -95,25 +95,22 @@ function paperFoldGeometry(p: ReaderPaperParameters): PaperFoldGeometry {
 
 function paperSurface(p: ReaderPaperParameters, g: PaperFoldGeometry, back: boolean,
   columns: number, rows: number): ReaderCurlSurface {
-  const texture = back && p.paired ? p.backRect : p.frontRect;
   const reverse = back && p.paired ? p.fromRight : !p.fromRight;
-  const textureWidth = texture.right - texture.left;
-  const textureHeight = texture.bottom - texture.top;
   const vertexCount = (columns + 1) * (rows + 1) * 2;
   const vertices: number[] = new Array<number>(vertexCount);
   const paperColumns: number[] = new Array<number>(columns + 1);
   for (let column = 0; column <= columns; column++) {
-    const u = Math.min(1, Math.max(0, (p.width * column / columns - texture.left) / textureWidth));
+    const u = column / columns;
     paperColumns[column] = (reverse ? 1 - u : u) * g.width;
   }
   let index = 0;
   const arcLength = g.halfArc * 2;
   for (let row = 0; row <= rows; row++) {
-    const y = Math.min(1, Math.max(0, (p.height * row / rows - texture.top) / textureHeight)) * g.height;
+    const y = g.height * row / rows;
     const rowDistance = (y - g.middleY) * g.normalY - g.middleX * g.normalX;
     for (const x of paperColumns) {
       const distance = x * g.normalX + rowDistance;
-      // 前后两面共用折线。压合不可见的部分，保留完整位图的纹理坐标。
+      // 前后两面共用折线，将折线另一侧不可见的网格压到折线上。
       const clip = back ? Math.max(0, -distance) : -Math.max(0, distance);
       const arc = distance + clip + g.halfArc;
       let move = clip;

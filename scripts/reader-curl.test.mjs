@@ -27,7 +27,7 @@ const owner=ast.statements.find(node=>node.name?.getText(ast)==='ReaderCurlPager
 const methods=owner.members.filter(node=>node.body && node.name?.getText(ast)!=='build').map(node=>node.getText(ast)).join('\n');
 
 function reader(options={}) {
-  const frames=[],timers=[],commits=[],released=[],samples=[],shown=[],boundaryTurns=[];
+  const frames=[],timers=[],commits=[],released=[],samples=[],shown=[],boundaryTurns=[],crops=[],retiredCrops=[];
   let time=0,starts=0,ends=0,captures=0;
   const {Subject}=evaluate('export class Subject {\n'+methods+'\n}',{
     ...geometry, ...paperModel,
@@ -38,8 +38,18 @@ function reader(options={}) {
   const snapshot=()=>{
     const id=++captures;
     if(options.failSecond && id%2===0)throw new Error('snapshot not ready');
-    const sample={id,getImageInfoSync:()=>({size:{width:1600,height:1000}}),
-      release:()=>{released.push(id);return Promise.resolve();}};
+    const sample={
+      id,getImageInfoSync:()=>({size:{width:1600,height:1000}}),
+      release:()=>{released.push(id);return Promise.resolve();},
+      createCroppedAndScaledPixelMapSync:(region,scaleX,scaleY)=>{
+        if(options.failSecondCrop && id===2) throw new Error('crop unavailable');
+        assert.equal(scaleX,1);
+        assert.equal(scaleY,1);
+        const crop={id,region,release:()=>{retiredCrops.push(id);return Promise.resolve();}};
+        crops.push(crop);
+        return crop;
+      }
+    };
     samples.push(sample);return sample;
   };
   Object.assign(page,{
@@ -61,7 +71,7 @@ function reader(options={}) {
     assert(limit>0,'animation must finish');
   };
   const retire=()=>{for(const [callback]of timers.splice(0))callback();};
-  return{page,frames,timers,commits,released,samples,shown,boundaryTurns,flush,retire,
+  return{page,frames,timers,commits,released,samples,shown,boundaryTurns,crops,retiredCrops,flush,retire,
     get starts(){return starts;},get ends(){return ends;}};
 }
 
@@ -109,6 +119,48 @@ test('partial snapshot failures release the first bitmap and still permit naviga
   const h=reader({failSecond:true});assert.equal(h.page.turn(1),true);h.flush();
   assert.deepEqual(h.commits,[3]);assert.deepEqual(h.released,[1]);assert.equal(h.page.drawing,false);
 });
+test('paper textures exclude the top and bottom margins of each downscaled spread snapshot',()=>{
+  const h=reader();
+  h.page.getPageBounds=()=>[
+    {left:100,top:51.31,right:499,bottom:638.69},
+    {left:501,top:31.31,right:901,bottom:671.69}
+  ];
+  assert.equal(h.page.begin(-20,300),true);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.crops.map(crop=>crop.region))),[
+    {x:802,y:45,size:{width:639,height:914}},
+    {x:160,y:74,size:{width:638,height:838}}
+  ]);
+  assert.equal(h.page.frame.frontTexture,h.crops[0]);
+  assert.equal(h.page.frame.backTexture,h.crops[1]);
+  h.page.update(-90);
+  h.page.update(-100);
+  assert.equal(h.crops.length,2);
+  h.page.cancelTurn();
+  h.retire();
+  assert.deepEqual(h.released,[1,2]);
+  assert.deepEqual(h.retiredCrops,[1,2]);
+});
+
+test('a single leaf reuses its cropped front on the back and releases it once',()=>{
+  const h=reader({isPaired:()=>false});
+  h.page.getPageBounds=()=>[{left:150,top:21.2,right:850,bottom:678.8}];
+  h.page.begin(-20,300);
+  assert.equal(h.crops.length,1);
+  assert.equal(h.page.frame.frontTexture,h.page.frame.backTexture);
+  h.page.cancelTurn();
+  h.retire();
+  assert.deepEqual(h.retiredCrops,[1]);
+});
+
+test('a failed back texture crop releases the partial frame and still turns the page',()=>{
+  const h=reader({failSecondCrop:true});
+  assert.equal(h.page.turn(1),true);
+  h.flush();
+  assert.deepEqual(h.commits,[3]);
+  assert.deepEqual(h.released,[1,2]);
+  assert.deepEqual(h.retiredCrops,[1]);
+});
+
 test('disabled animations retain functional gesture and volume navigation without allocating snapshots',()=>{
   const h=reader({animationsOn:false});assert.equal(h.page.turn(1),true);h.flush();
   assert.deepEqual(h.commits,[3]);assert.equal(h.samples.length,0);
@@ -164,6 +216,20 @@ test('paper geometry respects actual image bounds and both completed reading dir
     }
   }
 });
+test('texture rows cover the paper evenly when the image edge falls between viewport mesh rows',()=>{
+  const frame=pose(.2,true,true,0);
+  frame.frontRect.top=83.4;
+  frame.frontRect.bottom=816.6;
+  frame.backRect.top=frame.frontRect.top;
+  frame.backRect.bottom=frame.frontRect.bottom;
+  const mesh=paperModel.buildReaderPaperMesh(frame);
+  for (const row of [0,1,mesh.rows-1,mesh.rows]) {
+    const index=row*(mesh.columns+1)*2+1;
+    const y=frame.frontRect.top+(frame.frontRect.bottom-frame.frontRect.top)*row/mesh.rows;
+    assert(Math.abs(mesh.front.vertices[index]-y)<1e-6);
+  }
+});
+
 test('moving a corner vertically changes the fold geometry at the same horizontal position',()=>{
   const horizontal=paperModel.buildReaderPaperMesh(pose(.3,true,true,0));
   const diagonal=paperModel.buildReaderPaperMesh(pose(.3,true,true,450));
@@ -188,10 +254,12 @@ const renderer=evaluate(read('components/ReaderCurlRenderer.ets')+'\nexport { Re
 test('paper draws original-color textures as two shared meshes without a gray back overlay',()=>{
   for(const paired of[true,false])for(const right of[true,false]){
     const node=new renderer.ReaderCurlRenderNode(),calls=[];let saves=0;
-    node.content={...pose(.4,right,paired),current:'A',next:'B',progress:.4,completed:false};
+    node.content={...pose(.4,right,paired),current:'A',next:'B',
+      frontTexture:'crop A',backTexture:paired?'crop B':'crop A',progress:.4,completed:false};
     const canvas={attachBrush(){},detachBrush(){},save(){saves++;},restore(){saves--;},clipRect(){},drawImageRect(){},
       drawPixelMapMesh:(...args)=>calls.push(args)};
-    node.draw({canvas});assert.equal(calls.length,2);assert.deepEqual(calls.map(v=>v[0]),paired?['A','B']:['A','A']);
+    node.draw({canvas});assert.equal(calls.length,2);
+    assert.deepEqual(calls.map(v=>v[0]),paired?['crop A','crop B']:['crop A','crop A']);
     assert(calls.every(args=>args[5]===null),'native mesh uses the unmodified texture');
     assert.equal(saves,0);
   }

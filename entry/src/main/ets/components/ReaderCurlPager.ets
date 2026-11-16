@@ -79,19 +79,22 @@ export struct ReaderCurlPager {
     return this.instanceId + '_' + index;
   }
 
-  private releaseSnapshot(snapshot: image.PixelMap): void {
-    try {
-      snapshot.release().catch((_error: Error): void => {});
-    } catch (_error) {
-      // 同步截图可能在失败前已被框架释放。
+  private releaseSnapshots(snapshots: (image.PixelMap | null)[]): void {
+    for (const snapshot of new Set(snapshots)) {
+      if (snapshot !== null) {
+        try {
+          snapshot.release().catch((_error: Error): void => {});
+        } catch (_error) {
+          // 同步截图可能在失败前已被框架释放。
+        }
+      }
     }
   }
 
   private retireFrame(frame: ReaderCurlFrame): void {
     // 先撤掉绘制节点引用，再让两帧正在提交的绘制完成，最后释放本次专用截图。
     setTimeout((): void => {
-      this.releaseSnapshot(frame.current);
-      this.releaseSnapshot(frame.next);
+      this.releaseSnapshots([frame.current, frame.next, frame.frontTexture, frame.backTexture]);
     }, 64);
   }
 
@@ -112,12 +115,34 @@ export struct ReaderCurlPager {
       right: context.vp2px(rect.right), bottom: context.vp2px(rect.bottom) };
   }
 
+  private cropPaperTexture(snapshot: image.PixelMap, size: image.Size, rect: ReaderPaperRect,
+    viewportWidth: number, viewportHeight: number): image.PixelMap {
+    const scaleX = size.width / viewportWidth;
+    const scaleY = size.height / viewportHeight;
+    // 向图片内侧取整，避免边界上的背景像素进入卷页纹理。
+    const left = Math.max(0, Math.ceil(rect.left * scaleX));
+    const top = Math.max(0, Math.ceil(rect.top * scaleY));
+    const right = Math.min(size.width, Math.floor(rect.right * scaleX));
+    const bottom = Math.min(size.height, Math.floor(rect.bottom * scaleY));
+    if (right <= left || bottom <= top) {
+      throw new Error('Empty paper texture');
+    }
+    if (left === 0 && top === 0 && right === size.width && bottom === size.height) {
+      return snapshot;
+    }
+    return snapshot.createCroppedAndScaledPixelMapSync({
+      x: left, y: top, size: { width: right - left, height: bottom - top }
+    }, 1, 1);
+  }
+
   private takeFrame(target: number, offset: number, anchorY: number): ReaderCurlFrame | null {
     if (!this.isSpreadDecoded(this.index) || !this.isSpreadDecoded(target)) {
       return null;
     }
     let current: image.PixelMap | null = null;
     let next: image.PixelMap | null = null;
+    let frontTexture: image.PixelMap | null = null;
+    let backTexture: image.PixelMap | null = null;
     try {
       const context = this.getUIContext();
       const pixelWidth = context.vp2px(this.pageWidth);
@@ -134,24 +159,23 @@ export struct ReaderCurlPager {
       const sourcePaired = this.isPaired(this.index);
       const targetPaired = this.isPaired(target);
       const paired = sourcePaired && targetPaired;
+      const mixed = sourcePaired !== targetPaired;
       const fromRight = offset < 0;
       const frontRect = this.imageRect(this.index, fromRight, paired);
       const backRect = paired ? this.imageRect(target, !fromRight, true) : frontRect;
+      frontTexture = mixed ? current : this.cropPaperTexture(current, a, frontRect, pixelWidth, pixelHeight);
+      backTexture = paired ? this.cropPaperTexture(next, b, backRect, pixelWidth, pixelHeight) : frontTexture;
       const height = frontRect.bottom - frontRect.top;
       const anchor = Math.max(0, Math.min(height, context.vp2px(anchorY) - frontRect.top));
       const cornerY = anchor < height * 0.3 ? 0 : anchor > height * 0.7 ? height : anchor;
       return {
-        current, next, width: pixelWidth, height: pixelHeight, frontRect, backRect, paired, mixed: sourcePaired !== targetPaired, fromRight,
+        current, next, frontTexture, backTexture, width: pixelWidth, height: pixelHeight, frontRect, backRect,
+        paired, mixed, fromRight,
         touchX: frontRect.right - frontRect.left, touchY: cornerY, cornerY, progress: 0, completed: false
       };
     } catch (error) {
-      if (current !== null) {
-        this.releaseSnapshot(current);
-      }
-      if (next !== null) {
-        this.releaseSnapshot(next);
-      }
-      console.warn('[ReaderCurl] snapshot unavailable; completing without animation: ' + String(error));
+      this.releaseSnapshots([current, next, frontTexture, backTexture]);
+      console.warn('[ReaderCurl] page texture unavailable; completing without animation: ' + String(error));
       return null;
     }
   }

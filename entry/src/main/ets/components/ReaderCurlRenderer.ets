@@ -21,6 +21,8 @@ import { buildReaderPaperMesh, ReaderPaperParameters } from '../models/ReaderSpi
 export interface ReaderCurlFrame extends ReaderPaperParameters {
   current: image.PixelMap;
   next: image.PixelMap;
+  frontTexture: image.PixelMap;
+  backTexture: image.PixelMap;
   progress: number;
   mixed: boolean;
   completed: boolean;
@@ -80,10 +82,8 @@ class ReaderCurlRenderNode extends RenderNode {
       canvas.drawImageRect(frame.next, full);
       canvas.restore();
     }
-    // 完整快照只作为纹理；留白的 UV 收拢到实际图片边界，不会变成灰色纸板。
-    canvas.drawPixelMapMesh(frame.current, mesh.columns, mesh.rows, mesh.front.vertices, 0, null, 0);
-    canvas.drawPixelMapMesh(frame.paired ? frame.next : frame.current, mesh.columns, mesh.rows,
-      mesh.back.vertices, 0, null, 0);
+    canvas.drawPixelMapMesh(frame.frontTexture, mesh.columns, mesh.rows, mesh.front.vertices, 0, null, 0);
+    canvas.drawPixelMapMesh(frame.backTexture, mesh.columns, mesh.rows, mesh.back.vertices, 0, null, 0);
     canvas.detachBrush();
     canvas.restore();
   }
