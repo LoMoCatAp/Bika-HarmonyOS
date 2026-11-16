@@ -59,7 +59,9 @@ I built this project to learn ArkTS and ArkUI. If you find it helpful, consider 
 
 This release targets **API 26**. Glass effects on toasts and system dialogs require **HarmonyOS 7.0.0 or later**.
 
-Sign the HAP before installing it. To keep your login and local data when upgrading, use the same signing certificate as your current installation. [Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
+Sign the HAP before installing it. To keep your login and local data when upgrading, use the same signing certificate as your current installation. 
+
+[Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
 
 In the app, open Settings → About → Changelog to see the version history.
 
