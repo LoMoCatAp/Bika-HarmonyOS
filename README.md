@@ -17,6 +17,21 @@
 
 学习ArkTS/ArkUI的练手项目，如果觉得项目有帮助，欢迎 **star** 支持。
 
+## 目录 / Contents
+
+- [声明](#声明)
+- [简介](#简介)
+- [界面预览](#界面预览)
+- [版本说明](#版本说明) · [中文](#中文发布说明) · [English](#english-release-notes)
+- [当前功能](#当前功能) · [阅读器](#阅读器)
+- [近期更新](#近期更新)
+- [致谢](#致谢)
+- [源码运行](#源码运行)
+- [隐私与数据](#隐私与数据)
+- [项目结构](#项目结构)
+- [反馈](#反馈)
+- [许可证](#license)
+
 ## 界面预览
 
 <p align="center">
@@ -32,15 +47,35 @@
 
 ## 版本说明
 
-- **当前版本：v1.5.2 · 平板阅读与仿真翻页**
-- 阅读器新增自动、单页和双页布局。
-- 横向阅读新增「仿真」翻页动效。
-- 漫画区任意位置都能向左或向右滑动翻页，也可点击两侧翻页，增加翻页头尾提示。
-- 阅读器设置分为「阅读」和「显示」两栏，可选择在收起工具栏后显示时间和电量。
-- 调整作品详情页的收藏、点赞按钮效果。
-- 目标版本 **API 26**；Toast 与系统弹窗为沉浸光感材质，需系统支持 **HarmonyOS 7.0.0 及以上**。
+### 中文发布说明
 
-完整更新内容见应用内「设置 → 关于 → 更新日志」，或仓库的 [v1.5.2 发布页](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)。
+**v1.5.2 · 平板阅读与仿真翻页**
+
+1. 阅读器新增自动、单页和双页布局。
+2. 横向阅读新增「仿真」翻页动效。
+3. 漫画区任意位置都能向左或向右滑动翻页，也可点击两侧翻页，增加翻页头尾提示。
+4. 阅读器设置分为「阅读」和「显示」两栏，可选择在收起工具栏后显示时间和电量。
+5. 调整作品详情页的收藏、点赞按钮效果。
+
+目标版本为 **API 26**。Toast 与系统弹窗的沉浸光感材质需要 **HarmonyOS 7.0.0 或更高版本**。
+
+HAP 需自行签名后安装。升级时请使用与旧版相同的签名覆盖安装，以保留登录和本地数据。[下载 HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub 发布页](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
+
+应用内也可通过「设置 → 关于 → 更新日志」查看版本记录。
+
+### English release notes
+
+**v1.5.2 · Tablet Reading and Page Curl**
+
+1. Added Auto, Single Page, and Double Page layouts to the reader.
+2. Added a page-curl animation option for horizontal reading.
+3. Swipe left or right anywhere in the reading area, or tap either side to turn pages. The reader now shows a message when you try to go past the first or last page of a chapter.
+4. Reader settings are grouped into Reading and Display tabs. You can show the time and battery level when the reader controls are hidden.
+5. Improved the feedback when favoriting or liking a comic on its details page.
+
+This release targets **API 26**. Glass effects on toasts and system dialogs require **HarmonyOS 7.0.0 or later**.
+
+Sign the HAP before installing it. To keep your login and local data when upgrading, use the same signing certificate as your current installation. [Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
 
 ## 当前功能
 
@@ -186,9 +221,10 @@ entry/src/main/ets/
   entrybackupability/               备份扩展能力
   common/                           常量、缓存、下载、图片加载、导出与材质兼容层
   components/                       可复用 ArkUI 组件（漫画卡片、网络图片）
+  features/                         首页、下载和个人页功能模块
   models/                           领域模型与视图模型
   network/                          请求签名、直连路由、DNS 与 API 服务
-  pages/                            首页、频道、详情、阅读器、搜索、登录注册等页面
+  pages/                            首页入口、频道、详情、阅读器、搜索、登录注册等页面
 entry/src/main/resources/           字符串、颜色（浅色 / 深色）与主题资源
 ```
 
