@@ -34,15 +34,36 @@ export function validReaderPaperRect(rect: ReaderPaperRect): boolean {
     && Number.isFinite(rect.bottom) && rect.right > rect.left && rect.bottom > rect.top;
 }
 
-/** 与 NetImage 的 Contain 及中缝对齐规则一致，不把窗口留白变成翻起的纸张。 */
+export const READER_PAGE_GAP: number = 2;
+
+/** 与单页 NetImage 的 Contain 一致。 */
 export function readerPaperImageRect(width: number, height: number, leftInset: number, rightInset: number,
-  count: number, position: number, ratio: number): ReaderPaperRect {
-  const cell = Math.max(1, (width - leftInset - rightInset - (count === 2 ? 2 : 0)) / count);
-  const x = leftInset + position * (cell + (count === 2 ? 2 : 0));
-  const imageWidth = Number.isFinite(ratio) && ratio > 0 ? Math.min(cell, height * ratio) : cell;
-  const imageHeight = Number.isFinite(ratio) && ratio > 0 ? Math.min(height, cell / ratio) : height;
-  const left = x + (count === 1 ? (cell - imageWidth) / 2 : (position === 0 ? cell - imageWidth : 0));
+  ratio: number): ReaderPaperRect {
+  const available = Math.max(1, width - leftInset - rightInset);
+  const imageWidth = ratio > 0 ? Math.min(available, height * ratio) : available;
+  const imageHeight = ratio > 0 ? Math.min(height, available / ratio) : height;
+  const left = leftInset + (available - imageWidth) / 2;
   return { left, top: (height - imageHeight) / 2, right: left + imageWidth, bottom: (height + imageHeight) / 2 };
+}
+
+export function readerTwoPageWidth(height: number, leftRatio: number, rightRatio: number): number {
+  return height * (leftRatio + rightRatio) + READER_PAGE_GAP;
+}
+
+/** 两页使用相同高度和原始比例，按整组宽度居中。 */
+export function readerPaperPairRects(width: number, height: number, leftInset: number, rightInset: number,
+  leftRatio: number, rightRatio: number): ReaderPaperRect[] {
+  const available = Math.max(READER_PAGE_GAP, width - leftInset - rightInset);
+  const bookWidth = Math.min(available, readerTwoPageWidth(height, leftRatio, rightRatio));
+  const pageHeight = (bookWidth - READER_PAGE_GAP) / (leftRatio + rightRatio);
+  const left = leftInset + (available - bookWidth) / 2;
+  const top = (height - pageHeight) / 2;
+  const bottom = top + pageHeight;
+  const spine = left + pageHeight * leftRatio;
+  return [
+    { left, top, right: spine, bottom },
+    { left: spine + READER_PAGE_GAP, top, right: left + bookWidth, bottom }
+  ];
 }
 
 interface PaperFoldGeometry {

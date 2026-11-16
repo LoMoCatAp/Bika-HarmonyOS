@@ -27,6 +27,7 @@ export struct HomePage {
   @StorageProp('bika_material_rev') materialRev: number = 0;
   /** 频道自定义：顺序与隐藏 */
   @State channelOrder: string[] = [];
+  @State channelColumns: string = adaptiveChannelColumns(0);
   @State channelHidden: string[] = [];
   @State showChannelEdit: boolean = false;
   @State refreshing: boolean = false;
@@ -458,7 +459,7 @@ export struct HomePage {
               }
             }, (ch: BikaChannel) => ch.label)
           }
-          .columnsTemplate(adaptiveChannelColumns())
+          .columnsTemplate(this.channelColumns)
           .columnsGap(14)
           .rowsGap(18)
           // 滚动统一交给外层 Scroll；越过标题边界的节点继续绘制，供 HDS 模糊采样。
@@ -472,6 +473,9 @@ export struct HomePage {
       }
       .width('100%')
       .height('100%')
+      .onSizeChange((_oldSize: SizeOptions, size: SizeOptions): void => {
+        this.channelColumns = adaptiveChannelColumns(Number(size.width));
+      })
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .clip(false)

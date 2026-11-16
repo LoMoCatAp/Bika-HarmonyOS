@@ -238,13 +238,24 @@ test('moving a corner vertically changes the fold geometry at the same horizonta
   assert(Math.abs(diagonal.front.vertices[col*2]-diagonal.front.vertices[diagonal.rows*stride+col*2])>1);
 });
 test('contain image geometry excludes the reader margins and aligns paired images to their inner edges',()=>{
-  const single=paperModel.readerPaperImageRect(1920,1260,0,0,1,0,.67);
+  const single=paperModel.readerPaperImageRect(1920,1260,0,0,.67);
   assert(single.left>500&&single.right<1420);assert.equal(single.top,0);assert.equal(single.bottom,1260);
-  const left=paperModel.readerPaperImageRect(1920,1260,0,0,2,0,.67);
-  const right=paperModel.readerPaperImageRect(1920,1260,0,0,2,1,.67);
+  const [left,right]=paperModel.readerPaperPairRects(1920,1260,0,0,.67,.67);
   assert.equal(left.right,959);assert.equal(right.left,961);
   assert.equal(paperModel.buildReaderPaperMesh({...pose(),touchX:NaN}),null);
 });
+test('different-sized leaves are centered together and share a height without stretching',()=>{
+  for (const [width,height] of [[960,600],[530,780]]) {
+    const [left,right]=paperModel.readerPaperPairRects(width,height,12,6,.8,.51);
+    assert(Math.abs((left.left-12)-(width-6-right.right))<1e-6);
+    assert.equal(left.top,right.top);
+    assert.equal(left.bottom,right.bottom);
+    assert.equal(right.left-left.right,2);
+    assert(Math.abs((left.right-left.left)/(left.bottom-left.top)-.8)<1e-6);
+    assert(Math.abs((right.right-right.left)/(right.bottom-right.top)-.51)<1e-6);
+  }
+});
+
 class Brush{setAntiAlias(){}setColor(value){assert.equal(value,0xFFFFFFFF);}}
 class RenderNode{}
 class NodeController{}
@@ -264,6 +275,19 @@ test('paper draws original-color textures as two shared meshes without a gray ba
     assert.equal(saves,0);
   }
 });
+test('paired curl reveals the next spread from the current hinge when the next hinge is offset',()=>{
+  const node=new renderer.ReaderCurlRenderNode(),clips=[];
+  const state=pose(.3,true,true);
+  state.backRect={left:150,top:80,right:630,bottom:820};
+  node.content={...state,current:'A',next:'B',frontTexture:'crop A',backTexture:'crop B',progress:.3,completed:false};
+  const canvas={
+    attachBrush(){},detachBrush(){},save(){},restore(){},drawImageRect(){},drawPixelMapMesh(){},
+    clipRect:rect=>clips.push(rect)
+  };
+  node.draw({canvas});
+  assert.equal(clips[1].left,state.frontRect.left);
+});
+
 test('corner gestures retain live vertical movement and a fully open layout keeps original image margins',()=>{
   const h=reader();h.page.getPageBounds=()=>[{left:300,top:20,right:700,bottom:680}];
   h.page.isPaired=()=>false;h.page.onPanStart({offsetX:-20,offsetY:0,fingerList:[{localX:675,localY:25}]});

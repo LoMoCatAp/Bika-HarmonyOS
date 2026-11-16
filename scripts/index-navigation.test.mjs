@@ -33,6 +33,16 @@ function subject(file, name, names, globals) {
   const { Subject } = evaluate(`export class Subject {\n${methods.join('\n')}\n}`, globals);
   return new Subject();
 }
+test('home channel columns fit the measured compact tablet and split-screen widths', () => {
+  const source = ts.createSourceFile('Constants.ets', read('common/Constants.ets'), ts.ScriptTarget.Latest, true);
+  const method = source.statements.find(node => node.name?.getText(source) === 'adaptiveChannelColumns');
+  assert(method);
+  const { adaptiveChannelColumns } = evaluate(method.getText(source));
+  for (const [width, count] of [[0,3],[360,3],[459,3],[460,4],[530,4],[599,4],[600,5],[849,5],[850,6]]) {
+    assert.equal(adaptiveChannelColumns(width).split(' ').length, count, 'width: ' + width);
+  }
+});
+
 const navigationMethods = ['shouldShowTabBar', 'canSwipeRootTabs', 'applyTabBarVisibility', 'syncTabBarVisibility',
   'applyPendingTabsMaterial', 'onTabsMaterialChanged', 'onTabsAppear', 'onSubpageChanged', 'openChannel',
   'onPageHide', 'onPageShow', 'aboutToDisappear', 'openProfileSubpage'];

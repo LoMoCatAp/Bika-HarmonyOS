@@ -20,11 +20,6 @@ export struct NetImage {
   @Prop placeholderColor: string = '#EEF1F7';
   /** true=填满父容器（翻页模式）；false=按图片比例自适应高度（连续滚动无缝模式） */
   @Prop fillParent: boolean = false;
-  /** 双页时把图片靠向中缝；默认居中，保持其他图片的布局。 */
-  @Prop imageAlignment: Alignment = Alignment.Center;
-  @State sourceRatio: number = 0;
-  @State frameWidth: number = 0;
-  @State frameHeight: number = 0;
   onImageSize: (width: number, height: number) => void = (_width: number, _height: number): void => {};
   onImageDecoded: (renderId: number, decoded: boolean) => void = (_id: number, _decoded: boolean): void => {};
   private readonly renderId: number = ++netImageRenderSequence;
@@ -113,20 +108,11 @@ export struct NetImage {
     }
   }
 
-  private imageFrameWidth(): Dimension {
-    if (!this.fillParent || this.fit !== ImageFit.Contain || this.imageAlignment === Alignment.Center
-      || this.sourceRatio <= 0 || this.frameWidth <= 0 || this.frameHeight <= 0) {
-      return '100%';
-    }
-    // 等比缩放后的图片宽度，避免半屏容器中的留白叠加到中缝。
-    return Math.min(this.frameWidth, this.frameHeight * this.sourceRatio);
-  }
-
   build() {
-    Stack({ alignContent: this.imageAlignment }) {
+    Stack({ alignContent: Alignment.Center }) {
       if (this.src.startsWith('file://')) {
         Image(this.src)
-          .width(this.imageFrameWidth())
+          .width('100%')
           .height(this.fillParent ? '100%' : undefined)
           .draggable(false)
           .objectFit(this.fit)
@@ -135,7 +121,6 @@ export struct NetImage {
             : this.radius)
           .onComplete((event) => {
             if (event && event.width > 0 && event.height > 0) {
-              this.sourceRatio = event.width / event.height;
               this.onImageSize(event.width, event.height);
               if (this.alive && event.loadingStatus === 1) {
                 this.onImageDecoded(this.renderId, true);
@@ -145,7 +130,7 @@ export struct NetImage {
           .onError((): void => this.onImageDecoded(this.renderId, false))
       } else if (this.pixelMap !== null) {
         Image(this.pixelMap)
-          .width(this.imageFrameWidth())
+          .width('100%')
           .height(this.fillParent ? '100%' : undefined)
           .draggable(false)
           .objectFit(this.fit)
@@ -154,7 +139,6 @@ export struct NetImage {
             : this.radius)
           .onComplete((event) => {
             if (event && event.width > 0 && event.height > 0) {
-              this.sourceRatio = event.width / event.height;
               this.onImageSize(event.width, event.height);
               if (this.alive && event.loadingStatus === 1) {
                 this.onImageDecoded(this.renderId, true);
@@ -201,11 +185,5 @@ export struct NetImage {
     }
     .width('100%')
     .height(this.fillParent ? '100%' : undefined)
-    .onAreaChange((_oldArea: Area, area: Area) => {
-      if (this.fillParent && this.fit === ImageFit.Contain && this.imageAlignment !== Alignment.Center) {
-        this.frameWidth = Number(area.width);
-        this.frameHeight = Number(area.height);
-      }
-    })
   }
 }

@@ -75,10 +75,9 @@ class ReaderCurlRenderNode extends RenderNode {
     canvas.drawImageRect(frame.paired ? frame.current : frame.next, full);
     if (frame.paired) {
       canvas.save();
-      const spine = (frame.frontRect.left + frame.backRect.right) / 2;
-      const otherSpine = (frame.frontRect.right + frame.backRect.left) / 2;
-      canvas.clipRect({ left: frame.fromRight ? spine : 0, top: 0,
-        right: frame.fromRight ? frame.width : otherSpine, bottom: frame.height });
+      // 两组散页的中缝可能不在同一位置，从当前翻起的纸边开始揭示目标页。
+      canvas.clipRect({ left: frame.fromRight ? frame.frontRect.left : 0, top: 0,
+        right: frame.fromRight ? frame.width : frame.frontRect.right, bottom: frame.height });
       canvas.drawImageRect(frame.next, full);
       canvas.restore();
     }

@@ -5,6 +5,7 @@ import { inputConsumer, KeyCode } from '@kit.InputKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
+import { WindowHelper } from '../common/WindowHelper';
 import { supportsComponentImmersiveMaterial, compatibleSheetMaterial } from '../common/CompatibleMaterial';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
@@ -16,7 +17,9 @@ import { ReaderCurlPager } from '../components/ReaderCurlPager';
 import { ReaderCurlController } from '../models/ReaderCurlController';
 import { ReaderLayoutTransition } from '../components/ReaderLayoutTransition';
 import { ReaderLayoutTransitionController } from '../models/ReaderLayoutTransitionController';
-import { ReaderPaperRect, readerPaperImageRect } from '../models/ReaderSpineMesh';
+import {
+  ReaderPaperRect, READER_PAGE_GAP, readerPaperImageRect, readerPaperPairRects, readerTwoPageWidth
+} from '../models/ReaderSpineMesh';
 import {
   ReaderTurnEffect, normalizeReaderTurnEffect, readerBoundarySwipeDelta, readerSideTapDelta
 } from '../models/ReaderCurlGeometry';
@@ -182,11 +185,11 @@ class ReaderCapsuleMaterial extends CommonModifier {
 struct ReaderPage {
   @StorageProp('bika_material_level') readerMaterialLevel: string = 'EXQUISITE';
   private readonly readerBarBackground: ReaderBarBackground = new ReaderBarBackground();
-  @State showControls: boolean = true;
+  @State @Watch('syncReaderSystemBars') showControls: boolean = true;
   @State currentVisibleIndex: number = 0;
-  @State totalImages: number = 0;
-  @State isLoading: boolean = true;
-  @State errorText: string = '';
+  @State @Watch('syncReaderSystemBars') totalImages: number = 0;
+  @State @Watch('syncReaderSystemBars') isLoading: boolean = true;
+  @State @Watch('syncReaderSystemBars') errorText: string = '';
   @State currentOrder: number = 1;
   @State epsCount: number = 1;
   @State comicTitle: string = '';
@@ -212,7 +215,8 @@ struct ReaderPage {
   @State pagerDisplayIndex: number = 0;
   @State pagerRelocating: boolean = false;
   private widePageIndices: Set<number> = new Set();
-  private readerImageRatios: Map<number, number> = new Map();
+  @State readerViewportHeight: number = 0;
+  @State readerImageRatios: Map<number, number> = new Map();
   private readerDecodedImages: Map<number, number> = new Map();
   private readerLayoutTransition: ReaderLayoutTransitionController = new ReaderLayoutTransitionController();
   private pagerLayoutRevision: number = 0;
@@ -243,7 +247,7 @@ struct ReaderPage {
   /** 本次漫画区触摸已用于收起滑条，随后 click 不再关闭上下栏。 */
   private readerContentTouchRestoredProgress: boolean = false;
   /** 底部弹窗（单例，按类型分发：settings/saveImage/export/saveFile） */
-  @State showSheet: boolean = false;
+  @State @Watch('syncReaderSystemBars') showSheet: boolean = false;
   @State sheetKind: string = '';
   @State readerDownloadChapters: EpViewModel[] = [];
   @State downloadSelected: number[] = [];
@@ -280,6 +284,15 @@ struct ReaderPage {
   @State readerSettingsMeasuredHeight: number = 0;
   private readerWindow: window.Window | undefined = undefined;
   private readerWindowActive: boolean = false;
+  private readerSystemBarsVisible: boolean | undefined = true;
+  private readerWindowStatusListener = (status: window.WindowStatusType): void => {
+    if (this.readerWindowActive &&
+      (status === window.WindowStatusType.FULL_SCREEN || status === window.WindowStatusType.MAXIMIZE)) {
+      // 小窗／分屏返回全屏后，重新应用当前阅读状态。
+      this.readerSystemBarsVisible = undefined;
+      this.syncReaderSystemBars();
+    }
+  };
   private readerAvoidAreaListener = (options: window.AvoidAreaOptions): void => {
     if (options.type === window.AvoidAreaType.TYPE_SYSTEM || options.type === window.AvoidAreaType.TYPE_CUTOUT ||
       options.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
@@ -408,6 +421,21 @@ struct ReaderPage {
     this.rebuildPageSpreads();
   }
 
+  private isImmersiveReading(): boolean {
+    return this.readerPageVisible && !this.showControls && !this.showSheet && !this.isLoading &&
+      this.errorText.length === 0 && this.totalImages > 0;
+  }
+
+  private syncReaderSystemBars(): void {
+    const win = this.readerWindow;
+    const visible = !this.isImmersiveReading();
+    if (!this.readerWindowActive || win === undefined || visible === this.readerSystemBarsVisible) {
+      return;
+    }
+    this.readerSystemBarsVisible = visible;
+    WindowHelper.setReaderSystemBars(win, visible, this.animationsOn && this.readerPageVisible);
+  }
+
   private observeReaderInsets(): void {
     this.readerTopInset = this.topSafeHeight;
     this.readerBottomInset = this.bottomSafeHeight;
@@ -418,8 +446,10 @@ struct ReaderPage {
       }
       this.readerWindow = win;
       this.updateReaderWindowMetrics();
+      this.syncReaderSystemBars();
       win.on('windowSizeChange', this.readerWindowSizeListener);
       win.on('avoidAreaChange', this.readerAvoidAreaListener);
+      win.on('windowStatusDidChange', this.readerWindowStatusListener);
     }).catch((err: Error) => {
       console.warn('[ReaderPage] window metrics unavailable: ' + JSON.stringify(err));
     });
@@ -430,6 +460,12 @@ struct ReaderPage {
     const win = this.readerWindow;
     this.readerWindow = undefined;
     if (win !== undefined) {
+      WindowHelper.setReaderSystemBars(win, true, false);
+      try {
+        win.off('windowStatusDidChange', this.readerWindowStatusListener);
+      } catch (err) {
+        console.warn('[ReaderPage] remove window status listener failed: ' + JSON.stringify(err));
+      }
       try {
         win.off('windowSizeChange', this.readerWindowSizeListener);
       } catch (err) {
@@ -1599,10 +1635,12 @@ struct ReaderPage {
 
   onPageShow(): void {
     this.readerPageVisible = true;
+    this.syncReaderSystemBars();
   }
 
   onPageHide(): void {
     this.readerPageVisible = false;
+    this.syncReaderSystemBars();
     this.readerLayoutTransition.clear();
     this.curlController.cancel();
   }
@@ -1791,7 +1829,10 @@ struct ReaderPage {
       || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
       return;
     }
-    this.readerImageRatios.set(index, width / height);
+    const ratio = width / height;
+    if (this.readerImageRatios.get(index) !== ratio) {
+      this.readerImageRatios.set(index, ratio);
+    }
     if (this.widePageIndices.has(index) || !isReaderWideImage(width, height)) {
       return;
     }
@@ -1883,19 +1924,42 @@ struct ReaderPage {
     return spread !== undefined && this.readerDecodedImages.has(spread.first) && this.readerDecodedImages.has(spread.last);
   }
 
+  private readerSpreadImageWeight(spreadIndex: number, page: number): number {
+    const spread = this.pageSpreads[spreadIndex];
+    if (spread === undefined || spread.first === spread.last) {
+      return 1;
+    }
+    const other = page === spread.first ? spread.last : spread.first;
+    return this.readerImageRatios.get(page) ?? this.readerImageRatios.get(other) ?? 0.67;
+  }
+
+  private readerSpreadMaxWidth(spreadIndex: number): number | undefined {
+    if (!this.doublePageActive) {
+      return READER_SINGLE_PAGE_MAX_WIDTH;
+    }
+    const spread = this.pageSpreads[spreadIndex];
+    if (spread === undefined || spread.first === spread.last || this.readerViewportHeight <= 0) {
+      return undefined;
+    }
+    return readerTwoPageWidth(this.readerViewportHeight, this.readerSpreadImageWeight(spreadIndex, spread.first),
+      this.readerSpreadImageWeight(spreadIndex, spread.last)) + this.readerLeftInset + this.readerRightInset;
+  }
+
   private readerPageBounds(index: number, width: number, height: number): ReaderPaperRect[] {
     const spread = this.pageSpreads[index];
     if (spread === undefined) {
       return [];
     }
-    const pages = readerSpreadPages(spread, this.readingMode === 1);
+    if (spread.first !== spread.last) {
+      const pages = readerSpreadPages(spread, this.readingMode === 1);
+      return readerPaperPairRects(width, height, this.readerLeftInset, this.readerRightInset,
+        this.readerSpreadImageWeight(index, pages[0]), this.readerSpreadImageWeight(index, pages[1]));
+    }
     const contentWidth = this.doublePageActive ? width : Math.min(width, READER_SINGLE_PAGE_MAX_WIDTH);
     const leftOffset = (width - contentWidth) / 2;
-    return pages.map((page: number, position: number): ReaderPaperRect => {
-      const rect = readerPaperImageRect(contentWidth, height, this.readerLeftInset, this.readerRightInset,
-        pages.length, position, this.readerImageRatios.get(page) ?? 0);
-      return { left: rect.left + leftOffset, top: rect.top, right: rect.right + leftOffset, bottom: rect.bottom };
-    });
+    const rect = readerPaperImageRect(contentWidth, height, this.readerLeftInset, this.readerRightInset,
+      this.readerImageRatios.get(spread.first) ?? 0);
+    return [{ left: rect.left + leftOffset, top: rect.top, right: rect.right + leftOffset, bottom: rect.bottom }];
   }
 
   private async changeTurnEffect(effect: ReaderTurnEffect): Promise<void> {
@@ -1962,19 +2026,18 @@ struct ReaderPage {
   }
 
   @Builder
-  readerPagerImage(img: ReaderImage, index: number, alignment: Alignment) {
+  readerPagerImage(img: ReaderImage, index: number, spreadIndex: number) {
     NetImage({
       src: img.url,
       candidates: this.candidateUrls[index] || [],
       fit: ImageFit.Contain,
       radius: 0,
       fillParent: true,
-      imageAlignment: alignment,
       onImageSize: (width: number, height: number): void => this.onReaderImageSize(index, img.url, width, height),
       onImageDecoded: (renderId: number, decoded: boolean): void =>
         this.onReaderImageDecoded(index, img.url, renderId, decoded)
     })
-      .layoutWeight(1)
+      .layoutWeight(this.readerSpreadImageWeight(spreadIndex, index))
       .height('100%')
       .draggable(true)
       .onDragStart((event: DragEvent) => {
@@ -1986,18 +2049,17 @@ struct ReaderPage {
   @Builder
   readerSpreadContent(spreadIndex: number) {
     Stack() {
-      Row({ space: 2 }) {
+      Row({ space: READER_PAGE_GAP }) {
         if (spreadIndex >= 0 && spreadIndex < this.pageSpreads.length) {
           ForEach(readerSpreadPages(this.pageSpreads[spreadIndex], this.readingMode === 1),
-            (page: number, position: number) => {
-              this.readerPagerImage(this.imageDataSource.getData(page), page,
-                this.isPairedSpread(spreadIndex) ? (position === 0 ? Alignment.End : Alignment.Start) : Alignment.Center)
+            (page: number) => {
+              this.readerPagerImage(this.imageDataSource.getData(page), page, spreadIndex)
             }, (page: number): string => page + '_' + this.imageDataSource.getData(page).url)
         }
       }
       .direction(Direction.Ltr)
       .width('100%').height('100%')
-      .constraintSize({ maxWidth: this.doublePageActive ? undefined : READER_SINGLE_PAGE_MAX_WIDTH })
+      .constraintSize({ maxWidth: this.readerSpreadMaxWidth(spreadIndex) })
       .padding({ left: this.readerLeftInset, right: this.readerRightInset })
     }
     .width('100%').height('100%')
@@ -2221,6 +2283,12 @@ struct ReaderPage {
     }
     .width('100%')
     .height('100%')
+    .onSizeChange((_oldSize: SizeOptions, size: SizeOptions): void => {
+      const height = Number(size.height);
+      if (Number.isFinite(height) && height > 0 && height !== this.readerViewportHeight) {
+        this.readerViewportHeight = height;
+      }
+    })
     .backgroundColor(COLOR_READER_BG)
     .bindSheet($$this.showSheet, this.unifiedSheet(), {
       systemMaterial: this.sheetKind === 'settings'
@@ -2570,7 +2638,7 @@ struct ReaderPage {
       Stack({ alignContent: Alignment.TopStart }) {
         this.readerWithBottomBar()
         this.readerTopBar()
-        if (this.readerShowStatus && this.readerPageVisible && !this.showControls && !this.showSheet && !this.isLoading) {
+        if (this.readerShowStatus && this.isImmersiveReading()) {
           Stack({ alignContent: Alignment.BottomEnd }) {
             ReaderStatusIndicator()
           }

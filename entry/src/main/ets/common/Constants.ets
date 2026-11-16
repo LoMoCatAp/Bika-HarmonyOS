@@ -9,16 +9,15 @@ export function screenWidthVp(): number {
   return px2vp(display.getDefaultDisplaySync().width);
 }
 
-/** 频道图标网格列数（平板更宽时一行塞入更多） */
-export function adaptiveChannelColumns(): string {
-  let w = screenWidthVp();
-  if (w >= 900) {
+/** 频道网格按容器实际可用宽度布局，兼顾窄平板和分屏。 */
+export function adaptiveChannelColumns(width: number): string {
+  if (width >= 850) {
     return '1fr 1fr 1fr 1fr 1fr 1fr';
   }
-  if (w >= 700) {
+  if (width >= 600) {
     return '1fr 1fr 1fr 1fr 1fr';
   }
-  if (w >= 560) {
+  if (width >= 460) {
     return '1fr 1fr 1fr 1fr';
   }
   return '1fr 1fr 1fr';

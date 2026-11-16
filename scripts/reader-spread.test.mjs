@@ -23,6 +23,7 @@ function evaluate(source, globals = {}) {
 }
 const model = evaluate(read('models/ReaderPageSpread.ets'));
 const curlModel = evaluate(read('models/ReaderCurlGeometry.ets'));
+const { WindowHelper } = evaluate(read('common/WindowHelper.ets'));
 const groups = (count, double = true, first = false, wide = []) => model.buildReaderPageSpreads(count, double, first, new Set(wide));
 for (const [width,height,expected] of [[1100,740,true],[780,1100,false],[560,350,false],[719,400,false],[720,600,true],
   [1000,900,false],[0,0,false],[NaN,500,false],[900,Infinity,false]]) {
@@ -75,7 +76,8 @@ const names = ['rebuildPageSpreads','resetPageSpreads','queuePagerRelocation','c
   'currentReaderPage','clampProgressPage','jumpToReaderPage','turnByVolume','changePageLayout','changeFirstImageSingle',
   'updateReaderWindowSize','updateReaderWindowHeight','restoreLastPage','switchReadingMode','aboutToAppear','changeReaderStripWidth',
   'usesReaderCurl','changeTurnEffect','changeReaderStatus','onReaderPagerClick','onReaderImageDecoded','isReaderSpreadDecoded',
-  'showReaderPageBoundary','onReaderNativePagerTouch'];
+  'showReaderPageBoundary','onReaderNativePagerTouch','isImmersiveReading','syncReaderSystemBars',
+  'onPageShow','onPageHide','stopObservingReaderInsets'];
 const source = read('pages/ReaderPage.ets');
 const ast = ts.createSourceFile('ReaderPage.ets',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.ETS);
 const owner = ast.statements.find(node=>node.name?.getText(ast)==='ReaderPage');
@@ -83,7 +85,7 @@ const methods = names.map(name=>{
   const member=owner.members.find(node=>node.name?.getText(ast)===name); assert(member,name); return member.getText(ast);
 }).join('\n');
 function reader() {
-  const frames=[],calls=[],writes=[],messages=[],tips=[],settings=new Map(),timers=new Map();
+  const frames=[],calls=[],writes=[],messages=[],tips=[],systemBars=[],settings=new Map(),timers=new Map();
   const images=Array.from({length:12},(_,i)=>({url:'image-'+i,failed:false}));
   let timerId=0, provider, params={comicId:'bookA',comicTitle:'Title',currentOrder:1,epsCount:1};
   const cache={isReady:()=>true,getSetting:(key,fallback)=>settings.get(key)??fallback,
@@ -93,6 +95,7 @@ function reader() {
     ...model, ...curlModel, CacheManager:{getInstance:()=>provider()},router:{getParams:()=>params},
     showImmersiveToast:value=>messages.push(value.message),ScrollAlign:{START:0},
     TouchType:{Down:0,Up:1,Move:2,Cancel:3},
+    WindowHelper:{setReaderSystemBars:(_window,visible,animated)=>systemBars.push([visible,animated])},
     setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id;},
     clearTimeout:id=>timers.delete(id)
   });
@@ -104,7 +107,8 @@ function reader() {
     generation:1,progressNavigationId:0,pageLayoutChangeId:0,firstImageChangeId:0,readingModeChangeId:0,
     stripReaderWidth:780,stripWidthChangeId:0,stripRelocating:false,
     isLoading:false,showSheet:false,downloadMenuVisible:false,progressMode:false,progressDragging:false,progressTouching:false,lastVolumeTurnAt:0,
-    comicId:'bookA',currentOrder:1,showControls:true,
+    comicId:'bookA',currentOrder:1,showControls:true,readerPageVisible:true,readerSystemBarsVisible:true,
+    readerWindow:{off(){}},readerShowStatus:false,errorText:'',animationsOn:true,
     imageDataSource:{getData:index=>images[index]},
     swiperController:{changeIndex:(index,animation)=>{calls.push([index,animation]);page.onPagerChange(index);}},
     getUIContext:()=>({px2vp:value=>value/2,postFrameCallback:callback=>frames.push(callback)}),
@@ -114,7 +118,7 @@ function reader() {
     observeReaderInsets:()=>{page.readerWindowActive=true;},registerVolumeKeys(){},updateChapterButtons(){},loadImagesWithCache:async()=>{},loadLocalImages(){}
   });
   const flush=()=>{let limit=20;while(frames.length&&limit--){for(const callback of frames.splice(0))callback.onFrame(0);}assert(limit>0,'frame loop');};
-  return {page,frames,calls,writes,messages,tips,settings,cache,images,timers,flush,
+  return {page,frames,calls,writes,messages,tips,systemBars,settings,cache,images,timers,flush,
     setProvider:value=>provider=value,setParams:value=>params=value};
 }
 test('rotation and resizing relocate by the original image rather than the spread number',()=>{
@@ -316,6 +320,64 @@ test('reading status visibility is restored from saved settings, and rapid toggl
   await earlier;
   assert.equal(h.settings.get('reader_show_status'), 'false');
   assert.equal(h.page.readerShowStatus, false);
+});
+
+test('fullscreen follows the reader controls and foreground lifecycle independently of the clock setting', () => {
+  const h = reader();
+  const page = h.page;
+  page.syncReaderSystemBars();
+  assert.deepEqual(h.systemBars, []);
+  page.showControls = false;
+  page.syncReaderSystemBars();
+  assert.equal(page.readerShowStatus, false);
+  assert.equal(page.isImmersiveReading(), true);
+  page.onPageHide();
+  page.onPageShow();
+  page.showControls = true;
+  page.syncReaderSystemBars();
+  page.showControls = false;
+  page.syncReaderSystemBars();
+  page.stopObservingReaderInsets();
+  assert.deepEqual(h.systemBars, [[false, true], [true, false], [false, true], [true, true], [false, true], [true, false]]);
+});
+
+test('sheets, loading and empty chapters keep the system bars visible', () => {
+  const h = reader();
+  const page = h.page;
+  page.showControls = false;
+  for (const [key, value] of [['showSheet', true], ['isLoading', true], ['errorText', 'offline'], ['totalImages', 0]]) {
+    const previous = page[key];
+    page[key] = value;
+    page.syncReaderSystemBars();
+    assert.equal(page.isImmersiveReading(), false);
+    page[key] = previous;
+  }
+  assert.deepEqual(h.systemBars, []);
+});
+
+test('restoring the main window wins over a pending hide and updates both system bars', async () => {
+  const calls = [];
+  let finishHide;
+  let started;
+  const hideStarted = new Promise(resolve => { started = resolve; });
+  const win = {
+    setSpecificSystemBarEnabled(bar, visible, animated) {
+      calls.push([bar, visible, animated]);
+      if (!visible && bar === 'status') {
+        return new Promise(resolve => {
+          finishHide = resolve;
+          started();
+        });
+      }
+      return Promise.resolve();
+    }
+  };
+  const hide = WindowHelper.setReaderSystemBars(win, false, true);
+  await hideStarted;
+  const restore = WindowHelper.setReaderSystemBars(win, true, false);
+  finishHide();
+  await Promise.all([hide, restore]);
+  assert.deepEqual(calls, [['status', false, true], ['status', true, false], ['navigationIndicator', true, false]]);
 });
 
 test('side taps follow reading direction and keep center tap and progress restoration behavior',()=>{
