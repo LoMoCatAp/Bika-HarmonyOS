@@ -59,7 +59,9 @@
 
 目标版本为 **API 26**。Toast 与系统弹窗的沉浸光感材质需要 **HarmonyOS 7.0.0 或更高版本**。
 
-HAP 需自行签名后安装。升级时请使用与旧版相同的签名覆盖安装，以保留登录和本地数据。[下载 HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub 发布页](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
+HAP 需自行签名后安装。升级时请使用与旧版相同的签名覆盖安装，以保留登录和本地数据。
+
+[下载 HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub 发布页](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
 
 应用内也可通过「设置 → 关于 → 更新日志」查看版本记录。
 
