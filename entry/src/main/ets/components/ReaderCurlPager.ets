@@ -1,7 +1,7 @@
 import { image } from '@kit.ImageKit';
 import { COLOR_READER_BG } from '../common/Constants';
 import { ReaderCurlController } from '../models/ReaderCurlController';
-import { readerCurlTarget, readerCurlProgress, shouldCommitReaderCurl } from '../models/ReaderCurlGeometry';
+import { readerBoundarySwipeDelta, readerCurlTarget, readerCurlProgress, shouldCommitReaderCurl } from '../models/ReaderCurlGeometry';
 import { ReaderCurlFrame, ReaderCurlNodeController } from './ReaderCurlRenderer';
 import { ReaderPaperRect, validReaderPaperRect } from '../models/ReaderSpineMesh';
 
@@ -15,16 +15,19 @@ export struct ReaderCurlPager {
   @Prop @Watch('onExternalChange') revision: number = 0;
   @Prop @Watch('onExternalChange') blocked: boolean = false;
   @Prop @Watch('onExternalChange') animationsOn: boolean = true;
+  @Prop @Watch('onExternalChange') maxContentWidth: number = 0;
   @BuilderParam page: (index: number) => void;
   controller: ReaderCurlController = new ReaderCurlController();
   isPaired: (index: number) => boolean = (_index: number): boolean => false;
+  isSpreadDecoded: (index: number) => boolean = (_index: number): boolean => false;
   getPageBounds: (index: number, width: number, height: number) => ReaderPaperRect[] =
     (_index: number, _width: number, _height: number): ReaderPaperRect[] => [];
   onIndexChange: (index: number) => void = (_index: number): void => {};
   onTurnStart: () => void = (): void => {};
   onTurnEnd: () => void = (): void => {};
+  onBoundaryTurn: (delta: number) => void = (_delta: number): void => {};
   onContentTouch: (event: TouchEvent) => void = (_event: TouchEvent): void => {};
-  onContentClick: () => void = (): void => {};
+  onContentClick: (x: number, width: number) => void = (_x: number, _width: number): void => {};
   @State drawing: boolean = false;
   private readonly instanceId: string = 'reader_curl_' + (++curlPagerSequence);
   private nodeController: ReaderCurlNodeController = new ReaderCurlNodeController();
@@ -43,6 +46,7 @@ export struct ReaderCurlPager {
   private frame: ReaderCurlFrame | null = null;
   private gestureOpen: boolean = false;
   private gestureCancelled: boolean = false;
+  private drawQueued: boolean = false;
 
   aboutToAppear(): void {
     this.alive = true;
@@ -109,22 +113,27 @@ export struct ReaderCurlPager {
   }
 
   private takeFrame(target: number, offset: number, anchorY: number): ReaderCurlFrame | null {
+    if (!this.isSpreadDecoded(this.index) || !this.isSpreadDecoded(target)) {
+      return null;
+    }
     let current: image.PixelMap | null = null;
     let next: image.PixelMap | null = null;
     try {
       const context = this.getUIContext();
       const pixelWidth = context.vp2px(this.pageWidth);
       const pixelHeight = context.vp2px(this.pageHeight);
-      const scale = Math.min(1, 3072 / Math.max(pixelWidth, pixelHeight));
+      const scale = Math.min(1, 1920 / Math.max(pixelWidth, pixelHeight));
       const snapshot = context.getComponentSnapshot();
-      current = snapshot.getSync(this.snapshotId(this.index), { scale });
-      next = snapshot.getSync(this.snapshotId(target), { scale });
+      current = snapshot.getSync(this.snapshotId(this.index), { scale, waitUntilRenderFinished: true });
+      next = snapshot.getSync(this.snapshotId(target), { scale, waitUntilRenderFinished: true });
       const a = current.getImageInfoSync().size;
       const b = next.getImageInfoSync().size;
       if (a.width <= 0 || a.height <= 0 || b.width <= 0 || b.height <= 0) {
         throw new Error('Empty page snapshot');
       }
-      const paired = this.isPaired(this.index) && this.isPaired(target);
+      const sourcePaired = this.isPaired(this.index);
+      const targetPaired = this.isPaired(target);
+      const paired = sourcePaired && targetPaired;
       const fromRight = offset < 0;
       const frontRect = this.imageRect(this.index, fromRight, paired);
       const backRect = paired ? this.imageRect(target, !fromRight, true) : frontRect;
@@ -132,7 +141,7 @@ export struct ReaderCurlPager {
       const anchor = Math.max(0, Math.min(height, context.vp2px(anchorY) - frontRect.top));
       const cornerY = anchor < height * 0.3 ? 0 : anchor > height * 0.7 ? height : anchor;
       return {
-        current, next, width: pixelWidth, height: pixelHeight, frontRect, backRect, paired, fromRight,
+        current, next, width: pixelWidth, height: pixelHeight, frontRect, backRect, paired, mixed: sourcePaired !== targetPaired, fromRight,
         touchX: frontRect.right - frontRect.left, touchY: cornerY, cornerY, progress: 0, completed: false
       };
     } catch (error) {
@@ -177,7 +186,8 @@ export struct ReaderCurlPager {
     if (!this.busy || this.settling) {
       return;
     }
-    this.progress = readerCurlProgress(offset, this.pageWidth, this.initialOffset);
+    const width = this.maxContentWidth > 0 ? Math.min(this.pageWidth, this.maxContentWidth) : this.pageWidth;
+    this.progress = readerCurlProgress(offset, width, this.initialOffset);
     if (this.frame !== null) {
       this.frame.progress = this.progress;
       const context = this.getUIContext();
@@ -187,8 +197,28 @@ export struct ReaderCurlPager {
       this.frame.touchX = Math.max(-width, width - context.vp2px(travel));
       this.frame.touchY = Math.max(0, Math.min(height, this.frame.cornerY + context.vp2px(verticalOffset)));
       this.frame.completed = false;
-      this.nodeController.show(this.frame);
+      this.queueDragDraw();
     }
+  }
+
+  private queueDragDraw(): void {
+    if (this.drawQueued) {
+      return;
+    }
+    this.drawQueued = true;
+    const session = this.session;
+    this.getUIContext().postFrameCallback({
+      onFrame: (_time: number): void => {
+        if (session !== this.session) {
+          return;
+        }
+        this.drawQueued = false;
+        if (this.alive && !this.settling && this.frame !== null) {
+          this.nodeController.show(this.frame);
+        }
+      },
+      onIdle: (_time: number): void => {}
+    });
   }
 
   private canCommit(): boolean {
@@ -272,6 +302,7 @@ export struct ReaderCurlPager {
       this.gestureCancelled = true;
     }
     this.session++;
+    this.drawQueued = false;
     this.nodeController.clear();
     this.drawing = false;
     const frame = this.frame;
@@ -300,10 +331,22 @@ export struct ReaderCurlPager {
     return true;
   }
 
+  private beginPan(event: GestureEvent): void {
+    const offsetY = event.offsetY ?? 0;
+    if (Math.abs(event.offsetX) < Math.abs(offsetY) * 0.65) {
+      return;
+    }
+    const finger = event.fingerList[0];
+    const startY = finger === undefined ? this.pageHeight * 0.8 : finger.localY - offsetY;
+    this.begin(event.offsetX, startY);
+  }
+
   private onPanStart(event: GestureEvent): void {
     this.gestureOpen = true;
-    this.gestureCancelled = false;
-    this.begin(event.offsetX, event.fingerList[0]?.localY ?? this.pageHeight * 0.8);
+    this.gestureCancelled = this.busy || this.blocked;
+    if (!this.gestureCancelled) {
+      this.beginPan(event);
+    }
   }
 
   private onPanUpdate(event: GestureEvent): void {
@@ -311,17 +354,26 @@ export struct ReaderCurlPager {
       return;
     }
     if (!this.busy) {
-      this.begin(event.offsetX, event.fingerList[0]?.localY ?? this.pageHeight * 0.8);
+      this.beginPan(event);
     }
     this.update(event.offsetX, event.offsetY ?? 0);
   }
 
   private onPanEnd(event: GestureEvent): void {
+    const active = this.gestureOpen && !this.gestureCancelled && this.alive && !this.blocked;
     this.gestureOpen = false;
-    if (!this.gestureCancelled) {
-      this.update(event.offsetX, event.offsetY ?? 0);
-      this.settle(shouldCommitReaderCurl(this.progress, this.initialOffset, event.velocityX));
+    if (!active) {
+      return;
     }
+    if (!this.busy) {
+      const delta = readerBoundarySwipeDelta(this.index, this.count, event.offsetX, event.offsetY ?? 0, this.rtl);
+      if (delta !== 0) {
+        this.onBoundaryTurn(delta);
+      }
+      return;
+    }
+    this.update(event.offsetX, event.offsetY ?? 0);
+    this.settle(shouldCommitReaderCurl(this.progress, this.initialOffset, event.velocityX));
   }
 
   private onPanCancel(): void {
@@ -368,9 +420,9 @@ export struct ReaderCurlPager {
     .clip(true)
     .onAreaChange((_oldArea: Area, area: Area): void => this.resize(area))
     .onTouch((event: TouchEvent): void => this.onContentTouch(event))
-    .onClick((): void => {
+    .onClick((event: ClickEvent): void => {
       if (!this.busy) {
-        this.onContentClick();
+        this.onContentClick(event.x, this.pageWidth);
       }
     })
     .gesture(PanGesture({ direction: PanDirection.All, distance: 6 })

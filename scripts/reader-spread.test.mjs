@@ -74,7 +74,8 @@ const names = ['rebuildPageSpreads','resetPageSpreads','queuePagerRelocation','c
   'onPagerAnimationStart','onPagerAnimationEnd','onPagerChange','onReaderImageSize','currentReaderPageRange',
   'currentReaderPage','clampProgressPage','jumpToReaderPage','turnByVolume','changePageLayout','changeFirstImageSingle',
   'updateReaderWindowSize','updateReaderWindowHeight','restoreLastPage','switchReadingMode','aboutToAppear','changeReaderStripWidth',
-  'usesReaderCurl','changeTurnEffect'];
+  'usesReaderCurl','changeTurnEffect','changeReaderStatus','onReaderPagerClick','onReaderImageDecoded','isReaderSpreadDecoded',
+  'showReaderPageBoundary','onReaderNativePagerTouch'];
 const source = read('pages/ReaderPage.ets');
 const ast = ts.createSourceFile('ReaderPage.ets',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.ETS);
 const owner = ast.statements.find(node=>node.name?.getText(ast)==='ReaderPage');
@@ -91,12 +92,13 @@ function reader() {
   const {Subject}=evaluate('export class Subject {\n'+methods+'\n}',{
     ...model, ...curlModel, CacheManager:{getInstance:()=>provider()},router:{getParams:()=>params},
     showImmersiveToast:value=>messages.push(value.message),ScrollAlign:{START:0},
+    TouchType:{Down:0,Up:1,Move:2,Cancel:3},
     setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id;},
     clearTimeout:id=>timers.delete(id)
   });
   const page=new Subject();
   Object.assign(page,{readingMode:1,turnEffect:'slide',turnEffectChangeId:0,curlRevision:0,curlController:{cancel(){},turn(){return true;}},pageLayout:'auto',firstImageSingle:false,committedFirstImageSingle:false,
-    doublePageActive:false,pageSpreads:[],widePageIndices:new Set(),readerImageRatios:new Map(),readerLayoutTransition:{capture(){},clear(){}},totalImages:12,swiperIndex:7,currentVisibleIndex:7,
+    doublePageActive:false,pageSpreads:[],widePageIndices:new Set(),readerImageRatios:new Map(),readerDecodedImages:new Map(),readerLayoutTransition:{capture(){},clear(){}},totalImages:12,swiperIndex:7,currentVisibleIndex:7,
     pagerDisplayIndex:0,pagerRelocating:false,pagerLayoutRevision:0,pagerAnimating:false,pagerRebuildPending:false,pagerAnimationTimer:-1,
     readerWindowActive:true,readerWindowWidth:1100,readerWindowHeight:740,readerTopInset:0,readerBottomInset:0,readerLeftInset:0,readerRightInset:0,
     generation:1,progressNavigationId:0,pageLayoutChangeId:0,firstImageChangeId:0,readingModeChangeId:0,
@@ -107,7 +109,7 @@ function reader() {
     swiperController:{changeIndex:(index,animation)=>{calls.push([index,animation]);page.onPagerChange(index);}},
     getUIContext:()=>({px2vp:value=>value/2,postFrameCallback:callback=>frames.push(callback)}),
     persistPageIndex:()=>writes.push(page.swiperIndex),publishCurrentReading(){},
-    showPageTip:index=>tips.push(index),resetProgressControl:()=>{page.progressMode=false;},
+    nativeReaderSwipe:null,onReaderContentTouch(){},onReaderContentClick:()=>calls.push(['center']),showPageTip:index=>tips.push(index),resetProgressControl:()=>{page.progressMode=false;},
     listScroller:{scrollToIndex:index=>calls.push(['list',index])},
     observeReaderInsets:()=>{page.readerWindowActive=true;},registerVolumeKeys(){},updateChapterButtons(){},loadImagesWithCache:async()=>{},loadLocalImages(){}
   });
@@ -279,4 +281,131 @@ test('portrait measurements provide actual image bounds without forcing regroupi
   h.page.onReaderImageSize(7,'image-7',600,900);assert.equal(h.page.readerImageRatios.get(7),2/3);
   assert.deepEqual(h.page.pageSpreads.map(s=>s.key),previous);
   h.page.onReaderImageSize(6,'stale-image',800,900);assert.equal(h.page.readerImageRatios.has(6),false);
+});
+
+test('switching to strip reading keeps settings open and restores the original page after layout', async () => {
+  const h = reader();
+  h.page.showSheet = true;
+  h.page.swiperIndex = 7;
+  await h.page.switchReadingMode(3);
+  assert.equal(h.page.showSheet, true);
+  assert.equal(h.page.stripRelocating, true);
+  h.flush();
+  assert.equal(h.page.currentVisibleIndex, 7);
+  assert.deepEqual(h.calls.at(-1), ['list', 7]);
+  assert.equal(h.page.stripRelocating, false);
+  assert.equal(h.page.lastStripReadingMode, 3);
+});
+
+test('reading status visibility is restored from saved settings, and rapid toggles save the latest choice', async () => {
+  const h = reader();
+  h.page.readerStatusChangeId = 0;
+  await h.page.aboutToAppear();
+  assert.equal(h.page.readerShowStatus, false);
+  await h.page.changeReaderStatus(true);
+  assert.equal(h.settings.get('reader_show_status'), 'true');
+  await h.page.aboutToAppear();
+  assert.equal(h.page.readerShowStatus, true);
+  const pending = [];
+  h.setProvider(() => new Promise(resolve => pending.push(resolve)));
+  const earlier = h.page.changeReaderStatus(true);
+  const latest = h.page.changeReaderStatus(false);
+  pending[1](h.cache);
+  await latest;
+  pending[0](h.cache);
+  await earlier;
+  assert.equal(h.settings.get('reader_show_status'), 'false');
+  assert.equal(h.page.readerShowStatus, false);
+});
+
+test('side taps follow reading direction and keep center tap and progress restoration behavior',()=>{
+  const h=reader();
+  h.page.rebuildPageSpreads();
+  h.flush();
+  h.page.curlController.turn=delta=>{h.calls.push(['curl',delta]);return true;};
+  h.page.turnEffect='curl';
+  h.calls.length=0;
+  h.page.onReaderPagerClick(30,600);
+  h.page.onReaderPagerClick(570,600);
+  h.page.onReaderPagerClick(300,600);
+  h.page.progressMode=true;
+  h.page.onReaderPagerClick(30,600);
+  assert.deepEqual(h.calls,[['curl',1],['curl',-1],['center'],['center']]);
+  h.page.progressMode=false;
+  h.page.turnEffect='slide';
+  h.page.readingMode=0;
+  h.page.animationsOn=true;
+  const target=h.page.pagerDisplayIndex+1;
+  h.page.onReaderPagerClick(570,600);
+  assert.deepEqual(h.calls.at(-1),[target,true]);
+});
+
+test('side taps and volume turns give the chapter boundary messages',()=>{
+  const h=reader();
+  h.page.rebuildPageSpreads();
+  h.flush();
+  h.page.onPagerChange(0);
+  h.page.onReaderPagerClick(570,600);
+  h.page.turnByVolume(-1);
+  h.page.onPagerChange(h.page.pageSpreads.length-1);
+  h.page.onReaderPagerClick(30,600);
+  h.page.lastVolumeTurnAt=0;
+  h.page.turnByVolume(1);
+  assert.deepEqual(h.messages,['已经到顶啦！','已经到顶啦！','已经到尾啦！','已经到尾啦！']);
+});
+
+test('native pager reports outward swipes once in horizontal LTR, RTL and vertical modes',()=>{
+  for(const mode of [0,1,2]){
+    const h=reader();
+    h.page.readingMode=mode;
+    h.page.rebuildPageSpreads();
+    h.flush();
+    const start={id:1,windowX:300,windowY:300};
+    for(const index of [0,h.page.pageSpreads.length-1]){
+      h.page.onPagerChange(index);
+      const offset=(index===0?80:-80)*(mode===1?-1:1);
+      const end={id:1,windowX:300+(mode===2?0:offset),windowY:300+(mode===2?offset:0)};
+      h.page.onReaderNativePagerTouch({type:0,touches:[start],changedTouches:[start]});
+      h.page.onReaderNativePagerTouch({type:1,touches:[],changedTouches:[end]});
+      h.page.onReaderNativePagerTouch({type:1,touches:[],changedTouches:[end]});
+    }
+    assert.deepEqual(h.messages,['已经到顶啦！','已经到尾啦！']);
+  }
+});
+
+test('arriving at the last native slide, multitouch and short drags do not report a boundary',()=>{
+  const h=reader();
+  h.page.readingMode=0;
+  h.page.rebuildPageSpreads();
+  h.flush();
+  const last=h.page.pageSpreads.length-1;
+  const begin={id:1,windowX:300,windowY:300};
+  const end={id:1,windowX:200,windowY:305};
+  const down=()=>h.page.onReaderNativePagerTouch({type:0,touches:[begin],changedTouches:[begin]});
+  const up=touch=>h.page.onReaderNativePagerTouch({type:1,touches:[],changedTouches:[touch]});
+  h.page.onPagerChange(last-1);
+  down();
+  h.page.onPagerChange(last);
+  up(end);
+  down();
+  up({...end,windowX:295});
+  down();
+  h.page.onReaderNativePagerTouch({type:2,touches:[begin,{id:2}],changedTouches:[]});
+  up(end);
+  assert.deepEqual(h.messages,[]);
+});
+
+test('a paired spread is ready only when both images are decoded and an old render cannot clear the new one',()=>{
+  const h=reader();
+  h.page.rebuildPageSpreads();
+  h.flush();
+  const spread=h.page.pageSpreads[h.page.pagerDisplayIndex];
+  h.page.onReaderImageDecoded(spread.first,'image-'+spread.first,11,true);
+  assert.equal(h.page.isReaderSpreadDecoded(h.page.pagerDisplayIndex),false);
+  h.page.onReaderImageDecoded(spread.last,'image-'+spread.last,21,true);
+  h.page.onReaderImageDecoded(spread.first,'image-'+spread.first,12,true);
+  h.page.onReaderImageDecoded(spread.first,'image-'+spread.first,11,false);
+  assert.equal(h.page.isReaderSpreadDecoded(h.page.pagerDisplayIndex),true);
+  h.page.onReaderImageDecoded(spread.first,'image-'+spread.first,12,false);
+  assert.equal(h.page.isReaderSpreadDecoded(h.page.pagerDisplayIndex),false);
 });

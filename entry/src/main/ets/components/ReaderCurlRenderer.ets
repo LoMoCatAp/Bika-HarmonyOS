@@ -16,17 +16,25 @@
 import { drawing, common2D } from '@kit.ArkGraphics2D';
 import { NodeController, FrameNode, RenderNode, DrawContext, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import { buildReaderPaperMesh, ReaderPaperParameters, ReaderPaperRect } from '../models/ReaderSpineMesh';
+import { buildReaderPaperMesh, ReaderPaperParameters } from '../models/ReaderSpineMesh';
 
 export interface ReaderCurlFrame extends ReaderPaperParameters {
   current: image.PixelMap;
   next: image.PixelMap;
   progress: number;
+  mixed: boolean;
   completed: boolean;
 }
 
 class ReaderCurlRenderNode extends RenderNode {
   content: ReaderCurlFrame | null = null;
+  private readonly brush: drawing.Brush = new drawing.Brush();
+
+  constructor() {
+    super();
+    this.brush.setAntiAlias(true);
+    this.brush.setColor(0xFFFFFFFF);
+  }
 
   draw(context: DrawContext): void {
     const frame = this.content;
@@ -35,13 +43,22 @@ class ReaderCurlRenderNode extends RenderNode {
     }
     const canvas = context.canvas;
     const full: common2D.Rect = { left: 0, top: 0, right: frame.width, bottom: frame.height };
-    const brush = new drawing.Brush();
-    brush.setAntiAlias(true);
-    brush.setColor(0xFFFFFFFF);
-    canvas.attachBrush(brush);
-    if (frame.completed || (frame.touchX >= frame.frontRect.right - frame.frontRect.left
-      && Math.abs(frame.touchY - frame.cornerY) < 0.001)) {
+    canvas.attachBrush(this.brush);
+    if (frame.completed || frame.progress <= 0) {
       canvas.drawImageRect(frame.completed ? frame.next : frame.current, full);
+      canvas.detachBrush();
+      return;
+    }
+    if (frame.mixed) {
+      // 宽图和双页之间用平移连接，避免把双页连同书脊当成同一张纸揭起。
+      const shift = frame.progress * frame.width * (frame.fromRight ? -1 : 1);
+      canvas.save();
+      canvas.clipRect(full);
+      canvas.translate(shift, 0);
+      canvas.drawImageRect(frame.current, full);
+      canvas.translate(frame.fromRight ? frame.width : -frame.width, 0);
+      canvas.drawImageRect(frame.next, full);
+      canvas.restore();
       canvas.detachBrush();
       return;
     }
@@ -64,9 +81,9 @@ class ReaderCurlRenderNode extends RenderNode {
       canvas.restore();
     }
     // 完整快照只作为纹理；留白的 UV 收拢到实际图片边界，不会变成灰色纸板。
-    canvas.drawPixelMapMesh(frame.current, mesh.columns, mesh.rows, mesh.front.vertices, 0, mesh.front.colors, 0);
+    canvas.drawPixelMapMesh(frame.current, mesh.columns, mesh.rows, mesh.front.vertices, 0, null, 0);
     canvas.drawPixelMapMesh(frame.paired ? frame.next : frame.current, mesh.columns, mesh.rows,
-      mesh.back.vertices, 0, mesh.back.colors, 0);
+      mesh.back.vertices, 0, null, 0);
     canvas.detachBrush();
     canvas.restore();
   }

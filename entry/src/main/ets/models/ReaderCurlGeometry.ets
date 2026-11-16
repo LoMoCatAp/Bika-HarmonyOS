@@ -41,14 +41,41 @@ export function normalizeReaderTurnEffect(value: string): ReaderTurnEffect {
   return value === 'curl' ? 'curl' : 'slide';
 }
 
+function readerSwipeDelta(offset: number, rtl: boolean): number {
+  return Number.isFinite(offset) ? -Math.sign(offset) * (rtl ? -1 : 1) : 0;
+}
+
+function validReaderSpread(index: number, count: number): boolean {
+  return Number.isInteger(index) && Number.isInteger(count) && index >= 0 && index < count;
+}
+
 export function readerCurlTarget(index: number, count: number, offset: number, rtl: boolean): number {
-  if (!Number.isInteger(index) || !Number.isInteger(count) || index < 0 || index >= count
-    || !Number.isFinite(offset) || offset === 0) {
-    return -1;
-  }
-  const delta = (offset < 0 ? 1 : -1) * (rtl ? -1 : 1);
+  const delta = readerSwipeDelta(offset, rtl);
   const target = index + delta;
-  return target >= 0 && target < count ? target : -1;
+  return delta !== 0 && validReaderSpread(index, count) && validReaderSpread(target, count) ? target : -1;
+}
+
+export function readerBoundarySwipeDelta(index: number, count: number, offset: number,
+  crossOffset: number, rtl: boolean): number {
+  if (!validReaderSpread(index, count) || Math.abs(offset) < 24 || Math.abs(offset) < Math.abs(crossOffset) * 0.65) {
+    return 0;
+  }
+  const delta = readerSwipeDelta(offset, rtl);
+  return validReaderSpread(index + delta, count) ? 0 : delta;
+}
+
+export function readerSideTapDelta(x: number, width: number, rtl: boolean): number {
+  if (!Number.isFinite(x) || !Number.isFinite(width) || width <= 0 || x < 0 || x > width) {
+    return 0;
+  }
+  const edge = width * 0.25;
+  if (x < edge) {
+    return rtl ? 1 : -1;
+  }
+  if (x > width - edge) {
+    return rtl ? -1 : 1;
+  }
+  return 0;
 }
 
 export function readerCurlProgress(offset: number, width: number, initialOffset: number): number {

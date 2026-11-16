@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.5.2',
+    date: '2026-11-16',
+    items: [
+      '阅读器新增自动、单页和双页布局。',
+      '横向阅读新增「仿真」翻页动效。',
+      '漫画区任意位置都能向左或向右滑动翻页，也可点击两侧翻页，增加翻页头尾提示。',
+      '阅读器设置分为「阅读」和「显示」两栏，可选择在收起工具栏后显示时间和电量。',
+      '调整作品详情页的收藏、点赞按钮效果。'
+    ]
+  },
+  {
     version: '1.5.1',
     date: '2026-10-31',
     items: [

@@ -27,7 +27,7 @@ const owner=ast.statements.find(node=>node.name?.getText(ast)==='ReaderCurlPager
 const methods=owner.members.filter(node=>node.body && node.name?.getText(ast)!=='build').map(node=>node.getText(ast)).join('\n');
 
 function reader(options={}) {
-  const frames=[],timers=[],commits=[],released=[],samples=[],shown=[];
+  const frames=[],timers=[],commits=[],released=[],samples=[],shown=[],boundaryTurns=[];
   let time=0,starts=0,ends=0,captures=0;
   const {Subject}=evaluate('export class Subject {\n'+methods+'\n}',{
     ...geometry, ...paperModel,
@@ -44,11 +44,11 @@ function reader(options={}) {
   };
   Object.assign(page,{
     index:2,count:6,rtl:false,revision:0,blocked:false,animationsOn:options.animationsOn??true,
-    drawing:false,instanceId:'test',alive:true,pageWidth:1000,pageHeight:700,busy:false,settling:false,
+    drawing:false,instanceId:'test',alive:true,pageWidth:1000,pageHeight:700,maxContentWidth:0,busy:false,settling:false,
     session:0,sourceIndex:-1,targetIndex:-1,committingIndex:-1,sessionRevision:0,initialOffset:0,progress:0,frame:null,
-    isPaired:options.isPaired||(()=>true),
+    isPaired:options.isPaired||(()=>true),isSpreadDecoded:options.isSpreadDecoded||(()=>true),
     getPageBounds:(_index,w,h)=>[{left:0,top:0,right:w/2-1,bottom:h},{left:w/2+1,top:0,right:w,bottom:h}],
-    onTurnStart:()=>{starts++;},onTurnEnd:()=>{ends++;},
+    onTurnStart:()=>{starts++;},onTurnEnd:()=>{ends++;},onBoundaryTurn:delta=>boundaryTurns.push(delta),
     onIndexChange:index=>{commits.push(index);page.index=index;page.onExternalChange('index');},
     nodeController:{show:frame=>shown.push(frame.progress),clear(){},resize(){},dispose(){}},
     controller:{attach(){},detach(){}},
@@ -61,7 +61,7 @@ function reader(options={}) {
     assert(limit>0,'animation must finish');
   };
   const retire=()=>{for(const [callback]of timers.splice(0))callback();};
-  return{page,frames,timers,commits,released,samples,shown,flush,retire,
+  return{page,frames,timers,commits,released,samples,shown,boundaryTurns,flush,retire,
     get starts(){return starts;},get ends(){return ends;}};
 }
 
@@ -114,8 +114,8 @@ test('disabled animations retain functional gesture and volume navigation withou
   assert.deepEqual(h.commits,[3]);assert.equal(h.samples.length,0);
   h.page.begin(10,100);h.page.update(100);h.page.settle(false);h.flush();assert.deepEqual(h.commits,[3]);
 });
-test('wide images or unpaired covers use full-page curl and paired spreads use the spine',()=>{
-  const h=reader({isPaired:index=>index!==3});h.page.begin(-10,600);assert.equal(h.page.frame.paired,false);h.page.cancelTurn();
+test('turns between wide images and paired spreads use a slide instead of folding the whole spread',()=>{
+  const h=reader({isPaired:index=>index!==3});h.page.begin(-10,600);assert.equal(h.page.frame.paired,false);assert.equal(h.page.frame.mixed,true);h.page.cancelTurn();
   h.page.isPaired=()=>true;h.page.begin(-10,600);assert.equal(h.page.frame.paired,true);h.page.cancelTurn();h.retire();
   assert.deepEqual(h.released,[1,2,3,4]);
 });
@@ -126,7 +126,7 @@ test('a new gesture is rejected while settling or when no adjacent spread exists
 
 
 test('a cancelled drag cannot restart on its remaining move events after rotation or scene change',()=>{
-  const h=reader();const event={offsetX:-50,velocityX:-900,fingerList:[{localY:600}]};
+  const h=reader();const event={offsetX:-50,velocityX:-900,fingerList:[{localX:920,localY:600}]};
   h.page.onPanStart(event);h.page.revision++;h.page.onExternalChange('revision');
   h.page.onPanUpdate({...event,offsetX:-600});h.page.onPanEnd({...event,offsetX:-600});h.flush();
   assert.deepEqual(h.commits,[]);assert.equal(h.starts,1);assert.equal(h.ends,1);
@@ -146,9 +146,7 @@ test('paper geometry respects actual image bounds and both completed reading dir
     const frame=pose(p,fromRight,paired),mesh=paperModel.buildReaderPaperMesh(frame);
     for(const side of[mesh.front,mesh.back]){
       assert.equal(side.vertices.length,(mesh.columns+1)*(mesh.rows+1)*2);
-      assert.equal(side.colors.length,(mesh.columns+1)*(mesh.rows+1));
       assert(side.vertices.every(Number.isFinite));
-      assert(side.colors.every(c=>(c>>>24)===255&&((c>>>16)&255)>=233));
     }
     if(p===0){
       const xs=mesh.front.vertices.filter((_,i)=>i%2===0),ys=mesh.front.vertices.filter((_,i)=>i%2===1);
@@ -170,7 +168,7 @@ test('moving a corner vertically changes the fold geometry at the same horizonta
   const horizontal=paperModel.buildReaderPaperMesh(pose(.3,true,true,0));
   const diagonal=paperModel.buildReaderPaperMesh(pose(.3,true,true,450));
   assert.notDeepEqual([...horizontal.front.vertices],[...diagonal.front.vertices]);
-  const col=60,stride=(diagonal.columns+1)*2;
+  const col=Math.round(diagonal.columns*.88),stride=(diagonal.columns+1)*2;
   assert(Math.abs(diagonal.front.vertices[col*2]-diagonal.front.vertices[diagonal.rows*stride+col*2])>1);
 });
 test('contain image geometry excludes the reader margins and aligns paired images to their inner edges',()=>{
@@ -194,12 +192,13 @@ test('paper draws original-color textures as two shared meshes without a gray ba
     const canvas={attachBrush(){},detachBrush(){},save(){saves++;},restore(){saves--;},clipRect(){},drawImageRect(){},
       drawPixelMapMesh:(...args)=>calls.push(args)};
     node.draw({canvas});assert.equal(calls.length,2);assert.deepEqual(calls.map(v=>v[0]),paired?['A','B']:['A','A']);
+    assert(calls.every(args=>args[5]===null),'native mesh uses the unmodified texture');
     assert.equal(saves,0);
   }
 });
 test('corner gestures retain live vertical movement and a fully open layout keeps original image margins',()=>{
   const h=reader();h.page.getPageBounds=()=>[{left:300,top:20,right:700,bottom:680}];
-  h.page.isPaired=()=>false;h.page.onPanStart({offsetX:-20,offsetY:0,fingerList:[{localY:25}]});
+  h.page.isPaired=()=>false;h.page.onPanStart({offsetX:-20,offsetY:0,fingerList:[{localX:675,localY:25}]});
   h.page.onPanUpdate({offsetX:-120,offsetY:160,fingerList:[{localY:185}]});
   assert.equal(h.page.frame.frontRect.left,600);assert.equal(h.page.frame.touchY,320);
   assert.equal(h.page.frame.touchX,560);assert.equal(h.page.frame.completed,false);
@@ -231,4 +230,83 @@ test('rapid layout changes and leaving the page invalidate old animation complet
   h.finishes[0]();assert.equal(h.page.snapshot.id,2);
   h.page.aboutToDisappear();h.finishes[1]();h.release();assert.equal(h.page.snapshot,null);
   assert.deepEqual(h.released,[1,2]);
+});
+
+test('pending neighbor decode bypasses snapshots and still flips once',()=>{
+  const h=reader({isSpreadDecoded:index=>index===2});
+  assert.equal(h.page.turn(1),true);
+  h.flush();
+  assert.equal(h.samples.length,0);
+  assert.deepEqual(h.commits,[3]);
+});
+
+test('either swipe direction works from the left, right and center while the fold starts on the outer edge',()=>{
+  for (const origin of [60, 500, 920]) {
+    for (const direction of [-1, 1]) {
+      const h=reader();
+      h.page.onPanStart({offsetX:direction*24,offsetY:12,fingerList:[{localX:origin+direction*24,localY:30}]});
+      assert.equal(h.page.frame.fromRight,direction<0);
+      h.page.onPanEnd({offsetX:direction*48,offsetY:20,velocityX:direction*900,fingerList:[]});
+      h.flush();
+      assert.deepEqual(h.commits,[2-direction]);
+    }
+  }
+});
+
+test('curl reports one toast direction on release at each chapter boundary in either reading direction',()=>{
+  for (const rtl of [false, true]) {
+    for (const index of [0, 5]) {
+      const h=reader();
+      h.page.rtl=rtl;
+      h.page.index=index;
+      const outward=(index===0?1:-1)*(rtl?-1:1);
+      const event=distance=>({offsetX:outward*distance,offsetY:8,velocityX:outward*900,fingerList:[]});
+      h.page.onPanStart(event(8));
+      h.page.onPanUpdate(event(60));
+      assert.deepEqual(h.boundaryTurns,[]);
+      h.page.onPanEnd(event(100));
+      h.page.onPanEnd(event(100));
+      assert.deepEqual(h.boundaryTurns,[index===0?-1:1]);
+      assert.deepEqual(h.commits,[]);
+      assert.equal(h.samples.length,0);
+    }
+  }
+});
+
+test('short, vertical or cancelled drags do not report the curl boundary',()=>{
+  const h=reader();
+  h.page.index=0;
+  for (const [offsetX,offsetY,cancel] of [[12,2,false],[40,100,false],[80,10,true]]) {
+    const event={offsetX,offsetY,velocityX:900,fingerList:[]};
+    h.page.onPanStart(event);
+    if(cancel) h.page.onPanCancel();
+    h.page.onPanEnd(event);
+  }
+  assert.deepEqual(h.boundaryTurns,[]);
+  assert.deepEqual(h.commits,[]);
+});
+
+test('an extreme diagonal drag keeps each front spine vertex fixed through the turn',()=>{
+  for(const fromRight of[true,false])for(const progress of[.02,.25,.5,.75,.97]){
+    const p=pose(progress,fromRight,true,2500);
+    const mesh=paperModel.buildReaderPaperMesh(p);
+    const index=fromRight?0:mesh.columns;
+    const origin=fromRight?p.frontRect.left:p.frontRect.right;
+    for(let row=0;row<=mesh.rows;row++){
+      const x=mesh.front.vertices[(row*(mesh.columns+1)+index)*2];
+      assert(Math.abs(x-origin)<1e-6);
+    }
+  }
+});
+
+test('multiple pan samples in one display frame schedule one draw with the latest position',()=>{
+  const h=reader();
+  h.page.begin(-10,300);
+  h.page.update(-60);
+  h.page.update(-90);
+  h.page.update(-180);
+  assert.equal(h.frames.length,1);
+  h.flush();
+  assert.equal(h.shown.at(-1),.18);
+  assert.equal(h.shown.length,2);
 });

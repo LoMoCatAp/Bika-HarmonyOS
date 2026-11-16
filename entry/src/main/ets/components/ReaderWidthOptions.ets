@@ -31,6 +31,6 @@ export struct ReaderWidthOptions {
       }
       .width('100%').height(44)
     }
-    .width('100%').padding({ left: 20, right: 20 })
+    .width('100%')
   }
 }

@@ -692,7 +692,7 @@ router.pushUrl({
   private isAnimationEnabled(): boolean{
   return AppStorage.get<boolean>('bika_animations') ?? true;
 }
-  /** 收藏/点赞弹簧（动画开关关闭时直接复位） */
+  /** 收藏/点赞弹簧 */
   private favSpringPop(which: 0 | 1): void {
   let animOn = this.isAnimationEnabled();
   if(!animOn) {

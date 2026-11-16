@@ -1,6 +1,8 @@
 import { ImageLoader } from '../common/ImageLoader';
 import { IMAGE_HOST_POOL } from '../common/Constants';
 
+let netImageRenderSequence: number = 0;
+
 /**
  * 网络图片组件：
  * - 通过 ImageLoader（自有网络栈）加载并缓存 PixelMap；
@@ -24,6 +26,9 @@ export struct NetImage {
   @State frameWidth: number = 0;
   @State frameHeight: number = 0;
   onImageSize: (width: number, height: number) => void = (_width: number, _height: number): void => {};
+  onImageDecoded: (renderId: number, decoded: boolean) => void = (_id: number, _decoded: boolean): void => {};
+  private readonly renderId: number = ++netImageRenderSequence;
+  private alive: boolean = false;
   @State pixelMap: PixelMap | null = null;
   @State failed: boolean = false;
   @State errorText: string = '';
@@ -34,6 +39,7 @@ export struct NetImage {
   private timer: number = -1;
 
   aboutToAppear(): void {
+    this.alive = true;
     let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
     if (animOn) {
       animateTo({
@@ -49,6 +55,8 @@ export struct NetImage {
   }
 
   aboutToDisappear(): void {
+    this.alive = false;
+    this.onImageDecoded(this.renderId, false);
     this.pulse = 0.5;
     if (this.timer >= 0) {
       clearTimeout(this.timer);
@@ -129,8 +137,12 @@ export struct NetImage {
             if (event && event.width > 0 && event.height > 0) {
               this.sourceRatio = event.width / event.height;
               this.onImageSize(event.width, event.height);
+              if (this.alive && event.loadingStatus === 1) {
+                this.onImageDecoded(this.renderId, true);
+              }
             }
           })
+          .onError((): void => this.onImageDecoded(this.renderId, false))
       } else if (this.pixelMap !== null) {
         Image(this.pixelMap)
           .width(this.imageFrameWidth())
@@ -144,8 +156,12 @@ export struct NetImage {
             if (event && event.width > 0 && event.height > 0) {
               this.sourceRatio = event.width / event.height;
               this.onImageSize(event.width, event.height);
+              if (this.alive && event.loadingStatus === 1) {
+                this.onImageDecoded(this.renderId, true);
+              }
             }
           })
+          .onError((): void => this.onImageDecoded(this.renderId, false))
       } else if (this.failed) {
         Column({ space: 4 }) {
           SymbolGlyph($r('sys.symbol.arrow_clockwise'))

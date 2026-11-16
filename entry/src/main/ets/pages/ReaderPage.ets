@@ -1,5 +1,5 @@
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
-import { router, window, CommonModifier, uiMaterial } from '@kit.ArkUI';
+import { router, window, CommonModifier, uiMaterial, SegmentButtonV2Items } from '@kit.ArkUI';
 import { unifiedDataChannel } from '@kit.ArkData';
 import { inputConsumer, KeyCode } from '@kit.InputKit';
 import { common } from '@kit.AbilityKit';
@@ -10,12 +10,16 @@ import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
 import { ReaderLayoutOptions } from '../components/ReaderLayoutOptions';
+import { ReaderSettingSegments, ReaderSettingSelect, ReaderSettingToggle } from '../components/ReaderSettingSegments';
+import { ReaderStatusIndicator } from '../components/ReaderStatusIndicator';
 import { ReaderCurlPager } from '../components/ReaderCurlPager';
 import { ReaderCurlController } from '../models/ReaderCurlController';
 import { ReaderLayoutTransition } from '../components/ReaderLayoutTransition';
 import { ReaderLayoutTransitionController } from '../models/ReaderLayoutTransitionController';
 import { ReaderPaperRect, readerPaperImageRect } from '../models/ReaderSpineMesh';
-import { ReaderTurnEffect, normalizeReaderTurnEffect } from '../models/ReaderCurlGeometry';
+import {
+  ReaderTurnEffect, normalizeReaderTurnEffect, readerBoundarySwipeDelta, readerSideTapDelta
+} from '../models/ReaderCurlGeometry';
 import { ReaderWidthOptions } from '../components/ReaderWidthOptions';
 import {
   ReaderPageLayout, ReaderPageSpread, normalizeReaderPageLayout, normalizeReaderStripWidth, useReaderDoublePage, isReaderWideImage,
@@ -50,10 +54,35 @@ import {
   COLOR_WHITE
 } from '../common/Constants';
 
+const READER_SINGLE_PAGE_MAX_WIDTH: number = 780;
+const READER_SETTINGS_TABS: SegmentButtonV2Items = new SegmentButtonV2Items([
+  { text: '阅读' }, { text: '显示' }
+]);
+const READER_MODES: SegmentButtonV2Items = new SegmentButtonV2Items([
+  { text: '翻页' }, { text: '条漫' }
+]);
+const READER_DIRECTION_OPTIONS: SelectOption[] = [
+  { value: '从左到右' }, { value: '从右到左' }, { value: '从上到下' }
+];
+const READER_ORIENTATIONS: string[] = ['system', 'portrait', 'landscape'];
+const READER_ORIENTATION_OPTIONS: SelectOption[] = [
+  { value: '跟随系统' }, { value: '锁定竖屏' }, { value: '锁定横屏' }
+];
+
 /**
  * 阅读器页面（
  * 5 种阅读模式 + 沉浸工具栏 + 设置面板）
  */
+
+interface ReaderNativeSwipe {
+  id: number;
+  x: number;
+  y: number;
+  index: number;
+  mode: number;
+  revision: number;
+  generation: number;
+}
 
 interface ReaderRouterParams {
   comicId: string;
@@ -167,6 +196,8 @@ struct ReaderPage {
   @State zoomScale: number = 1.0;
   /** 阅读模式：0 左→右 1 右→左 2 上→下单页 3 条漫(有隙) 4 条漫(无缝，默认) */
   @State readingMode: number = 4;
+  private lastPagedReadingMode: number = 0;
+  private lastStripReadingMode: number = 4;
   @State pageLayout: ReaderPageLayout = 'auto';
   @State turnEffect: ReaderTurnEffect = 'slide';
   @State curlRevision: number = 0;
@@ -182,9 +213,11 @@ struct ReaderPage {
   @State pagerRelocating: boolean = false;
   private widePageIndices: Set<number> = new Set();
   private readerImageRatios: Map<number, number> = new Map();
+  private readerDecodedImages: Map<number, number> = new Map();
   private readerLayoutTransition: ReaderLayoutTransitionController = new ReaderLayoutTransitionController();
   private pagerLayoutRevision: number = 0;
   private pagerAnimating: boolean = false;
+  private nativeReaderSwipe: ReaderNativeSwipe | null = null;
   private pagerRebuildPending: boolean = false;
   private pagerAnimationTimer: number = -1;
   private pageLayoutChangeId: number = 0;
@@ -239,8 +272,12 @@ struct ReaderPage {
   @State readerWindowWidth: number = 0;
   @State readerLeftInset: number = 0;
   @State readerRightInset: number = 0;
+  @State readerSettingsTab: number = 0;
+  private readerSettingsController: SwiperController = new SwiperController();
+  @State readerShowStatus: boolean = false;
+  @State readerPageVisible: boolean = true;
+  private readerStatusChangeId: number = 0;
   @State readerSettingsMeasuredHeight: number = 0;
-  @State readerSettingsBodyHeight: number = 0;
   private readerWindow: window.Window | undefined = undefined;
   private readerWindowActive: boolean = false;
   private readerAvoidAreaListener = (options: window.AvoidAreaOptions): void => {
@@ -289,6 +326,12 @@ struct ReaderPage {
     this.turnEffect = normalizeReaderTurnEffect(cache.getSetting('reader_turn_effect', 'slide'));
     this.stripReaderWidth = normalizeReaderStripWidth(cache.getSetting('reader_strip_width', '780'));
     this.volumeTurnEnabled = cache.getSetting('reader_volume_turn', 'true') === 'true';
+    this.readerShowStatus = cache.getSetting('reader_show_status', 'false') === 'true';
+    if (this.readingMode <= 2) {
+      this.lastPagedReadingMode = this.readingMode;
+    } else {
+      this.lastStripReadingMode = this.readingMode;
+    }
     this.registerVolumeKeys();
     let params = router.getParams() as ReaderRouterParams;
     if (params) {
@@ -578,6 +621,80 @@ struct ReaderPage {
     this.readerContentTouchRestoredProgress = false;
   }
 
+  private showReaderPageBoundary(delta: number): void {
+    if (this.totalImages > 0) {
+      showImmersiveToast({ message: delta < 0 ? '已经到顶啦！' : '已经到尾啦！', duration: 1500 });
+    }
+  }
+
+  private onReaderNativePagerTouch(event: TouchEvent): void {
+    this.onReaderContentTouch(event);
+    if (event.type === TouchType.Cancel || event.touches.length > 1) {
+      this.nativeReaderSwipe = null;
+      return;
+    }
+    if (event.type === TouchType.Down) {
+      const touch = event.touches[0];
+      this.nativeReaderSwipe = null;
+      if (touch !== undefined && !this.pagerRelocating && !this.pagerAnimating && !this.isLoading &&
+        !this.showSheet && !this.downloadMenuVisible) {
+        this.nativeReaderSwipe = {
+          id: touch.id,
+          x: touch.windowX,
+          y: touch.windowY,
+          index: this.pagerDisplayIndex,
+          mode: this.readingMode,
+          revision: this.pagerLayoutRevision,
+          generation: this.generation
+        };
+      }
+      return;
+    }
+    if (event.type !== TouchType.Up) {
+      return;
+    }
+    const start = this.nativeReaderSwipe;
+    this.nativeReaderSwipe = null;
+    if (start === null || start.mode !== this.readingMode || start.revision !== this.pagerLayoutRevision ||
+      start.generation !== this.generation || this.pagerRelocating || this.isLoading ||
+      this.showSheet || this.downloadMenuVisible) {
+      return;
+    }
+    const end = event.changedTouches.find((touch: TouchObject): boolean => touch.id === start.id);
+    if (end === undefined) {
+      return;
+    }
+    const dx = end.windowX - start.x;
+    const dy = end.windowY - start.y;
+    const vertical = start.mode === 2;
+    const delta = readerBoundarySwipeDelta(start.index, this.pageSpreads.length,
+      vertical ? dy : dx, vertical ? dx : dy, start.mode === 1);
+    if (delta !== 0) {
+      this.showReaderPageBoundary(delta);
+    }
+  }
+
+  private onReaderPagerClick(x: number, width: number): void {
+    const delta = this.readingMode <= 1 ? readerSideTapDelta(x, width, this.readingMode === 1) : 0;
+    if (delta === 0 || this.readerContentTouchRestoredProgress || this.progressMode) {
+      this.onReaderContentClick();
+      return;
+    }
+    if (this.showSheet || this.downloadMenuVisible || this.pagerRelocating || this.pagerAnimating || this.isLoading) {
+      return;
+    }
+    const target = this.pagerDisplayIndex + delta;
+    if (target < 0 || target >= this.pageSpreads.length) {
+      this.showReaderPageBoundary(delta);
+      return;
+    }
+    if (this.usesReaderCurl()) {
+      this.curlController.turn(delta);
+    } else {
+      this.swiperController.changeIndex(target, this.animationsOn);
+    }
+  }
+
   private updateChapterButtons(): void {
     this.hasPrevChapter = this.offlineOnly
       ? this.localChapterOrders.some((order: number): boolean => order < this.currentOrder) : this.currentOrder > 1;
@@ -629,28 +746,6 @@ struct ReaderPage {
       this.imageDataSource.getData(index).failed = true;
       this.imageDataSource.reload(this.imageDataSource.getAll());
     }
-  }
-
-  /** 阅读模式选项行 */
-  @Builder
-  ModeRow(mode: number, label: string) {
-    Row() {
-      Text(label)
-        .fontSize(15)
-        .fontColor(this.readingMode === mode ? COLOR_PRIMARY : COLOR_TEXT_TITLE)
-        .layoutWeight(1)
-      if (this.readingMode === mode) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(18)
-          .fontColor([COLOR_PRIMARY])
-      }
-    }
-    .width('100%')
-    .height(48)
-    .padding({ left: 20, right: 20 })
-    .onClick(() => {
-      this.switchReadingMode(mode);
-    })
   }
 
   /** 音量键回调（官方示例写法：具名回调，off 时精确移除） */
@@ -725,6 +820,7 @@ struct ReaderPage {
       let index = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
       let target = this.readingMode <= 2 ? adjacentReaderSpreadPage(this.pageSpreads, index, delta) : index + delta;
       if (target < 0 || target >= this.totalImages) {
+        this.showReaderPageBoundary(delta);
         return;
       }
       if (this.readingMode <= 2) {
@@ -956,15 +1052,18 @@ struct ReaderPage {
     }, 900);
   }
 
-  /** 切换阅读模式并保留当前阅读位置 */
+  /** 切换阅读模式并保留当前阅读位置与设置面板。 */
   private async switchReadingMode(mode: number): Promise<void> {
     if (!Number.isInteger(mode) || mode < 0 || mode > 4) {
       return;
     }
     const changeId = ++this.readingModeChangeId;
+    if (mode === this.readingMode) {
+      return;
+    }
     try {
       const cache = await CacheManager.getInstance();
-      if (changeId !== this.readingModeChangeId) {
+      if (!this.readerWindowActive || changeId !== this.readingModeChangeId) {
         return;
       }
       if (!cache.isReady()) {
@@ -972,58 +1071,52 @@ struct ReaderPage {
       }
       cache.saveSetting('reader_mode', String(mode));
     } catch (err) {
-      if (changeId === this.readingModeChangeId) {
+      if (this.readerWindowActive && changeId === this.readingModeChangeId) {
         showImmersiveToast({ message: '阅读模式保存失败，请重试', duration: 2000 });
       }
       return;
     }
-    if (mode === this.readingMode) {
-      this.showSheet = false;
-      return;
-    }
-    // 保持图片的原始索引；RTL 只改变翻页方向，不反转图片数组或页码。
+
+    // 保持原始图片下标，忽略新列表挂载时报告的临时下标。
     this.resetProgressControl();
-    const navigationId = this.progressNavigationId;
+    const navigationId = ++this.progressNavigationId;
     const currentIndex = this.readingMode <= 2 ? this.swiperIndex : this.currentVisibleIndex;
+    this.curlController.cancel();
+    this.cancelPagerAnimation();
     this.swiperIndex = currentIndex;
     this.currentVisibleIndex = currentIndex;
-    this.stripRelocating = false;
+    this.stripRelocating = mode > 2 && this.totalImages > 0 && !this.isLoading;
+    if (mode <= 2) {
+      this.lastPagedReadingMode = mode;
+    } else {
+      this.lastStripReadingMode = mode;
+    }
     this.readingMode = mode;
     this.rebuildPageSpreads(true);
-    this.showSheet = false;
-    setTimeout(() => {
-      if (changeId !== this.readingModeChangeId || navigationId !== this.progressNavigationId) {
-        return;
-      }
-      if (mode > 2) {
-        this.listScroller.scrollToIndex(currentIndex, true, ScrollAlign.START);
-      } else {
-        this.queuePagerRelocation();
-      }
-    }, mode > 2 ? 80 : 150);
-  }
-
-  /** 屏幕方向选项行 */
-  @Builder
-  OrientationRow(mode: string, label: string) {
-    Row() {
-      Text(label)
-        .fontSize(15)
-        .fontColor(this.orientation === mode ? COLOR_PRIMARY : COLOR_TEXT_TITLE)
-        .layoutWeight(1)
-      if (this.orientation === mode) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(18)
-          .fontColor([COLOR_PRIMARY])
-      }
+    if (this.stripRelocating) {
+      const generation = this.generation;
+      this.getUIContext().postFrameCallback({
+        onFrame: (_time: number): void => {
+          if (!this.readerWindowActive || generation !== this.generation || navigationId !== this.progressNavigationId) {
+            return;
+          }
+          try {
+            this.listScroller.scrollToIndex(currentIndex, false, ScrollAlign.START);
+          } catch (_error) {
+            console.warn('[ReaderPage] reading position could not be restored');
+          }
+          this.getUIContext().postFrameCallback({
+            onFrame: (_nextTime: number): void => {
+              if (generation === this.generation && navigationId === this.progressNavigationId) {
+                this.stripRelocating = false;
+              }
+            },
+            onIdle: (_nextTime: number): void => {}
+          });
+        },
+        onIdle: (_time: number): void => {}
+      });
     }
-    .width('100%')
-    .height(48)
-    .padding({ left: 20, right: 20 })
-    .onClick(() => {
-      this.orientation = mode;
-      this.applyOrientation();
-    })
   }
 
   /** 应用窗口方向锁定 */
@@ -1504,7 +1597,12 @@ struct ReaderPage {
     });
   }
 
+  onPageShow(): void {
+    this.readerPageVisible = true;
+  }
+
   onPageHide(): void {
+    this.readerPageVisible = false;
     this.readerLayoutTransition.clear();
     this.curlController.cancel();
   }
@@ -1522,6 +1620,7 @@ struct ReaderPage {
     this.stripWidthChangeId++;
     this.firstImageChangeId++;
     this.turnEffectChangeId++;
+    this.readerStatusChangeId++;
     this.readerLayoutTransition.clear();
     this.curlController.cancel();
     this.cancelPagerAnimation();
@@ -1583,6 +1682,7 @@ struct ReaderPage {
     this.pagerLayoutRevision++;
     this.widePageIndices.clear();
     this.readerImageRatios.clear();
+    this.readerDecodedImages.clear();
     this.readerLayoutTransition.clear();
     this.pageSpreads = [];
     this.pagerDisplayIndex = 0;
@@ -1765,15 +1865,37 @@ struct ReaderPage {
     return spread !== undefined && spread.first !== spread.last;
   }
 
+  private onReaderImageDecoded(index: number, url: string, renderId: number, decoded: boolean): void {
+    if (!decoded) {
+      if (this.readerDecodedImages.get(index) === renderId) {
+        this.readerDecodedImages.delete(index);
+      }
+      return;
+    }
+    const current = this.imageDataSource.getData(index);
+    if (this.readerWindowActive && current !== undefined && current.url === url) {
+      this.readerDecodedImages.set(index, renderId);
+    }
+  }
+
+  private isReaderSpreadDecoded(index: number): boolean {
+    const spread = this.pageSpreads[index];
+    return spread !== undefined && this.readerDecodedImages.has(spread.first) && this.readerDecodedImages.has(spread.last);
+  }
+
   private readerPageBounds(index: number, width: number, height: number): ReaderPaperRect[] {
     const spread = this.pageSpreads[index];
     if (spread === undefined) {
       return [];
     }
     const pages = readerSpreadPages(spread, this.readingMode === 1);
-    return pages.map((page: number, position: number): ReaderPaperRect => readerPaperImageRect(
-      width, height, this.readerLeftInset, this.readerRightInset, pages.length, position,
-      this.readerImageRatios.get(page) ?? 0));
+    const contentWidth = this.doublePageActive ? width : Math.min(width, READER_SINGLE_PAGE_MAX_WIDTH);
+    const leftOffset = (width - contentWidth) / 2;
+    return pages.map((page: number, position: number): ReaderPaperRect => {
+      const rect = readerPaperImageRect(contentWidth, height, this.readerLeftInset, this.readerRightInset,
+        pages.length, position, this.readerImageRatios.get(page) ?? 0);
+      return { left: rect.left + leftOffset, top: rect.top, right: rect.right + leftOffset, bottom: rect.bottom };
+    });
   }
 
   private async changeTurnEffect(effect: ReaderTurnEffect): Promise<void> {
@@ -1848,7 +1970,9 @@ struct ReaderPage {
       radius: 0,
       fillParent: true,
       imageAlignment: alignment,
-      onImageSize: (width: number, height: number): void => this.onReaderImageSize(index, img.url, width, height)
+      onImageSize: (width: number, height: number): void => this.onReaderImageSize(index, img.url, width, height),
+      onImageDecoded: (renderId: number, decoded: boolean): void =>
+        this.onReaderImageDecoded(index, img.url, renderId, decoded)
     })
       .layoutWeight(1)
       .height('100%')
@@ -1861,18 +1985,22 @@ struct ReaderPage {
 
   @Builder
   readerSpreadContent(spreadIndex: number) {
-    Row({ space: 2 }) {
-      if (spreadIndex >= 0 && spreadIndex < this.pageSpreads.length) {
-        ForEach(readerSpreadPages(this.pageSpreads[spreadIndex], this.readingMode === 1),
-          (page: number, position: number) => {
-            this.readerPagerImage(this.imageDataSource.getData(page), page,
-              this.isPairedSpread(spreadIndex) ? (position === 0 ? Alignment.End : Alignment.Start) : Alignment.Center)
-          }, (page: number): string => page + '_' + this.imageDataSource.getData(page).url)
+    Stack() {
+      Row({ space: 2 }) {
+        if (spreadIndex >= 0 && spreadIndex < this.pageSpreads.length) {
+          ForEach(readerSpreadPages(this.pageSpreads[spreadIndex], this.readingMode === 1),
+            (page: number, position: number) => {
+              this.readerPagerImage(this.imageDataSource.getData(page), page,
+                this.isPairedSpread(spreadIndex) ? (position === 0 ? Alignment.End : Alignment.Start) : Alignment.Center)
+            }, (page: number): string => page + '_' + this.imageDataSource.getData(page).url)
+        }
       }
+      .direction(Direction.Ltr)
+      .width('100%').height('100%')
+      .constraintSize({ maxWidth: this.doublePageActive ? undefined : READER_SINGLE_PAGE_MAX_WIDTH })
+      .padding({ left: this.readerLeftInset, right: this.readerRightInset })
     }
-    .direction(Direction.Ltr)
     .width('100%').height('100%')
-    .padding({ left: this.readerLeftInset, right: this.readerRightInset })
   }
 
   @Builder
@@ -1885,19 +2013,21 @@ struct ReaderPage {
         revision: this.curlRevision,
         blocked: this.pagerRelocating || this.showSheet || this.downloadMenuVisible || this.progressDragging,
         animationsOn: this.animationsOn,
+        maxContentWidth: this.doublePageActive ? 0 : READER_SINGLE_PAGE_MAX_WIDTH,
         controller: this.curlController,
         page: (index: number): void => { this.readerSpreadContent(index); },
         isPaired: (index: number): boolean => this.isPairedSpread(index),
+        isSpreadDecoded: (index: number): boolean => this.isReaderSpreadDecoded(index),
         getPageBounds: (index: number, width: number, height: number): ReaderPaperRect[] =>
           this.readerPageBounds(index, width, height),
         onIndexChange: (index: number): void => this.onPagerChange(index),
         onTurnStart: (): void => this.onPagerAnimationStart(true),
         onTurnEnd: (): void => this.onPagerAnimationEnd(),
+        onBoundaryTurn: (delta: number): void => this.showReaderPageBoundary(delta),
         onContentTouch: (event: TouchEvent): void => this.onReaderContentTouch(event),
-        onContentClick: (): void => this.onReaderContentClick()
+        onContentClick: (x: number, width: number): void => this.onReaderPagerClick(x, width)
       })
         .width('100%').height('100%')
-        .constraintSize({ maxWidth: this.doublePageActive ? undefined : 780 })
         .key('curl_' + this.comicId + '_' + this.currentOrder)
     } else if (this.readingMode <= 2) {
       // ── 平移翻页模式 ──
@@ -1917,15 +2047,14 @@ struct ReaderPage {
       .width('100%')
       .height('100%')
       .backgroundColor(COLOR_READER_BG)
-      .constraintSize({ maxWidth: this.doublePageActive ? undefined : 780 })
       .key('swiper_' + this.comicId + '_' + this.currentOrder)
       .disableSwipe(this.pagerRelocating)
       .onAppear((): void => this.queuePagerRelocation())
       .onChange((index: number): void => this.onPagerChange(index))
       .onAnimationStart((): void => this.onPagerAnimationStart())
       .onAnimationEnd((): void => this.onPagerAnimationEnd())
-      .onTouch((event: TouchEvent) => this.onReaderContentTouch(event))
-      .onClick(() => this.onReaderContentClick())
+      .onTouch((event: TouchEvent) => this.onReaderNativePagerTouch(event))
+      .onClick((event: ClickEvent): void => this.onReaderPagerClick(event.x, Number(event.target.area.width)))
     } else {
       // ── 连续滚动模式（无缝 / 有隙） ──
       Scroll(this.scrollScroller) {
@@ -2094,11 +2223,14 @@ struct ReaderPage {
     .height('100%')
     .backgroundColor(COLOR_READER_BG)
     .bindSheet($$this.showSheet, this.unifiedSheet(), {
-      systemMaterial: compatibleSheetMaterial(),
-      // 范围下载与详情页采用同一个表面及内容组件，不叠加第二层圆角背景。
-      backgroundColor: this.sheetKind === 'download' ? COLOR_BG : undefined,
-      blurStyle: this.sheetKind === 'download' ? BlurStyle.NONE : undefined,
-      borderWidth: this.sheetKind === 'download' ? 0 : undefined,
+      systemMaterial: this.sheetKind === 'settings'
+        ? (supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined) : compatibleSheetMaterial(),
+      // 阅读设置使用纯色表面，章节下载沿用详情页的弹窗表面。
+      backgroundColor: this.sheetKind === 'settings' ? COLOR_CARD
+        : (this.sheetKind === 'download' ? COLOR_BG : undefined),
+      blurStyle: this.sheetKind === 'settings' || this.sheetKind === 'download' ? BlurStyle.NONE : undefined,
+      borderWidth: this.sheetKind === 'settings' || this.sheetKind === 'download' ? 0 : undefined,
+      shadow: this.sheetKind === 'settings' ? { radius: 0, color: Color.Transparent } : undefined,
       detents: [this.sheetKind === 'settings' ? this.readerSettingsSheetHeight() : SheetSize.FIT_CONTENT],
       detentSelection: this.sheetKind === 'settings' ? this.readerSettingsSheetHeight() : undefined,
       preferType: SheetType.BOTTOM,
@@ -2438,6 +2570,15 @@ struct ReaderPage {
       Stack({ alignContent: Alignment.TopStart }) {
         this.readerWithBottomBar()
         this.readerTopBar()
+        if (this.readerShowStatus && this.readerPageVisible && !this.showControls && !this.showSheet && !this.isLoading) {
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            ReaderStatusIndicator()
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ right: this.readerRightInset + 12, bottom: this.readerBottomInset + 8 })
+          .hitTestBehavior(HitTestMode.None)
+        }
       }
       .width('100%')
       .height('100%')
@@ -2464,6 +2605,7 @@ struct ReaderPage {
     this.updateReaderWindowMetrics();
     this.readerSettingsMeasuredHeight = 0;
     this.resetProgressControl();
+    this.readerSettingsTab = 0;
     this.sheetKind = 'settings';
     this.showSheet = true;
   }
@@ -2485,126 +2627,66 @@ struct ReaderPage {
     }
   }
 
-  /** 阅读设置弹窗（系统 bindSheet 样式） */
+  private async changeReaderStatus(enabled: boolean): Promise<void> {
+    const request = ++this.readerStatusChangeId;
+    try {
+      const cache = await CacheManager.getInstance();
+      if (!this.readerWindowActive || request !== this.readerStatusChangeId) {
+        return;
+      }
+      if (!cache.isReady()) {
+        throw new Error('设置存储尚未就绪');
+      }
+      cache.saveSetting('reader_show_status', enabled ? 'true' : 'false');
+      this.readerShowStatus = enabled;
+    } catch (_error) {
+      if (this.readerWindowActive && request === this.readerStatusChangeId) {
+        showImmersiveToast({ message: '显示设置保存失败，请重试', duration: 1600 });
+      }
+    }
+  }
+
+  /** 标题和分栏固定，正文在短窗口内独立滚动。 */
   @Builder
   readerSettingsSheet() {
-    Column({ space: 0 }) {
-      Text('')
-        .width(36)
-        .height(4)
-        .borderRadius(2)
-        .backgroundColor(COLOR_TEXT_SECONDARY)
-        .opacity(0.32)
-        .margin({ top: 6, bottom: 4 })
-      Scroll() {
-        Column({ space: 0 }) {
-          Text('阅读模式')
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_TEXT_TITLE)
-            .width('100%')
-            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
-          this.ModeRow(0, '翻页（从左到右）')
-          this.ModeRow(1, '翻页（从右到左）')
-          this.ModeRow(2, '翻页（从上到下）')
-          this.ModeRow(3, '条漫（页间有空隙）')
-          this.ModeRow(4, '条漫')
-
-          if (this.readingMode <= 2) {
-            ReaderLayoutOptions({
-              layout: this.pageLayout,
-              effect: this.turnEffect,
-              showTurnEffect: this.readingMode <= 1,
-              onEffectChange: (effect: ReaderTurnEffect): void => { this.changeTurnEffect(effect); },
-              firstSingle: this.firstImageSingle,
-              onLayoutChange: (layout: ReaderPageLayout): void => { this.changePageLayout(layout); },
-              onFirstSingleChange: (enabled: boolean): void => { this.changeFirstImageSingle(enabled); }
-            })
-          } else if (this.readerWindowWidth >= 600) {
-            ReaderWidthOptions({
-              contentWidth: this.stripReaderWidth,
-              onWidthChange: (width: number): void => { this.changeReaderStripWidth(width); }
-            })
-          }
-
-          Text('屏幕方向')
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_TEXT_TITLE)
-            .width('100%')
-            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
-          this.OrientationRow('system', '跟随系统')
-          this.OrientationRow('portrait', '锁定竖屏')
-          this.OrientationRow('landscape', '锁定横屏')
-
-          Text('音量键翻页')
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_TEXT_TITLE)
-            .width('100%')
-            .padding({ left: 20, right: 20, top: 12, bottom: 10 })
-          Row() {
-            Text('音量上=下一页，音量下=上一页')
-              .fontSize(13)
-              .fontColor(COLOR_TEXT_SECONDARY)
-              .layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.volumeTurnEnabled })
-              .selectedColor(COLOR_PRIMARY)
-              .onChange((checked: boolean) => {
-                this.toggleVolumeTurn(checked);
-              })
-          }
+    Column() {
+      Column({ space: 4 }) {
+        Text('')
+          .width(36)
+          .height(4)
+          .borderRadius(2)
+          .backgroundColor(COLOR_TEXT_SECONDARY)
+          .opacity(0.32)
+        Text('阅读设置')
           .width('100%')
-          .height(48)
-          .padding({ left: 20, right: 20 })
-
-          Text('亮度')
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_TEXT_TITLE)
-            .width('100%')
-            .padding({ left: 20, right: 20, top: 12, bottom: 6 })
-          Row({ space: 10 }) {
-            SymbolGlyph($r('sys.symbol.sun_min'))
-              .fontSize(18)
-              .fontColor([COLOR_TEXT_SECONDARY])
-            Slider({
-              value: this.readerBrightness < 0 ? 0.5 : this.readerBrightness,
-              min: 0.1,
-              max: 1.0,
-              step: 0.01,
-              style: SliderStyle.OutSet
-            })
-              .layoutWeight(1)
-              .trackColor(COLOR_PRIMARY_TINT)
-              .selectedColor(COLOR_PRIMARY)
-              .showTips(false)
-              .onChange((value: number, mode: SliderChangeMode) => {
-                this.readerBrightness = value;
-                if (mode === SliderChangeMode.End) {
-                  this.applyBrightness();
-                }
-              })
-            SymbolGlyph($r('sys.symbol.sun_max'))
-              .fontSize(20)
-              .fontColor([COLOR_TEXT_SECONDARY])
-          }
-          .width('100%')
-          .height(40)
-          .padding({ left: 20, right: 20 })
-        }
-        .width('100%')
-        .padding({ bottom: this.readerBottomInset + 12 })
-        .onSizeChange((_oldSize: SizeOptions, size: SizeOptions): void => {
-          // Scroll 内的内容列按自然高度测量，返回值已经是 vp。
-          this.updateReaderSettingsBodyHeight(Number(size.height));
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(COLOR_TEXT_TITLE)
+        ReaderSettingSegments({
+          items: READER_SETTINGS_TABS,
+          selected: this.readerSettingsTab,
+          groupLabel: '设置分类',
+          asTab: true,
+          animationsOn: this.animationsOn,
+          onSelect: (index: number): void => this.selectReaderSettingsTab(index)
         })
       }
       .width('100%')
+      .padding({ left: 16, right: 16, top: 6, bottom: 8 })
+
+      Swiper(this.readerSettingsController) {
+        this.readerSettingsTabContent(0)
+        this.readerSettingsTabContent(1)
+      }
+      .width('100%')
       .layoutWeight(1)
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .indicator(false)
+      .loop(false)
+      .disableSwipe(true)
+      .duration(this.animationsOn ? 220 : 0)
+      .curve(Curve.EaseInOut)
+      .onAppear((): void => { this.readerSettingsController.changeIndex(this.readerSettingsTab, false); })
+      .clip(true)
     }
     .width('100%')
     .height(this.readerSettingsContentHeight())
@@ -2613,17 +2695,147 @@ struct ReaderPage {
     .borderRadius({ topLeft: 20, topRight: 20 })
   }
 
-  private readerSettingsSheetWidth(): Dimension {
-    return this.readerWindowWidth > 0 ? Math.min(560, this.readerWindowWidth) : '100%';
+  private selectReaderSettingsTab(index: number): void {
+    if ((index === 0 || index === 1) && index !== this.readerSettingsTab) {
+      this.readerSettingsController.changeIndex(index, this.animationsOn);
+      this.readerSettingsTab = index;
+    }
   }
 
-  private updateReaderSettingsBodyHeight(height: number): void {
-    if (!this.readerWindowActive || !Number.isFinite(height) || height <= 0) {
-      return;
+  @Builder
+  readerSettingsTabContent(tab: number) {
+    Scroll() {
+      Column() {
+        if (tab === 0) {
+          this.readerReadingSettings()
+        } else {
+          this.readerDisplaySettings()
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: this.readerBottomInset + 12 })
     }
-    if (Math.abs(this.readerSettingsBodyHeight - height) > 0.5) {
-      this.readerSettingsBodyHeight = height;
+    .width('100%')
+    .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
+    .accessibilityLevel(this.readerSettingsTab === tab ? 'auto' : 'no-hide-descendants')
+  }
+
+  @Builder
+  readerReadingSettings() {
+    Column({ space: 4 }) {
+      Row({ space: 14 }) {
+        Text('阅读模式')
+          .fontSize(15)
+          .fontColor(COLOR_TEXT_TITLE)
+        Column() {
+          ReaderSettingSegments({
+            items: READER_MODES,
+            selected: this.readingMode <= 2 ? 0 : 1,
+            groupLabel: '阅读模式',
+            animationsOn: this.animationsOn,
+            onSelect: (index: number): void => {
+              this.switchReadingMode(index === 0 ? this.lastPagedReadingMode : this.lastStripReadingMode);
+            }
+          })
+        }
+        .layoutWeight(1)
+        .constraintSize({ maxWidth: 240 })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      if (this.readingMode <= 2) {
+        ReaderSettingSelect({
+          label: '翻页方向',
+          options: READER_DIRECTION_OPTIONS,
+          selected: this.readingMode,
+          onSelect: (index: number): void => { this.switchReadingMode(index); }
+        })
+        ReaderLayoutOptions({
+          layout: this.pageLayout,
+          effect: this.turnEffect,
+          showTurnEffect: this.readingMode <= 1,
+          onEffectChange: (effect: ReaderTurnEffect): void => { this.changeTurnEffect(effect); },
+          firstSingle: this.firstImageSingle,
+          onLayoutChange: (layout: ReaderPageLayout): void => { this.changePageLayout(layout); },
+          onFirstSingleChange: (enabled: boolean): void => { this.changeFirstImageSingle(enabled); }
+        })
+      } else {
+        ReaderSettingToggle({
+          label: '页间留缝',
+          checked: this.readingMode === 3,
+          onChange: (enabled: boolean): void => { this.switchReadingMode(enabled ? 3 : 4); }
+        })
+      }
+      ReaderSettingToggle({
+        label: '音量键翻页',
+        checked: this.volumeTurnEnabled,
+        onChange: (enabled: boolean): void => { this.toggleVolumeTurn(enabled); }
+      })
     }
+    .width('100%')
+  }
+
+  @Builder
+  readerDisplaySettings() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('亮度').fontSize(15).fontColor(COLOR_TEXT_TITLE)
+        Text(this.readerBrightness < 0 ? '跟随系统' : Math.round(this.readerBrightness * 100) + '%')
+          .fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      .padding({ top: 6 })
+      Slider({
+        value: this.readerBrightness < 0 ? 0.5 : this.readerBrightness,
+        min: 0.1,
+        max: 1.0,
+        step: 0.01,
+        style: SliderStyle.OutSet
+      })
+        .width('100%')
+        .height(44)
+        .trackColor(COLOR_PRIMARY_TINT)
+        .selectedColor(COLOR_PRIMARY)
+        .showTips(false)
+        .accessibilityText('阅读亮度')
+        .onChange((value: number, mode: SliderChangeMode): void => {
+          this.readerBrightness = value;
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.applyBrightness();
+          }
+        })
+
+      ReaderSettingSelect({
+        label: '屏幕方向',
+        options: READER_ORIENTATION_OPTIONS,
+        selected: Math.max(0, READER_ORIENTATIONS.indexOf(this.orientation)),
+        onSelect: (index: number): void => {
+          this.orientation = READER_ORIENTATIONS[index];
+          this.applyOrientation();
+        }
+      })
+      ReaderSettingToggle({
+        label: '显示时间和电量',
+        checked: this.readerShowStatus,
+        onChange: (enabled: boolean): void => { this.changeReaderStatus(enabled); }
+      })
+      if (this.readingMode > 2 && this.readerWindowWidth >= 600) {
+        ReaderWidthOptions({
+          contentWidth: this.stripReaderWidth,
+          onWidthChange: (width: number): void => { this.changeReaderStripWidth(width); }
+        })
+      }
+    }
+    .width('100%')
+  }
+
+  private readerSettingsSheetWidth(): Dimension {
+    return this.readerWindowWidth > 0 ? Math.min(560, this.readerWindowWidth) : '100%';
   }
 
   private updateReaderSettingsHeight(height: number): void {
@@ -2636,13 +2848,10 @@ struct ReaderPage {
     }
   }
 
-  /** 内容少时收紧面板；小窗/横屏时受可用高度限制，余下内容仍可滚动。 */
+  /** 两栏共用一个挡位，内容变化时保持面板高度，由正文承担滚动。 */
   private readerSettingsSheetHeight(): number {
     const height = Math.max(1, this.readerWindowHeight);
-    const maximum = Math.max(1, Math.min(height * 0.82, height - this.readerTopInset - 12));
-    // 顶部横条 4vp + 上下间距 6vp/4vp；正文高度已包含底部安全区留白。
-    const content = this.readerSettingsBodyHeight > 0 ? this.readerSettingsBodyHeight + 14 : maximum;
-    return Math.min(maximum, content);
+    return Math.max(1, Math.min(384 + this.readerBottomInset, height * 0.82, height - this.readerTopInset - 12));
   }
 
   private readerSettingsContentHeight(): number {
