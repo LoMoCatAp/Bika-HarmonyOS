@@ -1,7 +1,12 @@
 import { TitleBarStyleOptions, HdsNavigationTitleBarOptions, DividerShowType, ScrollEffectType, BlurStrategy } from '@kit.UIDesignKit';
+import { supportsHdsImmersiveMaterial } from './CompatibleMaterial';
+import { COLOR_BG } from './Constants';
 
 /** 与主页共用原生渐变模糊；前景按钮的光感材质由独立胶囊承载。 */
 export function navigationBlurStyle(): TitleBarStyleOptions {
+  if (!supportsHdsImmersiveMaterial()) {
+    return { originalStyle: { backgroundStyle: { backgroundColor: COLOR_BG } } };
+  }
   return {
     scrollEffectOpts: {
       enableScrollEffect: true,

@@ -43,6 +43,80 @@ test('home channel columns fit the measured compact tablet and split-screen widt
   }
 });
 
+function materialHarness({ api = 26, hardware = true, disabled = false, failBuild = false } = {}) {
+  const empty = {};
+  const card = 'theme-card';
+  const title = 'theme-text';
+  let hardwareQueries = 0;
+  const uiMaterial = {
+    Material: { empty },
+    MaterialState: { ENABLE: 1, DISABLE: 2 },
+    ImmersiveStyle: { THIN: 1 },
+    getMaterialInfo: () => ({ state: disabled ? 2 : 1 }),
+    ImmersiveMaterial: class {
+      constructor(options) {
+        if (failBuild) throw new Error('material unavailable');
+        this.options = options;
+      }
+    }
+  };
+  const globals = { Color: { Transparent: 'transparent' }, BlurStyle: { NONE: 0 }, AppStorage: { get: () => 'dark' } };
+  const material = evaluate(read('common/CompatibleMaterial.ets'), globals, {
+    '@kit.ArkUI': { CommonModifier: class {}, uiMaterial },
+    '@kit.BasicServicesKit': { deviceInfo: { sdkApiVersion: api } },
+    '@kit.UIDesignKit': { hdsMaterial: {
+      MaterialType: { IMMERSIVE: 101 },
+      getSystemMaterialTypes: () => { hardwareQueries++; return hardware ? [101] : []; }
+    } },
+    './Constants': { COLOR_CARD: card }
+  });
+  const popup = evaluate(read('common/ImmersiveToast.ets'), globals, {
+    '@kit.ArkUI': { promptAction: { showToast() {}, showDialog: async options => options } },
+    './CompatibleMaterial': material,
+    './Constants': { COLOR_CARD: card, COLOR_TEXT_TITLE: title }
+  });
+  return { ...material, ...popup, empty, card, title, get hardwareQueries() { return hardwareQueries; } };
+}
+
+test('legacy, unsupported and disabled material use opaque capsule and popup surfaces', async () => {
+  for (const fixture of [{ api: 22 }, { hardware: false }, { disabled: true }]) {
+    const h = materialHarness(fixture);
+    assert.equal(h.supportsComponentImmersiveMaterial(), false);
+    const sheet = h.compatibleSheetOptions({});
+    const menu = h.compatibleMenuOptions({});
+    const attributes = {};
+    new h.GlassCapsuleMaterial(h.card).applyNormalAttribute({
+      backgroundColor: color => { attributes.color = color; },
+      systemMaterial: material => { attributes.material = material; }
+    });
+    const toast = { message: 'test' };
+    h.showImmersiveToast(toast);
+    const dialog = await h.showImmersiveDialog({});
+    assert.equal(attributes.color, h.card);
+    for (const options of [sheet, menu, toast, dialog]) {
+      assert.equal(options.backgroundColor, h.card);
+      assert.equal(options.systemMaterial, fixture.api ? undefined : h.empty);
+    }
+    assert.equal(sheet.blurStyle, 0);
+    assert.equal(toast.textColor, h.title);
+    if (fixture.api) assert.equal(h.hardwareQueries, 0);
+  }
+});
+
+test('supported material keeps native styling and a failed material builds a solid sheet', () => {
+  const supported = materialHarness();
+  assert.equal(supported.supportsComponentImmersiveMaterial(), true);
+  const sheet = supported.compatibleSheetOptions({});
+  assert.equal(sheet.backgroundColor, undefined);
+  assert.equal(sheet.systemMaterial.options.materialColor, '#B31B2029');
+  assert.equal(supported.compatiblePopupMaterial().options.materialColor, undefined);
+  assert.equal(supported.compatibleSheetOptions({ backgroundColor: 'reader' }, false).systemMaterial, supported.empty);
+  const failing = materialHarness({ failBuild: true });
+  const fallback = failing.compatibleSheetOptions({ backgroundColor: 'explicit' });
+  assert.equal(fallback.backgroundColor, 'explicit');
+  assert.equal(fallback.systemMaterial, failing.empty);
+});
+
 const navigationMethods = ['shouldShowTabBar', 'canSwipeRootTabs', 'applyTabBarVisibility', 'syncTabBarVisibility',
   'applyPendingTabsMaterial', 'onTabsMaterialChanged', 'onTabsAppear', 'onSubpageChanged', 'openChannel',
   'onPageHide', 'onPageShow', 'aboutToDisappear', 'openProfileSubpage'];

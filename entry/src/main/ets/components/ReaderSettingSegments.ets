@@ -1,6 +1,6 @@
-import { CapsuleSegmentButtonV2, ColorMetrics, SegmentButtonV2Items, TabSegmentButtonV2, uiMaterial } from '@kit.ArkUI';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_TEXT_TITLE } from '../common/Constants';
-import { supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
+import { CapsuleSegmentButtonV2, ColorMetrics, SegmentButtonV2Items, TabSegmentButtonV2 } from '@kit.ArkUI';
+import { COLOR_CARD, COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_TEXT_TITLE } from '../common/Constants';
+import { noImmersiveMaterial, supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
 
 @Component
 export struct ReaderSettingSegments {
@@ -20,7 +20,7 @@ export struct ReaderSettingSegments {
         itemSelectedFontColor: ColorMetrics.resourceColor(COLOR_PRIMARY),
         itemSelectedBackgroundColor: ColorMetrics.resourceColor(COLOR_PRIMARY_TINT),
         enableStateAnimation: this.animationsOn,
-        backgroundSystemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+        backgroundSystemMaterial: noImmersiveMaterial()
       })
         .width('100%')
         .accessibilityText(this.groupLabel)
@@ -32,7 +32,7 @@ export struct ReaderSettingSegments {
         itemSelectedFontColor: ColorMetrics.resourceColor(COLOR_PRIMARY),
         itemSelectedBackgroundColor: ColorMetrics.resourceColor(COLOR_PRIMARY_TINT),
         enableStateAnimation: this.animationsOn,
-        backgroundSystemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+        backgroundSystemMaterial: noImmersiveMaterial()
       })
         .width('100%')
         .accessibilityText(this.groupLabel)
@@ -53,6 +53,9 @@ export struct ReaderSettingSelect {
       Select(this.options)
         .selected(this.selected)
         .value(this.options[this.selected]?.value ?? '')
+        .menuSystemMaterial(supportsComponentImmersiveMaterial() ? undefined : noImmersiveMaterial())
+        .menuBackgroundColor(supportsComponentImmersiveMaterial() ? undefined : COLOR_CARD)
+        .menuBackgroundBlurStyle(supportsComponentImmersiveMaterial() ? undefined : BlurStyle.NONE)
         .height(44)
         .accessibilityText(this.label)
         .onSelect((index: number): void => this.onSelect(index))

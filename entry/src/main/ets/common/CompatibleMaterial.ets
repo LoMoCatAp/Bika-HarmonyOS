@@ -1,128 +1,121 @@
 import { CommonModifier, uiMaterial } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { hdsEffect } from '@kit.UIDesignKit';
+import { hdsMaterial } from '@kit.UIDesignKit';
+import { COLOR_CARD } from './Constants';
 
-/**
- * 沉浸光感材质
- * - API 26+：uiMaterial.ImmersiveMaterial（THIN 沉浸薄材 + 主色点光）
- * - 旧设备：hdsEffect 点光 + 渐变阴影回退
- */
+const MATERIAL_ACCENT: string = '#FF7CA8';
 
-function activeDarkMode(): boolean {
-  const mode: string = String(AppStorage.get('bika_color_mode') ?? 'system');
-  if (mode === 'dark') {
-    return true;
-  }
-  if (mode === 'light') {
+export function supportsHdsImmersiveMaterial(): boolean {
+  if (deviceInfo.sdkApiVersion < 23) {
     return false;
   }
-  return String(AppStorage.get('system_color_mode') ?? 'light') === 'dark';
-}
-
-/** 材质档位 → 点光强度（强/均衡/弱/自适应），切换档位时所有卡片材质即时变化 */
-function materialIntensity(): number {
-  const level: string = String(AppStorage.get('bika_material_level') ?? 'EXQUISITE');
-  if (level === 'SMOOTH') {
-    return 0.35;
+  try {
+    return hdsMaterial.getSystemMaterialTypes().includes(hdsMaterial.MaterialType.IMMERSIVE);
+  } catch (_error) {
+    return false;
   }
-  if (level === 'GENTLE') {
-    return 0.18;
-  }
-  if (level === 'ADAPTIVE') {
-    return 0.45;
-  }
-  return 0.6;
 }
 
 export function supportsComponentImmersiveMaterial(): boolean {
-  return deviceInfo.sdkApiVersion >= 26;
+  // 当前构建 SDK 的 ArkUI 声明不含硬件查询，使用 HDS 的设备材质能力查询。
+  if (deviceInfo.sdkApiVersion < 26 || !supportsHdsImmersiveMaterial()) {
+    return false;
+  }
+  try {
+    return uiMaterial.getMaterialInfo().state !== uiMaterial.MaterialState.DISABLE;
+  } catch (_error) {
+    return false;
+  }
 }
 
-export function supportsHdsImmersiveMaterial(): boolean {
-  return deviceInfo.sdkApiVersion >= 23;
+export function noImmersiveMaterial(): uiMaterial.Material | undefined {
+  if (deviceInfo.sdkApiVersion < 26) {
+    return undefined;
+  }
+  try {
+    return uiMaterial.Material.empty;
+  } catch (_error) {
+    return undefined;
+  }
 }
 
-export class CompatibleMaterialModifier extends CommonModifier {
-  private readonly accentColor: string;
-  private readonly applyShadow: boolean;
-  private readonly transparentBackground: boolean;
+/** 有光感时沿用原生玻璃，普通设备使用主题实底。 */
+export class GlassCapsuleMaterial extends CommonModifier {
+  private readonly fallbackColor: ResourceColor;
+  private readonly reader: boolean;
 
-  constructor(accentColor: string, applyShadow: boolean = false, transparentBackground: boolean = false) {
+  constructor(fallbackColor: ResourceColor, reader: boolean = false) {
     super();
-    this.accentColor = accentColor;
-    this.applyShadow = applyShadow;
-    this.transparentBackground = transparentBackground;
+    this.fallbackColor = fallbackColor;
+    this.reader = reader;
   }
 
   applyNormalAttribute(instance: CommonAttribute): void {
-    const darkMode: boolean = activeDarkMode();
-    if (!supportsComponentImmersiveMaterial()) {
-      instance.backgroundColor(this.transparentBackground ? Color.Transparent : (darkMode ? '#1B2029' : '#FFFFFF'));
-      if (supportsHdsImmersiveMaterial()) {
-        const effect: VisualEffect = new hdsEffect.HdsEffectBuilder()
-          .pressShadow(hdsEffect.PressShadowType.BLEND_GRADIENT)
-          .pointLight({
-            sourceType: hdsEffect.PointLightSourceType.SOFT,
-            illuminatedType: hdsEffect.PointLightIlluminatedType.BORDER_CONTENT,
-            options: {
-              color: this.accentColor,
-              intensity: materialIntensity(),
-              height: 24,
-              bloom: materialIntensity() * 0.2
-            }
-          })
-          .buildEffect();
-        instance.visualEffect(effect);
+    if (supportsComponentImmersiveMaterial()) {
+      try {
+        const material = new uiMaterial.ImmersiveMaterial({
+          style: uiMaterial.ImmersiveStyle.THIN,
+          materialColor: this.reader ? '#991C1C1E' : undefined,
+          lightEffect: this.reader ? { color: MATERIAL_ACCENT } : undefined,
+          applyShadow: true,
+          interactive: false
+        });
+        instance.backgroundColor(this.fallbackColor);
+        instance.systemMaterial(material);
+        return;
+      } catch (error) {
+        console.warn('[CompatibleMaterial] capsule material unavailable: ' + String(error));
       }
-      if (this.applyShadow) {
-        instance.border({ width: 1, color: darkMode ? '#343B48' : '#DDE2EC' });
-        instance.shadow({ radius: 10, color: darkMode ? '#52000000' : '#14000000', offsetY: 2 });
-      }
-      return;
     }
-    instance.systemMaterial(new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.THIN,
-      materialColor: this.applyShadow ? (darkMode ? '#1B2029' : '#FFFFFF') : Color.Transparent,
-      applyShadow: false,
-      interactive: true,
-      lightEffect: { color: this.accentColor }
-    }));
+    const empty = noImmersiveMaterial();
+    if (empty !== undefined) {
+      instance.systemMaterial(empty);
+    }
+    instance.backgroundColor(this.fallbackColor);
   }
 }
 
-export function compatibleImmersiveMaterial(accentColor: string,
-  applyShadow: boolean = false, transparentBackground: boolean = false): CommonModifier {
-  return new CompatibleMaterialModifier(accentColor, applyShadow, transparentBackground);
-}
-
-/** 弹窗材质点光颜色（品牌主色，与应用页签 lightColor / 沉浸 Toast 保持一致） */
-const SHEET_LIGHT_COLOR: string = '#FF7CA8';
-
-/** 系统弹窗保留固定原生材质，应用的胶囊通透度不修改系统弹窗。 */
-
-/**
- * bindSheet 的 SheetOptions.systemMaterial 专用材质工厂。
- * - API 26+：返回 uiMaterial.ImmersiveMaterial（THIN 薄材 + 主色点光 + 跟随主题的透明底色）
- * - 旧设备：返回 undefined，bindSheet 保持系统默认背景
- * 注意：materialColor 必须带透明度，完全不透明会彻底挡住材质滤镜。
- */
-export function compatibleSheetMaterial(accentColor: string = SHEET_LIGHT_COLOR): uiMaterial.Material | undefined {
+/** 系统弹窗保留原生材质配色，低算力设备可使用系统自带的底色。 */
+export function compatiblePopupMaterial(materialColor?: ResourceColor): uiMaterial.Material | undefined {
   if (!supportsComponentImmersiveMaterial()) {
     return undefined;
   }
   try {
-    // 底色跟随主题卡片色：浅色白、深色 #1B2029，保证弹窗内文字对比度
-    const base: string = activeDarkMode() ? '1B2029' : 'FFFFFF';
-    console.info('[CompatibleMaterial] native sheet material, api=' + deviceInfo.sdkApiVersion);
     return new uiMaterial.ImmersiveMaterial({
       style: uiMaterial.ImmersiveStyle.THIN,
-      materialColor: '#B3' + base,
+      materialColor,
       applyShadow: false,
       interactive: false,
-      lightEffect: { color: accentColor }
+      lightEffect: { color: MATERIAL_ACCENT }
     });
-  } catch (err) {
-    console.error('[CompatibleMaterial] sheet material build failed: ' + JSON.stringify(err));
+  } catch (error) {
+    console.warn('[CompatibleMaterial] popup material unavailable: ' + String(error));
     return undefined;
   }
+}
+
+function sheetMaterialTint(): string {
+  const mode = String(AppStorage.get('bika_color_mode') ?? 'system');
+  const dark = mode === 'dark' || (mode === 'system' && AppStorage.get('system_color_mode') === 'dark');
+  return dark ? '#B31B2029' : '#B3FFFFFF';
+}
+
+/** 普通设备与纯色面板都由系统 Sheet 绘制一层不透明主题背景。 */
+export function compatibleSheetOptions(options: SheetOptions, useMaterial: boolean = true): SheetOptions {
+  const material = useMaterial ? compatiblePopupMaterial(sheetMaterialTint()) : undefined;
+  options.systemMaterial = material ?? noImmersiveMaterial();
+  if (material === undefined) {
+    options.backgroundColor = options.backgroundColor ?? COLOR_CARD;
+    options.blurStyle = BlurStyle.NONE;
+  }
+  return options;
+}
+
+export function compatibleMenuOptions(options: MenuOptions): MenuOptions {
+  if (!supportsComponentImmersiveMaterial()) {
+    options.systemMaterial = noImmersiveMaterial();
+    options.backgroundColor = options.backgroundColor ?? COLOR_CARD;
+    options.backgroundBlurStyle = BlurStyle.NONE;
+  }
+  return options;
 }

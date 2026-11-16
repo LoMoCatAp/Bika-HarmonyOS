@@ -77,7 +77,8 @@ const names = ['rebuildPageSpreads','resetPageSpreads','queuePagerRelocation','c
   'updateReaderWindowSize','updateReaderWindowHeight','restoreLastPage','switchReadingMode','aboutToAppear','changeReaderStripWidth',
   'usesReaderCurl','changeTurnEffect','changeReaderStatus','onReaderPagerClick','onReaderImageDecoded','isReaderSpreadDecoded',
   'showReaderPageBoundary','onReaderNativePagerTouch','isImmersiveReading','syncReaderSystemBars',
-  'onPageShow','onPageHide','stopObservingReaderInsets'];
+  'onPageShow','onPageHide','stopObservingReaderInsets','toggleControls','cancelReaderControlsTransition',
+  'clearReaderControlsReveal','finishReaderControlsReveal','finishReaderControlsWhenInsetsReady','animateReaderControls'];
 const source = read('pages/ReaderPage.ets');
 const ast = ts.createSourceFile('ReaderPage.ets',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.ETS);
 const owner = ast.statements.find(node=>node.name?.getText(ast)==='ReaderPage');
@@ -85,7 +86,7 @@ const methods = names.map(name=>{
   const member=owner.members.find(node=>node.name?.getText(ast)===name); assert(member,name); return member.getText(ast);
 }).join('\n');
 function reader() {
-  const frames=[],calls=[],writes=[],messages=[],tips=[],systemBars=[],settings=new Map(),timers=new Map();
+  const frames=[],calls=[],writes=[],messages=[],tips=[],systemBars=[],controlAnimations=[],settings=new Map(),timers=new Map();
   const images=Array.from({length:12},(_,i)=>({url:'image-'+i,failed:false}));
   let timerId=0, provider, params={comicId:'bookA',comicTitle:'Title',currentOrder:1,epsCount:1};
   const cache={isReady:()=>true,getSetting:(key,fallback)=>settings.get(key)??fallback,
@@ -94,7 +95,7 @@ function reader() {
   const {Subject}=evaluate('export class Subject {\n'+methods+'\n}',{
     ...model, ...curlModel, CacheManager:{getInstance:()=>provider()},router:{getParams:()=>params},
     showImmersiveToast:value=>messages.push(value.message),ScrollAlign:{START:0},
-    TouchType:{Down:0,Up:1,Move:2,Cancel:3},
+    TouchType:{Down:0,Up:1,Move:2,Cancel:3},Curve:{EaseOut:0},READER_CONTROLS_FADE_MS:180,READER_CONTROLS_REVEAL_TIMEOUT_MS:200,
     WindowHelper:{setReaderSystemBars:(_window,visible,animated)=>systemBars.push([visible,animated])},
     setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id;},
     clearTimeout:id=>timers.delete(id)
@@ -108,17 +109,22 @@ function reader() {
     stripReaderWidth:780,stripWidthChangeId:0,stripRelocating:false,
     isLoading:false,showSheet:false,downloadMenuVisible:false,progressMode:false,progressDragging:false,progressTouching:false,lastVolumeTurnAt:0,
     comicId:'bookA',currentOrder:1,showControls:true,readerPageVisible:true,readerSystemBarsVisible:true,
+    readerControlsFadingOut:false,readerControlsTransitionId:0,readerControlsRevealPending:false,
+    readerControlsRevealTimer:-1,readerShownTopInset:0,readerShownBottomInset:0,
     readerWindow:{off(){}},readerShowStatus:false,errorText:'',animationsOn:true,
     imageDataSource:{getData:index=>images[index]},
     swiperController:{changeIndex:(index,animation)=>{calls.push([index,animation]);page.onPagerChange(index);}},
-    getUIContext:()=>({px2vp:value=>value/2,postFrameCallback:callback=>frames.push(callback)}),
+    getUIContext:()=>({
+      px2vp:value=>value/2,postFrameCallback:callback=>frames.push(callback),
+      animateTo:(options,update)=>{controlAnimations.push(options);update();}
+    }),
     persistPageIndex:()=>writes.push(page.swiperIndex),publishCurrentReading(){},
     nativeReaderSwipe:null,onReaderContentTouch(){},onReaderContentClick:()=>calls.push(['center']),showPageTip:index=>tips.push(index),resetProgressControl:()=>{page.progressMode=false;},
     listScroller:{scrollToIndex:index=>calls.push(['list',index])},
     observeReaderInsets:()=>{page.readerWindowActive=true;},registerVolumeKeys(){},updateChapterButtons(){},loadImagesWithCache:async()=>{},loadLocalImages(){}
   });
   const flush=()=>{let limit=20;while(frames.length&&limit--){for(const callback of frames.splice(0))callback.onFrame(0);}assert(limit>0,'frame loop');};
-  return {page,frames,calls,writes,messages,tips,systemBars,settings,cache,images,timers,flush,
+  return {page,frames,calls,writes,messages,tips,systemBars,controlAnimations,settings,cache,images,timers,flush,
     setProvider:value=>provider=value,setParams:value=>params=value};
 }
 test('rotation and resizing relocate by the original image rather than the spread number',()=>{
@@ -339,6 +345,97 @@ test('fullscreen follows the reader controls and foreground lifecycle independen
   page.syncReaderSystemBars();
   page.stopObservingReaderInsets();
   assert.deepEqual(h.systemBars, [[false, true], [true, false], [false, true], [true, true], [false, true], [true, false]]);
+});
+
+test('system bars start hiding after the reader toolbars finish fading', () => {
+  const h = reader();
+  h.page.toggleControls();
+  h.page.syncReaderSystemBars();
+  assert.equal(h.page.showControls, false);
+  assert.equal(h.page.readerControlsFadingOut, true);
+  assert.deepEqual(h.systemBars, []);
+  h.controlAnimations[0].onFinish();
+  assert.equal(h.page.readerControlsFadingOut, false);
+  assert.deepEqual(h.systemBars, [[false, true]]);
+});
+
+test('a cancelled reader fade cannot hide native bars after reopening controls or leaving', () => {
+  for (const cancel of [page => page.toggleControls(), page => page.onPageHide()]) {
+    const h = reader();
+    h.page.toggleControls();
+    cancel(h.page);
+    h.controlAnimations[0].onFinish();
+    assert.equal(h.page.readerControlsFadingOut, false);
+    assert.deepEqual(h.systemBars, []);
+  }
+});
+
+function reopenReaderWithHiddenSystemBars() {
+  const h = reader();
+  h.page.readerTopInset = 28;
+  h.page.readerBottomInset = 14;
+  h.page.toggleControls();
+  h.controlAnimations[0].onFinish();
+  h.page.readerTopInset = 0;
+  h.page.readerBottomInset = 0;
+  h.page.toggleControls();
+  return h;
+}
+
+test('reader controls wait until both safe insets are restored before fading in', () => {
+  const h = reopenReaderWithHiddenSystemBars();
+  assert.deepEqual(h.systemBars, [[false, true], [true, false]]);
+  assert.equal(h.page.showControls, false);
+  h.page.readerTopInset = 28;
+  h.page.finishReaderControlsWhenInsetsReady();
+  assert.equal(h.page.showControls, false);
+  h.page.readerBottomInset = 14;
+  h.page.finishReaderControlsWhenInsetsReady();
+  assert.equal(h.page.showControls, true);
+  assert.equal(h.controlAnimations.length, 2);
+  assert.equal(h.timers.has(h.page.readerControlsRevealTimer), false);
+});
+
+test('reader fade-in has a timeout and stale timeouts cannot reopen controls', () => {
+  const h = reopenReaderWithHiddenSystemBars();
+  const pending = h.timers.get(h.page.readerControlsRevealTimer);
+  assert.equal(pending.delay, 200);
+  pending.callback();
+  assert.equal(h.page.showControls, true);
+
+  for (const cancel of [page => page.toggleControls(), page => page.onPageHide()]) {
+    const cancelled = reopenReaderWithHiddenSystemBars();
+    const timer = cancelled.timers.get(cancelled.page.readerControlsRevealTimer);
+    cancel(cancelled.page);
+    timer.callback();
+    assert.equal(cancelled.page.showControls, false);
+    assert.equal(cancelled.controlAnimations.length, 1);
+  }
+});
+
+test('restoring system bars does not change the automatic page layout breakpoint', () => {
+  const h = reader();
+  h.page.readerWindowWidth = 840;
+  h.page.readerWindowHeight = 720;
+  h.page.readerTopInset = 30;
+  h.page.readerBottomInset = 18;
+  h.page.rebuildPageSpreads();
+  h.flush();
+  assert.equal(h.page.doublePageActive, false);
+  const spread = h.page.pageSpreads;
+  h.page.readerTopInset = 0;
+  h.page.readerBottomInset = 0;
+  h.page.rebuildPageSpreads();
+  assert.equal(h.page.pageSpreads, spread);
+});
+
+test('disabling animations hides the system bars immediately', () => {
+  const h = reader();
+  h.page.animationsOn = false;
+  h.page.toggleControls();
+  h.page.syncReaderSystemBars();
+  assert.deepEqual(h.controlAnimations, []);
+  assert.deepEqual(h.systemBars, [[false, false]]);
 });
 
 test('sheets, loading and empty chapters keep the system bars visible', () => {

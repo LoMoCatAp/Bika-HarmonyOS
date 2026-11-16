@@ -1,4 +1,5 @@
 import { showImmersiveToast } from '../../common/ImmersiveToast';
+import { compatibleMenuOptions } from '../../common/CompatibleMaterial';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
 import { CacheManager } from '../../common/CacheManager';
 import { DownloadManager } from '../../common/DownloadManager';
@@ -62,7 +63,7 @@ export struct ProfileSettingsPage {
           onSelect(index);
         }
       };
-    }))
+    }), compatibleMenuOptions({}))
   }
 
   @Builder

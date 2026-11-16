@@ -1,5 +1,5 @@
 import { ImageLoader } from '../common/ImageLoader';
-import { IMAGE_HOST_POOL } from '../common/Constants';
+import { COLOR_READER_TEXT_MUTED, IMAGE_HOST_POOL } from '../common/Constants';
 
 let netImageRenderSequence: number = 0;
 
@@ -18,6 +18,7 @@ export struct NetImage {
   @Prop radius: number = 0;
   @Prop topRadius: number = 0;
   @Prop placeholderColor: string = '#EEF1F7';
+  @Prop darkLoading: boolean = false;
   /** true=填满父容器（翻页模式）；false=按图片比例自适应高度（连续滚动无缝模式） */
   @Prop fillParent: boolean = false;
   onImageSize: (width: number, height: number) => void = (_width: number, _height: number): void => {};
@@ -36,7 +37,7 @@ export struct NetImage {
   aboutToAppear(): void {
     this.alive = true;
     let animOn = AppStorage.get<boolean>('bika_animations') ?? true;
-    if (animOn) {
+    if (animOn && !this.darkLoading) {
       animateTo({
         duration: 900,
         curve: Curve.EaseInOut,
@@ -167,17 +168,23 @@ export struct NetImage {
         .width('100%')
         .height(this.fillParent ? '100%' : 180)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.placeholderColor)
+        .backgroundColor(this.darkLoading ? '#26272B' : this.placeholderColor)
         .borderRadius(this.topRadius > 0
           ? { topLeft: this.topRadius, topRight: this.topRadius, bottomLeft: this.radius, bottomRight: this.radius }
           : this.radius)
         .onClick(() => this.retry())
       } else {
-        Column()
+        Column() {
+          if (this.darkLoading) {
+            LoadingProgress().width(32).height(32).color(COLOR_READER_TEXT_MUTED)
+              .accessibilityText('正在加载图片')
+          }
+        }
           .width('100%')
           .height(this.fillParent ? '100%' : 180)
-          .backgroundColor(this.placeholderColor)
-          .opacity(this.pulse)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.darkLoading ? '#26272B' : this.placeholderColor)
+          .opacity(this.darkLoading ? 1 : this.pulse)
           .borderRadius(this.topRadius > 0
             ? { topLeft: this.topRadius, topRight: this.topRadius, bottomLeft: this.radius, bottomRight: this.radius }
             : this.radius)

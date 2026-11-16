@@ -1,4 +1,5 @@
 import { router, promptAction } from '@kit.ArkUI';
+import { supportsHdsImmersiveMaterial } from '../common/CompatibleMaterial';
 import { common } from '@kit.AbilityKit';
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, hdsMaterial } from '@kit.UIDesignKit';
 import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToast';
@@ -62,10 +63,10 @@ struct LoginPage {
             backIconStyle: { iconColor: $r('app.color.bika_text_title') }
           }
         },
-        systemMaterialEffect: {
+        systemMaterialEffect: supportsHdsImmersiveMaterial() ? {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
+        } : undefined
       }
     };
   }

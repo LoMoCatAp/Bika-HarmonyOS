@@ -1,12 +1,12 @@
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
-import { router, window, CommonModifier, uiMaterial, SegmentButtonV2Items } from '@kit.ArkUI';
+import { router, window, CommonModifier, SegmentButtonV2Items } from '@kit.ArkUI';
 import { unifiedDataChannel } from '@kit.ArkData';
 import { inputConsumer, KeyCode } from '@kit.InputKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { WindowHelper } from '../common/WindowHelper';
-import { supportsComponentImmersiveMaterial, compatibleSheetMaterial } from '../common/CompatibleMaterial';
+import { GlassCapsuleMaterial, noImmersiveMaterial, compatibleSheetOptions, compatibleMenuOptions } from '../common/CompatibleMaterial';
 import { ApiService } from '../network/ApiService';
 import { ImageUrlManager } from '../network/ImageUrlManager';
 import { NetImage } from '../components/NetImage';
@@ -58,6 +58,8 @@ import {
 } from '../common/Constants';
 
 const READER_SINGLE_PAGE_MAX_WIDTH: number = 780;
+const READER_CONTROLS_FADE_MS: number = 180;
+const READER_CONTROLS_REVEAL_TIMEOUT_MS: number = 200;
 const READER_SETTINGS_TABS: SegmentButtonV2Items = new SegmentButtonV2Items([
   { text: '阅读' }, { text: '显示' }
 ]);
@@ -146,37 +148,10 @@ class ReaderBarBackground extends CommonModifier {
   applyNormalAttribute(instance: CommonAttribute): void {
     instance.backgroundColor(Color.Transparent);
     instance.backgroundBlurStyle(BlurStyle.NONE);
-    if (supportsComponentImmersiveMaterial()) {
-      instance.systemMaterial(uiMaterial.Material.empty);
+    const empty = noImmersiveMaterial();
+    if (empty !== undefined) {
+      instance.systemMaterial(empty);
     }
-  }
-}
-
-/** 阅读器胶囊：仅用于标题栏和底部 TabBar 内的独立表面。 */
-class ReaderCapsuleMaterial extends CommonModifier {
-
-  applyNormalAttribute(instance: CommonAttribute): void {
-    // 原生玻璃基础层保持不变，白色图标的对比度由独立深色底色层补充。
-    const tint = '#991C1C1E';
-    if (supportsComponentImmersiveMaterial()) {
-      try {
-        if (uiMaterial.getMaterialInfo().state !== uiMaterial.MaterialState.DISABLE) {
-          // 通用材质只在标题栏、底部 TabBar 等官方作用域内生效。
-          instance.systemMaterial(new uiMaterial.ImmersiveMaterial({
-            style: uiMaterial.ImmersiveStyle.THIN,
-            materialColor: tint,
-            applyShadow: true,
-            interactive: false,
-            lightEffect: { color: '#FF7CA8' }
-          }));
-          return;
-        }
-      } catch (err) {
-        console.warn('[ReaderPage] capsule material unavailable: ' + JSON.stringify(err));
-      }
-    }
-    instance.backgroundColor(tint);
-    instance.backdropBlur(20);
   }
 }
 
@@ -186,6 +161,12 @@ struct ReaderPage {
   @StorageProp('bika_material_level') readerMaterialLevel: string = 'EXQUISITE';
   private readonly readerBarBackground: ReaderBarBackground = new ReaderBarBackground();
   @State @Watch('syncReaderSystemBars') showControls: boolean = true;
+  @State readerControlsFadingOut: boolean = false;
+  private readerControlsTransitionId: number = 0;
+  private readerControlsRevealPending: boolean = false;
+  private readerControlsRevealTimer: number = -1;
+  private readerShownTopInset: number = 0;
+  private readerShownBottomInset: number = 0;
   @State currentVisibleIndex: number = 0;
   @State @Watch('syncReaderSystemBars') totalImages: number = 0;
   @State @Watch('syncReaderSystemBars') isLoading: boolean = true;
@@ -419,6 +400,7 @@ struct ReaderPage {
     this.readerRightInset = this.getUIContext().px2vp(Math.max(
       systemArea.rightRect.width, cutoutArea.rightRect.width, navigationArea.rightRect.width));
     this.rebuildPageSpreads();
+    this.finishReaderControlsWhenInsetsReady();
   }
 
   private isImmersiveReading(): boolean {
@@ -428,12 +410,13 @@ struct ReaderPage {
 
   private syncReaderSystemBars(): void {
     const win = this.readerWindow;
-    const visible = !this.isImmersiveReading();
+    const visible = this.readerControlsRevealPending || this.readerControlsFadingOut || !this.isImmersiveReading();
     if (!this.readerWindowActive || win === undefined || visible === this.readerSystemBarsVisible) {
       return;
     }
     this.readerSystemBarsVisible = visible;
-    WindowHelper.setReaderSystemBars(win, visible, this.animationsOn && this.readerPageVisible);
+    WindowHelper.setReaderSystemBars(win, visible,
+      this.animationsOn && this.readerPageVisible && !this.readerControlsRevealPending);
   }
 
   private observeReaderInsets(): void {
@@ -457,6 +440,7 @@ struct ReaderPage {
 
   private stopObservingReaderInsets(): void {
     this.readerWindowActive = false;
+    this.cancelReaderControlsTransition();
     const win = this.readerWindow;
     this.readerWindow = undefined;
     if (win !== undefined) {
@@ -622,16 +606,77 @@ struct ReaderPage {
     router.back();
   }
 
-  toggleControls(): void {
-    // 关闭时保留正在淡出的内容形态，重新打开前再恢复按钮，避免滑块闪回按钮。
-    this.resetProgressControl(this.showControls);
-    if (this.animationsOn) {
-      animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
-        this.showControls = !this.showControls;
-      });
-    } else {
-      this.showControls = !this.showControls;
+  private cancelReaderControlsTransition(): void {
+    this.readerControlsTransitionId++;
+    this.readerControlsFadingOut = false;
+    this.clearReaderControlsReveal();
+  }
+
+  private clearReaderControlsReveal(): void {
+    this.readerControlsRevealPending = false;
+    if (this.readerControlsRevealTimer >= 0) {
+      clearTimeout(this.readerControlsRevealTimer);
+      this.readerControlsRevealTimer = -1;
     }
+  }
+
+  private finishReaderControlsWhenInsetsReady(): void {
+    if (this.readerControlsRevealPending && this.readerTopInset >= this.readerShownTopInset - 0.5 &&
+      this.readerBottomInset >= this.readerShownBottomInset - 0.5) {
+      this.finishReaderControlsReveal(this.readerControlsTransitionId);
+    }
+  }
+
+  private finishReaderControlsReveal(transition: number): void {
+    if (transition !== this.readerControlsTransitionId || !this.readerControlsRevealPending ||
+      !this.readerPageVisible || !this.readerWindowActive) {
+      return;
+    }
+    this.clearReaderControlsReveal();
+    this.animateReaderControls(true);
+  }
+
+  private animateReaderControls(show: boolean): void {
+    this.readerControlsFadingOut = this.animationsOn && !show && this.showControls;
+    if (!this.animationsOn || this.showControls === show) {
+      this.showControls = show;
+      return;
+    }
+    const transition = this.readerControlsTransitionId;
+    this.getUIContext().animateTo({
+      duration: READER_CONTROLS_FADE_MS,
+      curve: Curve.EaseOut,
+      onFinish: (): void => {
+        if (transition === this.readerControlsTransitionId && this.readerControlsFadingOut) {
+          this.readerControlsFadingOut = false;
+          this.syncReaderSystemBars();
+        }
+      }
+    }, (): void => {
+      this.showControls = show;
+    });
+  }
+
+  toggleControls(): void {
+    const show = !this.showControls && !this.readerControlsRevealPending;
+    this.cancelReaderControlsTransition();
+    // 关闭时保留正在淡出的内容形态，重新打开前再恢复按钮。
+    this.resetProgressControl(this.showControls);
+    if (this.showControls) {
+      this.readerShownTopInset = this.readerTopInset;
+      this.readerShownBottomInset = this.readerBottomInset;
+    }
+    if (show && this.animationsOn && this.readerWindow !== undefined && this.readerSystemBarsVisible === false) {
+      this.readerControlsRevealPending = true;
+      const transition = this.readerControlsTransitionId;
+      this.readerControlsRevealTimer = setTimeout((): void => this.finishReaderControlsReveal(transition),
+        READER_CONTROLS_REVEAL_TIMEOUT_MS);
+      this.syncReaderSystemBars();
+      this.finishReaderControlsWhenInsetsReady();
+      return;
+    }
+    this.animateReaderControls(show);
+    this.syncReaderSystemBars();
   }
 
   /** 只监听漫画区，不消费手势；翻页、滚动、缩放仍交给原生组件。 */
@@ -1640,6 +1685,7 @@ struct ReaderPage {
 
   onPageHide(): void {
     this.readerPageVisible = false;
+    this.cancelReaderControlsTransition();
     this.syncReaderSystemBars();
     this.readerLayoutTransition.clear();
     this.curlController.cancel();
@@ -1694,7 +1740,7 @@ struct ReaderPage {
     }
     const doublePage = useReaderDoublePage(this.readingMode, this.pageLayout,
       this.readerWindowWidth - this.readerLeftInset - this.readerRightInset,
-      this.readerWindowHeight - this.readerTopInset - this.readerBottomInset);
+      this.readerWindowHeight);
     const next = buildReaderPageSpreads(this.totalImages, doublePage, this.firstImageSingle, this.widePageIndices);
     const changed = next.length !== this.pageSpreads.length
       || next.some((spread: ReaderPageSpread, index: number): boolean => spread.key !== this.pageSpreads[index].key);
@@ -2033,6 +2079,7 @@ struct ReaderPage {
       fit: ImageFit.Contain,
       radius: 0,
       fillParent: true,
+      darkLoading: true,
       onImageSize: (width: number, height: number): void => this.onReaderImageSize(index, img.url, width, height),
       onImageDecoded: (renderId: number, decoded: boolean): void =>
         this.onReaderImageDecoded(index, img.url, renderId, decoded)
@@ -2142,10 +2189,11 @@ struct ReaderPage {
                   src: img.url,
                   candidates: this.candidateUrls[index] || [],
                   fit: ImageFit.Contain,
-                  radius: 0
+                  radius: 0,
+                  darkLoading: true
                 })
                   .width('100%')
-                  .backgroundColor(COLOR_CARD)
+                  .backgroundColor(COLOR_READER_BG)
                   .draggable(true)
                   .onDragStart((event: DragEvent) => {
                     this.handleImageDragStart(event, index);
@@ -2204,10 +2252,10 @@ struct ReaderPage {
           LoadingProgress()
             .width(48)
             .height(48)
-            .color(COLOR_PRIMARY)
+            .color(COLOR_READER_TEXT_MUTED)
           Text('加载图片中...')
             .fontSize(14)
-            .fontColor(COLOR_TEXT_HINT)
+            .fontColor(COLOR_READER_TEXT_MUTED)
             .margin({ top: 12 })
         }
         .width('100%')
@@ -2290,9 +2338,7 @@ struct ReaderPage {
       }
     })
     .backgroundColor(COLOR_READER_BG)
-    .bindSheet($$this.showSheet, this.unifiedSheet(), {
-      systemMaterial: this.sheetKind === 'settings'
-        ? (supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined) : compatibleSheetMaterial(),
+    .bindSheet($$this.showSheet, this.unifiedSheet(), compatibleSheetOptions({
       // 阅读设置使用纯色表面，章节下载沿用详情页的弹窗表面。
       backgroundColor: this.sheetKind === 'settings' ? COLOR_CARD
         : (this.sheetKind === 'download' ? COLOR_BG : undefined),
@@ -2313,7 +2359,7 @@ struct ReaderPage {
         this.showSheet = false;
         this.readerSettingsMeasuredHeight = 0;
       }
-    })
+    }, this.sheetKind !== 'settings'))
   }
 
   /** 底部 TabBar 是普通组件沉浸材质的官方生效范围。 */
@@ -2353,7 +2399,7 @@ struct ReaderPage {
         Row()
           .width('100%').height(52)
           .borderRadius(26)
-          .attributeModifier(new ReaderCapsuleMaterial())
+          .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
           .hitTestBehavior(HitTestMode.None)
           .accessibilityLevel('no-hide-descendants')
         Row()
@@ -2472,7 +2518,7 @@ struct ReaderPage {
       Row()
         .width('100%').height(52)
         .borderRadius(26)
-        .attributeModifier(new ReaderCapsuleMaterial())
+        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -2526,7 +2572,7 @@ struct ReaderPage {
       Row()
         .width('100%').height(52)
         .borderRadius(26)
-        .attributeModifier(new ReaderCapsuleMaterial())
+        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -2545,7 +2591,7 @@ struct ReaderPage {
         .height(48)
         .accessibilityGroup(true)
         .accessibilityText('下载章节')
-        .bindMenu(this.readerDownloadMenu(), {
+        .bindMenu(this.readerDownloadMenu(), compatibleMenuOptions({
           placement: Placement.BottomRight,
           offset: { x: 0, y: 8 },
           showInSubWindow: false,
@@ -2556,7 +2602,7 @@ struct ReaderPage {
           onDisappear: (): void => {
             this.downloadMenuVisible = false;
           }
-        })
+        }))
         Stack({ alignContent: Alignment.Center }) {
           SymbolGlyph($r('sys.symbol.gearshape'))
             .fontSize(24)
@@ -2598,7 +2644,7 @@ struct ReaderPage {
         barStyle: BarStyle.STACK,
         backgroundColor: Color.Transparent,
         backgroundBlurStyle: BlurStyle.NONE,
-        systemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+        systemMaterial: noImmersiveMaterial()
       })
       .hideTitleBar(false)
       .ignoreLayoutSafeArea([], [])
@@ -2617,7 +2663,7 @@ struct ReaderPage {
         barStyle: BarStyle.STACK,
         backgroundColor: Color.Transparent,
         backgroundBlurStyle: BlurStyle.NONE,
-        systemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+        systemMaterial: noImmersiveMaterial()
       })
       .hideTitleBar(false)
       .ignoreLayoutSafeArea([], [])
@@ -2638,7 +2684,7 @@ struct ReaderPage {
       Stack({ alignContent: Alignment.TopStart }) {
         this.readerWithBottomBar()
         this.readerTopBar()
-        if (this.readerShowStatus && this.isImmersiveReading()) {
+        if (this.readerShowStatus && !this.readerControlsFadingOut && this.isImmersiveReading()) {
           Stack({ alignContent: Alignment.BottomEnd }) {
             ReaderStatusIndicator()
           }
@@ -2646,6 +2692,9 @@ struct ReaderPage {
           .height('100%')
           .padding({ right: this.readerRightInset + 12, bottom: this.readerBottomInset + 8 })
           .hitTestBehavior(HitTestMode.None)
+          .transition(this.animationsOn
+            ? TransitionEffect.OPACITY.animation({ duration: READER_CONTROLS_FADE_MS, curve: Curve.EaseOut })
+            : TransitionEffect.IDENTITY)
         }
       }
       .width('100%')

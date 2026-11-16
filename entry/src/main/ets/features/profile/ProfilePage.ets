@@ -12,7 +12,7 @@ import { CacheManager, HistoryItem } from '../../common/CacheManager';
 import { FollowUpdateManager } from '../../common/FollowUpdateManager';
 import { publishContinuationRoute, CONTINUATION_PROFILE_SUBPAGE_KEY, ROUTE_HOME, ROUTE_PROFILE_SUBPAGE } from '../../common/ContinuationState';
 import { DownloadManager, DownloadTask } from '../../common/DownloadManager';
-import { compatibleSheetMaterial } from '../../common/CompatibleMaterial';
+import { compatibleSheetOptions } from '../../common/CompatibleMaterial';
 import { ImageLoader } from '../../common/ImageLoader';
 import { WindowHelper } from '../../common/WindowHelper';
 import { ApiRouteManager } from '../../network/ApiRouteManager';
@@ -1168,7 +1168,7 @@ export struct ProfilePage {
       .navDestination(this.pageMap)
       .width('100%')
       .height('100%')
-      .bindSheet($$this.showAboutSheet, this.profileBottomSheet(), {
+      .bindSheet($$this.showAboutSheet, this.profileBottomSheet(), compatibleSheetOptions({
         detents: [SheetSize.FIT_CONTENT],
         preferType: SheetType.BOTTOM,
         showClose: true,
@@ -1177,14 +1177,13 @@ export struct ProfilePage {
         backgroundColor: this.aboutSheetKind === 0 ? COLOR_BG : undefined,
         blurStyle: this.aboutSheetKind === 0 ? BlurStyle.NONE : undefined,
         borderWidth: this.aboutSheetKind === 0 ? 0 : undefined,
-        systemMaterial: compatibleSheetMaterial(),
         scrollSizeMode: ScrollSizeMode.CONTINUOUS,
         onWillDismiss: (): void => {
           this.showAboutSheet = false;
           this.aboutEntered = false;
           this.aboutSheetKind = 0;
         }
-      })
+      }))
 
       if (this.subpageHeaderTitle().length > 0) {
         GlassNavigationHeader({

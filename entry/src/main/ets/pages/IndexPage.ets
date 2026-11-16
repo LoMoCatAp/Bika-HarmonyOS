@@ -1,11 +1,12 @@
 import { router } from '@kit.ArkUI';
+import { supportsHdsImmersiveMaterial } from '../common/CompatibleMaterial';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import { BikaComicDetail } from '../models/Comic';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
 import { FollowUpdateManager } from '../common/FollowUpdateManager';
 import { publishContinuationRoute, CONTINUATION_PROFILE_SUBPAGE_KEY, ContinuationRouteParams, ROUTE_HOME, ROUTE_CHANNEL_LIST, ROUTE_COMIC_DETAIL, ROUTE_READER, ROUTE_PROFILE_SUBPAGE, ROUTE_SEARCH, ROUTE_SEARCH_RESULT } from '../common/ContinuationState';
-import { COLOR_PRIMARY, COLOR_BG, COLOR_TEXT_SECONDARY } from '../common/Constants';
+import { COLOR_PRIMARY, COLOR_BG, COLOR_CARD, COLOR_TEXT_SECONDARY } from '../common/Constants';
 import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial } from '@kit.UIDesignKit';
 import { HomePage } from '../features/home/HomePage';
 import { ProfilePage } from '../features/profile/ProfilePage';
@@ -25,6 +26,7 @@ struct IndexPage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
   private tabsController: HdsTabsController = new HdsTabsController();
+  private readonly immersiveTabs: boolean = supportsHdsImmersiveMaterial();
   /** 只有安全回到根页才应用材质变更；进出子页不切换 HdsTabs 的 key。 */
   @State appliedTabsMaterial: string = 'EXQUISITE';
   @State appliedTabsRevision: number = 0;
@@ -535,13 +537,14 @@ struct IndexPage {
     // 显隐不改变组件身份；仅安全回到根页后，因真实材质变更重建。
     .key('hds_tabs_' + this.appliedTabsMaterial + '_' + this.appliedTabsRevision)
     .onAppear((): void => this.onTabsAppear())
-    .barOverlap(true)
+    .barOverlap(this.immersiveTabs)
+    .barBackgroundColor(this.immersiveTabs ? Color.Transparent : COLOR_CARD)
     .animationDuration(0)
     .scrollable(this.canSwipeRootTabs())
     .vertical(false)
     .barPosition(BarPosition.End)
     .divider({ mode: DividerMode.NONE })
-    .barFloatingStyle({
+    .barFloatingStyle(this.immersiveTabs ? {
       // 全屏窗口下抬起至手势条上方，再向下 10vp
       barBottomMargin: Math.max(0, this.bottomSafeHeight - 6),
       // 只移除颜色渐隐蒙版，保留原生模糊及默认采样范围。
@@ -552,7 +555,7 @@ struct IndexPage {
         materialType: hdsMaterial.MaterialType.IMMERSIVE,
         materialLevel: this.hdsMaterialLevel()
       }
-    })
+    } : undefined)
     .onChange((index: number): void => this.onRootTabChanged(index))
     .backgroundColor(COLOR_BG)
     .width('100%')

@@ -1,4 +1,5 @@
 import { curves } from '@kit.ArkUI';
+import { compatibleMenuOptions } from '../../common/CompatibleMaterial';
 import { CacheManager } from '../../common/CacheManager';
 import { COLOR_PRIMARY } from '../../common/Constants';
 import { MaterialOption, MATERIAL_OPTIONS } from './ProfileOptions';
@@ -52,6 +53,6 @@ export struct MaterialLevelSelect {
           CacheManager.getInstance().then(c => c.saveSetting('material_level', opt.value));
         }
       };
-    }))
+    }), compatibleMenuOptions({}))
   }
 }

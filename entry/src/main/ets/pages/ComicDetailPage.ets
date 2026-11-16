@@ -15,7 +15,7 @@ import { NetImage } from '../components/NetImage';
 import { ComicCard } from '../components/ComicCard';
 import { ChapterDownloadSheet } from '../components/ChapterDownloadSheet';
 import { ChannelControlCapsule } from '../components/ChannelControlCapsule';
-import { compatibleSheetMaterial } from '../common/CompatibleMaterial';
+import { compatibleSheetOptions } from '../common/CompatibleMaterial';
 import { DetailGlassCapsule, DetailBarBackground } from '../components/DetailGlassCapsule';
 import {
   COLOR_PRIMARY,
@@ -1859,12 +1859,11 @@ build() {
         this.detailWidth = width;
       }
     })
-    .bindSheet($$this.showDetailSheet, this.detailUnifiedSheet(), {
+    .bindSheet($$this.showDetailSheet, this.detailUnifiedSheet(), compatibleSheetOptions({
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
       // 系统 sheet 统一绘制表面与圆角，内容根容器不再叠加第二层表面。
       backgroundColor: COLOR_BG,
-      systemMaterial: compatibleSheetMaterial(),
       blurStyle: BlurStyle.NONE,
       borderWidth: 0,
       showClose: false,
@@ -1877,7 +1876,7 @@ build() {
       onWillDismiss: (): void => {
         this.showDetailSheet = false;
       }
-    })
+    }))
     .width('100%')
     .height('100%')
 }

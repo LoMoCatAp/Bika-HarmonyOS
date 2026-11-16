@@ -1,44 +1,7 @@
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
-import { CommonModifier, uiMaterial } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
-import { COLOR_PRIMARY, COLOR_TEXT_SECONDARY } from '../common/Constants';
-
-/** 每枚胶囊独立绘制材质，颜色随应用主题与材质档位更新。 */
-class ChannelCapsuleMaterial extends CommonModifier {
-  private readonly dark: boolean;
-
-  constructor(dark: boolean) {
-    super();
-    this.dark = dark;
-  }
-
-  applyNormalAttribute(instance: CommonAttribute): void {
-    const alpha = '99';
-    const tint = '#' + alpha + (this.dark ? '20252E' : 'FFFFFF');
-    if (supportsComponentImmersiveMaterial()) {
-      try {
-        if (uiMaterial.getMaterialInfo().state !== uiMaterial.MaterialState.DISABLE) {
-          instance.backgroundColor(Color.Transparent);
-          instance.backdropBlur(0);
-          instance.systemMaterial(new uiMaterial.ImmersiveMaterial({
-            style: uiMaterial.ImmersiveStyle.THIN,
-            // 配色交给系统，不叠加自定义底色或粉色点光。
-            materialColor: Color.Transparent,
-            applyShadow: true,
-            interactive: false
-          }));
-          return;
-        }
-        instance.systemMaterial(uiMaterial.Material.empty);
-      } catch (err) {
-        console.warn('[ChannelCapsule] material unavailable: ' + JSON.stringify(err));
-      }
-    }
-    instance.backgroundColor(tint);
-    instance.backdropBlur(20);
-  }
-}
+import { GlassCapsuleMaterial, noImmersiveMaterial } from '../common/CompatibleMaterial';
+import { COLOR_CARD, COLOR_PRIMARY, COLOR_TEXT_SECONDARY } from '../common/Constants';
 
 /** 沿用阅读器方案：胶囊位于独立 Navigation.title 作用域，宿主背板透明。 */
 @Component
@@ -109,7 +72,7 @@ export struct ChannelControlCapsule {
       Row()
         .width('100%').height(36)
         .borderRadius(18)
-        .attributeModifier(new ChannelCapsuleMaterial(this.darkMode()))
+        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -151,7 +114,7 @@ export struct ChannelControlCapsule {
       barStyle: BarStyle.STACK,
       backgroundColor: Color.Transparent,
       backgroundBlurStyle: BlurStyle.NONE,
-      systemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+      systemMaterial: noImmersiveMaterial()
     })
     .hideTitleBar(false)
     .ignoreLayoutSafeArea([], [])

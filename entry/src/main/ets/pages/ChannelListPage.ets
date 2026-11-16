@@ -1,4 +1,4 @@
-import { compatibleSheetMaterial } from '../common/CompatibleMaterial';
+import { compatibleSheetOptions } from '../common/CompatibleMaterial';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
 import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { router, ComponentContent } from '@kit.ArkUI';
@@ -617,8 +617,7 @@ struct ChannelListPage {
       .hideBackButton(true)
       .bindToScrollable([this.listScroller, this.knightsScroller])
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-      .bindSheet($$this.showFilter, this.filterSheet(), {
-        systemMaterial: compatibleSheetMaterial(),
+      .bindSheet($$this.showFilter, this.filterSheet(), compatibleSheetOptions({
         detents: [SheetSize.FIT_CONTENT],
         preferType: SheetType.BOTTOM,
         showClose: true,
@@ -627,7 +626,7 @@ struct ChannelListPage {
         onWillDismiss: (): void => {
           this.showFilter = false;
         }
-      })
+      }))
       .width('100%')
       .height('100%')
       .backgroundColor(COLOR_BG)

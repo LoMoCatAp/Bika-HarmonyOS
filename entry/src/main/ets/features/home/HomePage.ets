@@ -6,7 +6,7 @@ import { NetImage } from '../../components/NetImage';
 import { DetailGlassCapsule } from '../../components/DetailGlassCapsule';
 import { navigationBlurStyle } from '../../common/NavigationBlur';
 import { CacheManager } from '../../common/CacheManager';
-import { compatibleSheetMaterial } from '../../common/CompatibleMaterial';
+import { compatibleSheetOptions } from '../../common/CompatibleMaterial';
 import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_WHITE, DEFAULT_CHANNELS, BikaChannel, adaptiveChannelColumns } from '../../common/Constants';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 
@@ -524,8 +524,7 @@ export struct HomePage {
     .height('100%')
     .backgroundColor(COLOR_BG)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-    .bindSheet($$this.showChannelEdit, this.channelEditSheet(), {
-      systemMaterial: compatibleSheetMaterial(),
+    .bindSheet($$this.showChannelEdit, this.channelEditSheet(), compatibleSheetOptions({
       detents: [SheetSize.FIT_CONTENT],
       preferType: SheetType.BOTTOM,
       showClose: false,
@@ -534,6 +533,6 @@ export struct HomePage {
       onWillDismiss: (): void => {
         this.showChannelEdit = false;
       }
-    })
+    }))
   }
 }

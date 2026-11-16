@@ -1,49 +1,17 @@
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
-import { CommonModifier, uiMaterial } from '@kit.ArkUI';
-import { supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
+import { CommonModifier } from '@kit.ArkUI';
+import { GlassCapsuleMaterial, noImmersiveMaterial } from '../common/CompatibleMaterial';
+import { COLOR_CARD } from '../common/Constants';
 
 /** 清空原生 TabBar 宿主表面，避免胶囊外出现整条透明材质。 */
 export class DetailBarBackground extends CommonModifier {
   applyNormalAttribute(instance: CommonAttribute): void {
     instance.backgroundColor(Color.Transparent);
     instance.backgroundBlurStyle(BlurStyle.NONE);
-    if (supportsComponentImmersiveMaterial()) {
-      instance.systemMaterial(uiMaterial.Material.empty);
+    const empty = noImmersiveMaterial();
+    if (empty !== undefined) {
+      instance.systemMaterial(empty);
     }
-  }
-}
-
-/** 详情页胶囊沿用系统材质配色，与频道页返回键保持一致。 */
-class DetailGlassMaterial extends CommonModifier {
-  private readonly dark: boolean;
-
-  constructor(dark: boolean) {
-    super();
-    this.dark = dark;
-  }
-
-  applyNormalAttribute(instance: CommonAttribute): void {
-    if (supportsComponentImmersiveMaterial()) {
-      try {
-        if (uiMaterial.getMaterialInfo().state !== uiMaterial.MaterialState.DISABLE) {
-          instance.backgroundColor(Color.Transparent);
-          instance.backdropBlur(0);
-          instance.systemMaterial(new uiMaterial.ImmersiveMaterial({
-            style: uiMaterial.ImmersiveStyle.THIN,
-            materialColor: Color.Transparent,
-            applyShadow: true,
-            interactive: false
-          }));
-          return;
-        }
-        instance.systemMaterial(uiMaterial.Material.empty);
-      } catch (err) {
-        console.warn('[DetailGlassCapsule] material unavailable: ' + JSON.stringify(err));
-      }
-    }
-    const alpha = '99';
-    instance.backgroundColor('#' + alpha + (this.dark ? '20252E' : 'FFFFFF'));
-    instance.backdropBlur(20);
   }
 }
 
@@ -68,7 +36,7 @@ export struct DetailGlassCapsule {
       Row()
         .width('100%').height(this.capsuleHeight)
         .borderRadius(this.capsuleHeight / 2)
-        .attributeModifier(new DetailGlassMaterial(this.darkMode()))
+        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -101,7 +69,7 @@ export struct DetailGlassCapsule {
       barStyle: BarStyle.STACK,
       backgroundColor: Color.Transparent,
       backgroundBlurStyle: BlurStyle.NONE,
-      systemMaterial: supportsComponentImmersiveMaterial() ? uiMaterial.Material.empty : undefined
+      systemMaterial: noImmersiveMaterial()
     })
     .hideTitleBar(false)
     .ignoreLayoutSafeArea([], [])
