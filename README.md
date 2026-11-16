@@ -1,5 +1,7 @@
 # Bika HarmonyOS
 
+**简体中文** · [English](README.en.md)
+
 <p align="center">
   <img src="https://img.shields.io/badge/HarmonyOS-API%2026-0D8BFF?logo=harmonyos&logoColor=white" alt="HarmonyOS">
   <img src="https://img.shields.io/badge/ArkTS-5.0-0D8BFF" alt="ArkTS">
@@ -17,12 +19,12 @@
 
 学习ArkTS/ArkUI的练手项目，如果觉得项目有帮助，欢迎 **star** 支持。
 
-## 目录 / Contents
+## 目录
 
 - [声明](#声明)
 - [简介](#简介)
 - [界面预览](#界面预览)
-- [版本说明](#版本说明) · [中文](#中文发布说明) · [English](#english-release-notes)
+- [版本说明](#版本说明)
 - [当前功能](#当前功能) · [阅读器](#阅读器)
 - [近期更新](#近期更新)
 - [致谢](#致谢)
@@ -47,8 +49,6 @@
 
 ## 版本说明
 
-### 中文发布说明
-
 **v1.5.2 · 平板阅读与仿真翻页**
 
 1. 阅读器新增自动、单页和双页布局。
@@ -62,20 +62,6 @@
 HAP 需自行签名后安装。升级时请使用与旧版相同的签名覆盖安装，以保留登录和本地数据。[下载 HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub 发布页](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
 
 应用内也可通过「设置 → 关于 → 更新日志」查看版本记录。
-
-### English release notes
-
-**v1.5.2 · Tablet Reading and Page Curl**
-
-1. Added Auto, Single Page, and Double Page layouts to the reader.
-2. Added a page-curl animation option for horizontal reading.
-3. Swipe left or right anywhere in the reading area, or tap either side to turn pages. The reader now shows a message when you try to go past the first or last page of a chapter.
-4. Reader settings are grouped into Reading and Display tabs. You can show the time and battery level when the reader controls are hidden.
-5. Improved the feedback when favoriting or liking a comic on its details page.
-
-This release targets **API 26**. Glass effects on toasts and system dialogs require **HarmonyOS 7.0.0 or later**.
-
-Sign the HAP before installing it. To keep your login and local data when upgrading, use the same signing certificate as your current installation. [Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
 
 ## 当前功能
 
