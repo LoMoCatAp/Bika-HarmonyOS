@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
 import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { router } from '@kit.ArkUI';
@@ -5,8 +6,6 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_TEXT_TITLE,
   COLOR_TEXT_SECONDARY,
   COLOR_TEXT_HINT,
@@ -27,6 +26,7 @@ interface RegisterRouteParams {
 @Entry
 @Component
 struct RegisterPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State email: string = '';
   @State name: string = '';
   @State password: string = '';
@@ -160,12 +160,12 @@ struct RegisterPage {
   genderChip(value: string, label: string) {
     Text(label)
       .fontSize(14)
-      .fontColor(this.gender === value ? COLOR_WHITE : COLOR_TEXT_SECONDARY)
+      .fontColor(this.gender === value ? this.appearanceColors.onPrimary : COLOR_TEXT_SECONDARY)
       .textAlign(TextAlign.Center)
       .layoutWeight(1)
       .height(38)
       .borderRadius(19)
-      .backgroundColor(this.gender === value ? COLOR_PRIMARY : COLOR_INPUT_BG)
+      .backgroundColor(this.gender === value ? this.appearanceColors.primary : COLOR_INPUT_BG)
       .onClick(() => {
         this.gender = value;
       })
@@ -239,7 +239,7 @@ struct RegisterPage {
                 .layoutWeight(1)
               SymbolGlyph($r('sys.symbol.calendar'))
                 .fontSize(20)
-                .fontColor([COLOR_PRIMARY])
+                .fontColor([this.appearanceColors.primary])
             }
             .width('100%')
             .height(52)
@@ -281,8 +281,8 @@ struct RegisterPage {
 
             Button(this.registering ? '注册中…' : '注册', { type: ButtonType.Normal })
               .fontSize(16)
-              .fontColor(COLOR_WHITE)
-              .backgroundColor(this.registering ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+              .fontColor(this.registering ? COLOR_WHITE : this.appearanceColors.onPrimary)
+              .backgroundColor(this.registering ? COLOR_TEXT_HINT : this.appearanceColors.primary)
               .borderRadius(28)
               .height(56)
               .width('100%')

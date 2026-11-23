@@ -1,4 +1,5 @@
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER, COLOR_WHITE } from '../../common/Constants';
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER } from '../../common/Constants';
 import { ChangelogEntry, CHANGELOG_ENTRIES } from '../../common/Changelog';
 
 interface UpdateBlock {
@@ -14,6 +15,7 @@ interface MdRun {
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileUpdateSheet {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @Link updateVersion: string;
   @Link showAboutSheet: boolean;
   @Link aboutSheetKind: number;
@@ -105,7 +107,7 @@ export struct ProfileUpdateSheet {
               Row({ space: 6 }) {
                 Text('•')
                   .fontSize(14)
-                  .fontColor(COLOR_PRIMARY)
+                  .fontColor(this.appearanceColors.primary)
                 Text() {
                   ForEach(this.boldRuns(block.text), (run: MdRun) => {
                     Span(run.text)
@@ -155,8 +157,8 @@ export struct ProfileUpdateSheet {
           })
         Button('去下载', { type: ButtonType.Normal })
           .fontSize(15)
-          .fontColor(COLOR_WHITE)
-          .backgroundColor(COLOR_PRIMARY)
+          .fontColor(this.appearanceColors.onPrimary)
+          .backgroundColor(this.appearanceColors.primary)
           .borderRadius(22)
           .layoutWeight(1)
           .height(44)
@@ -178,6 +180,7 @@ export struct ProfileUpdateSheet {
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileChangelogSheet {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @Link expandedAboutVersion: string;
   @Link aboutEntered: boolean;
 
@@ -197,7 +200,7 @@ export struct ProfileChangelogSheet {
           .height(52)
           .borderRadius(16)
           .objectFit(ImageFit.Cover)
-          .backgroundColor(COLOR_PRIMARY_TINT)
+          .backgroundColor(this.appearanceColors.tint)
         Column({ space: 4 }) {
           Text('Bika')
             .fontSize(20)

@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { router, promptAction } from '@kit.ArkUI';
 import { supportsHdsImmersiveMaterial } from '../common/CompatibleMaterial';
 import { common } from '@kit.AbilityKit';
@@ -6,15 +7,12 @@ import { showImmersiveToast, showImmersiveDialog } from '../common/ImmersiveToas
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_DISABLED,
   COLOR_TEXT_TITLE,
   COLOR_TEXT_HINT,
   COLOR_TEXT_SECONDARY,
   COLOR_INPUT_BG,
   COLOR_DIVIDER,
-  COLOR_CARD,
-  COLOR_WHITE
+  COLOR_CARD
 } from '../common/Constants';
 
 interface LoginRouteParams {
@@ -28,6 +26,7 @@ interface LoginRouteParams {
 @Entry
 @Component
 struct LoginPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State email: string = '';
   @State password: string = '';
   @State showRegister: boolean = false;
@@ -206,7 +205,7 @@ struct LoginPage {
       message: '密码找回需前往哔咔官网处理。是否打开官网？',
       buttons: [
         { text: '取消', color: '#667085' },
-        { text: '打开官网', color: '#FF7CA8' }
+        { text: '打开官网', color: this.appearanceColors.primary }
       ]
     }).then((res: promptAction.ShowDialogSuccessResponse) => {
       if (res.index === 1) {
@@ -230,7 +229,7 @@ struct LoginPage {
           Text('BIKA')
             .fontSize(30)
             .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_PRIMARY)
+            .fontColor(this.appearanceColors.primary)
           Text('请登录您的账号')
             .fontSize(14)
             .fontColor(COLOR_TEXT_SECONDARY)
@@ -249,7 +248,7 @@ struct LoginPage {
           .backgroundColor(COLOR_CARD)
           .borderRadius(12)
           .padding({ left: 16, right: 16 })
-          .border({ width: 1, color: this.usernameFocused ? COLOR_PRIMARY : COLOR_DIVIDER })
+          .border({ width: 1, color: this.usernameFocused ? this.appearanceColors.primary : COLOR_DIVIDER })
           .enterKeyType(EnterKeyType.Next)
           .onFocus(() => {
             this.usernameFocused = true;
@@ -270,7 +269,7 @@ struct LoginPage {
           .backgroundColor(COLOR_CARD)
           .borderRadius(12)
           .padding({ left: 16, right: 16 })
-          .border({ width: 1, color: this.passwordFocused ? COLOR_PRIMARY : COLOR_DIVIDER })
+          .border({ width: 1, color: this.passwordFocused ? this.appearanceColors.primary : COLOR_DIVIDER })
           .type(InputType.Password)
           .enterKeyType(EnterKeyType.Done)
           .onFocus(() => {
@@ -286,7 +285,7 @@ struct LoginPage {
         // 记住密码 + 忘记密码
         Row() {
           Toggle({ type: ToggleType.Switch, isOn: this.savePassword })
-            .selectedColor(COLOR_PRIMARY)
+            .selectedColor(this.appearanceColors.primary)
             .onChange((checked: boolean) => this.savePassword = checked)
           Text('记住密码')
             .fontSize(14)
@@ -307,7 +306,7 @@ struct LoginPage {
         if (this.errorMsg) {
           Text(this.errorMsg)
             .fontSize(13)
-            .fontColor(COLOR_PRIMARY)
+            .fontColor(this.appearanceColors.primary)
             .margin({ top: 12 })
         }
 
@@ -322,12 +321,12 @@ struct LoginPage {
             Text('登录')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor(COLOR_WHITE)
+              .fontColor(this.appearanceColors.onPrimary)
           }
         }
         .width('100%')
         .height(56)
-        .backgroundColor(this.isLoading ? COLOR_PRIMARY_DISABLED : COLOR_PRIMARY)
+        .backgroundColor(this.isLoading ? this.appearanceColors.disabled : this.appearanceColors.primary)
         .borderRadius(28)
         .margin({ top: 32 })
         .onClick(() => this.onLogin())
@@ -341,7 +340,7 @@ struct LoginPage {
           Text('立即注册')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
-            .fontColor(COLOR_PRIMARY)
+            .fontColor(this.appearanceColors.primary)
             .onClick(() => {
               router.pushUrl({
                 url: 'pages/RegisterPage',

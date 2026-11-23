@@ -23,6 +23,7 @@ export struct DetailGlassCapsule {
   // 父页面通过箭头闭包传入 Builder，保留父页面 this 和状态依赖。
   @BuilderParam content: () => void;
   @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   @StorageProp('bika_color_mode') colorMode: string = 'system';
   @StorageProp('system_color_mode') systemColorMode: string = 'light';
 
@@ -36,7 +37,7 @@ export struct DetailGlassCapsule {
       Row()
         .width('100%').height(this.capsuleHeight)
         .borderRadius(this.capsuleHeight / 2)
-        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD))
+        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD, false, this.materialStyle))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()

@@ -983,6 +983,8 @@ export class ApiService {
         }
       }
       if (resp === null) {
+        // 候选池全部失败，才允许触发一次「最后手段」的明文引导
+        ApiRouteManager.getInstance().notifyCandidatesExhausted();
         // 双通道均失败：整体重试一次
         continue;
       }

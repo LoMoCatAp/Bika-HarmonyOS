@@ -1,18 +1,19 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { showImmersiveToast } from '../../common/ImmersiveToast';
 import { ApiService } from '../../network/ApiService';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
 import { CacheManager } from '../../common/CacheManager';
 import { DnsIpEntry } from '../../network/DnsService';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER, COLOR_WHITE } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileDnsPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   dnsScroller: Scroller = new Scroller();
   @Link dnsFetching: boolean;
   @Link dnsTesting: boolean;
-  accentColor: ResourceColor = $r('app.color.bika_primary');
   @StorageLink('bika_use_proxy') useProxy: boolean = false;
   @Link dnsApiIps: string[];
   @Link dnsImageIps: string[];
@@ -89,7 +90,7 @@ export struct ProfileDnsPage {
             LoadingProgress()
               .width(16)
               .height(16)
-              .color(COLOR_PRIMARY)
+              .color(this.appearanceColors.primary)
             Text('正在获取分流线路…')
               .fontSize(13)
               .fontColor(COLOR_TEXT_SECONDARY)
@@ -97,13 +98,13 @@ export struct ProfileDnsPage {
           .width('100%')
           .height(36)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(COLOR_PRIMARY_TINT)
+          .backgroundColor(this.appearanceColors.tint)
         } else if (this.dnsTesting) {
           Row({ space: 8 }) {
             LoadingProgress()
               .width(16)
               .height(16)
-              .color(COLOR_PRIMARY)
+              .color(this.appearanceColors.primary)
             Text('正在测量 IP 握手延迟…')
               .fontSize(13)
               .fontColor(COLOR_TEXT_SECONDARY)
@@ -111,14 +112,14 @@ export struct ProfileDnsPage {
           .width('100%')
           .height(36)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(COLOR_PRIMARY_TINT)
+          .backgroundColor(this.appearanceColors.tint)
         }
             // 系统代理开关
             Column({ space: 0 }) {
               Row() {
                 SymbolGlyph($r('sys.symbol.dot_radiowaves'))
                   .fontSize(20)
-                  .fontColor([this.accentColor])
+                  .fontColor([this.appearanceColors.primary])
                 Column({ space: 3 }) {
                   Text('使用系统代理')
                     .fontSize(17)
@@ -132,7 +133,7 @@ export struct ProfileDnsPage {
                 .margin({ left: 12 })
                 .layoutWeight(1)
                 Toggle({ type: ToggleType.Switch, isOn: this.useProxy })
-                  .selectedColor(COLOR_PRIMARY)
+                  .selectedColor(this.appearanceColors.primary)
                   .onChange((checked: boolean) => {
                     this.useProxy = checked;
                     ApiService.setUseSystemProxy(checked);
@@ -211,15 +212,15 @@ export struct ProfileDnsPage {
                 Row({ space: 6 }) {
                   SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                     .fontSize(16)
-                    .fontColor([COLOR_WHITE])
+                    .fontColor([this.appearanceColors.onPrimary])
                   Text('获取并测速')
                     .fontSize(14)
-                    .fontColor(COLOR_WHITE)
+                    .fontColor(this.appearanceColors.onPrimary)
                 }
               }
               .layoutWeight(1)
               .height(42)
-              .backgroundColor(COLOR_PRIMARY)
+              .backgroundColor(this.appearanceColors.primary)
               .borderRadius(21)
               .enabled(!this.dnsFetching && !this.dnsTesting)
               .onClick(() => {
@@ -230,15 +231,15 @@ export struct ProfileDnsPage {
                 Row({ space: 6 }) {
                   SymbolGlyph($r('sys.symbol.bolt'))
                     .fontSize(16)
-                    .fontColor([COLOR_PRIMARY])
+                    .fontColor([this.appearanceColors.primary])
                   Text('应用最低延迟')
                     .fontSize(14)
-                    .fontColor(COLOR_PRIMARY)
+                    .fontColor(this.appearanceColors.primary)
                 }
               }
               .layoutWeight(1)
               .height(42)
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .backgroundColor(this.appearanceColors.tint)
               .borderRadius(21)
               .enabled(!this.dnsFetching && !this.dnsTesting && this.dnsLines.size > 0)
               .onClick(() => {
@@ -276,9 +277,9 @@ export struct ProfileDnsPage {
                       .fontColor(COLOR_TEXT_TITLE)
                     Text(entry.domain === 'picacomic.com' ? '图片' : 'API')
                       .fontSize(10)
-                      .fontColor(entry.domain === 'picacomic.com' ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+                      .fontColor(entry.domain === 'picacomic.com' ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY)
                       .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .backgroundColor(entry.domain === 'picacomic.com' ? COLOR_PRIMARY_TINT : COLOR_INPUT_BG)
+                      .backgroundColor(entry.domain === 'picacomic.com' ? this.appearanceColors.tint : COLOR_INPUT_BG)
                       .borderRadius(4)
                     Blank()
                     Text(this.dnsLatencyLabel(entry))
@@ -287,14 +288,14 @@ export struct ProfileDnsPage {
                     if (entry.selected) {
                       SymbolGlyph($r('sys.symbol.checkmark_circle'))
                         .fontSize(18)
-                        .fontColor([COLOR_PRIMARY])
+                        .fontColor([this.appearanceColors.primary])
                     }
                   }
                   .width('100%')
                   .padding(14)
-                  .backgroundColor(entry.selected ? COLOR_PRIMARY_TINT : Color.Transparent)
+                  .backgroundColor(entry.selected ? this.appearanceColors.tint : Color.Transparent)
                   .borderRadius(12)
-                  .border({ width: entry.selected ? 2 : 1, color: entry.selected ? COLOR_PRIMARY : COLOR_DIVIDER })
+                  .border({ width: entry.selected ? 2 : 1, color: entry.selected ? this.appearanceColors.primary : COLOR_DIVIDER })
                   .onClick(() => this.selectDnsIp(entry))
                 }, (entry: DnsIpEntry) => entry.domain + '_' + entry.ip)
               }

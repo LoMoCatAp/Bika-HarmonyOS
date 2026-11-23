@@ -1,11 +1,13 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
 import { ImageLoader } from '../../common/ImageLoader';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_DIVIDER } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_DIVIDER } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileStoragePage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   storageScroller: Scroller = new Scroller();
   @Link storageRefreshing: boolean;
   @Link downloadSizeBytes: number;
@@ -54,7 +56,7 @@ export struct ProfileStoragePage {
                     .fontColor(COLOR_TEXT_TITLE)
                   Text(this.storageRefreshing ? '计算中…' : this.sizeLabelForStorage(this.downloadSizeBytes))
                     .fontSize(13)
-                    .fontColor(COLOR_PRIMARY)
+                    .fontColor(this.appearanceColors.primary)
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
@@ -62,7 +64,7 @@ export struct ProfileStoragePage {
                   .fontSize(14)
                   .fontColor('#C62828')
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                  .backgroundColor(COLOR_PRIMARY_TINT)
+                  .backgroundColor(this.appearanceColors.tint)
                   .borderRadius(14)
                   .onClick(() => this.confirmClearAllDownloads())
               }
@@ -95,9 +97,9 @@ export struct ProfileStoragePage {
                 .layoutWeight(1)
                 Text('清理')
                   .fontSize(14)
-                  .fontColor(COLOR_PRIMARY)
+                  .fontColor(this.appearanceColors.primary)
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                  .backgroundColor(COLOR_PRIMARY_TINT)
+                  .backgroundColor(this.appearanceColors.tint)
                   .borderRadius(14)
                   .onClick(() => {
                     this.confirmClearImageCache();
@@ -116,7 +118,7 @@ export struct ProfileStoragePage {
             Row() {
               Text('刷新统计')
                 .fontSize(15)
-                .fontColor(COLOR_PRIMARY)
+                .fontColor(this.appearanceColors.primary)
             }
             .width('100%')
             .height(48)

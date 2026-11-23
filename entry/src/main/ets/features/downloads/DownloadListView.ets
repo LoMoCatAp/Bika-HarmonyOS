@@ -1,8 +1,9 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { router, promptAction } from '@kit.ArkUI';
 import { showImmersiveToast, showImmersiveDialog } from '../../common/ImmersiveToast';
 import { NetImage } from '../../components/NetImage';
 import { DownloadManager, DownloadTask } from '../../common/DownloadManager';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_DIVIDER } from '../../common/Constants';
 
 interface DownloadGroup {
   comicId: string;
@@ -25,6 +26,7 @@ interface DownloadGroup {
 
 @Component
 struct DownloadGroupItem {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   /** 作品 id（父组件仅在分组增删时创建 / 销毁本组件） */
   comicId: string = '';
   /** 作品元数据：不会变化，仅创建时赋值一次 */
@@ -191,7 +193,7 @@ struct DownloadGroupItem {
         Row() {
           Text('已下载 ' + this.downloadedCount + '/' + this.totalCount + ' 话')
             .fontSize(12)
-            .fontColor(this.downloadedCount === this.totalCount ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+            .fontColor(this.downloadedCount === this.totalCount ? this.appearanceColors.primary : COLOR_TEXT_HINT)
           if (this.sizeBytes > 0) {
             Text(' · ' + this.sizeLabel(this.sizeBytes))
               .fontSize(12)
@@ -202,9 +204,9 @@ struct DownloadGroupItem {
           if (this.hasDownloading) {
             Text('下载中')
               .fontSize(11)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .backgroundColor(this.appearanceColors.tint)
               .borderRadius(8)
           } else if (this.hasWaiting) {
             Text('等待中')
@@ -230,11 +232,11 @@ struct DownloadGroupItem {
             })
               .height(4)
               .layoutWeight(1)
-              .color(COLOR_PRIMARY)
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .color(this.appearanceColors.primary)
+              .backgroundColor(this.appearanceColors.tint)
             Text(this.downloadingTotal > 0 ? Math.round(this.downloadingProgress * 100 / this.downloadingTotal) + '%' : '等待中')
               .fontSize(11)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .margin({ left: 8 })
           }
           .width('100%')
@@ -267,9 +269,9 @@ struct DownloadGroupItem {
               .layoutWeight(1)
             Text('重试')
               .fontSize(11)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .backgroundColor(this.appearanceColors.tint)
               .borderRadius(10)
               .margin({ left: 8 })
               .onClick(() => {

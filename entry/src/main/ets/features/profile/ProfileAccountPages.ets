@@ -1,10 +1,12 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
-import { COLOR_PRIMARY, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_PLACEHOLDER, COLOR_DIVIDER, COLOR_WHITE } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_INPUT_BG, COLOR_PLACEHOLDER, COLOR_DIVIDER, COLOR_WHITE } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileEditPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   profileEditScroller: Scroller = new Scroller();
   @Link editSlogan: string;
   @Link editSaving: boolean;
@@ -45,8 +47,8 @@ export struct ProfileEditPage {
 
               Button(this.editSaving ? '保存中…' : '保存', { type: ButtonType.Normal })
                 .fontSize(15)
-                .fontColor(COLOR_WHITE)
-                .backgroundColor(this.editSaving ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+                .fontColor(this.editSaving ? COLOR_WHITE : this.appearanceColors.onPrimary)
+                .backgroundColor(this.editSaving ? COLOR_TEXT_HINT : this.appearanceColors.primary)
                 .borderRadius(22)
                 .height(44)
                 .width('calc(100% - 32vp)')
@@ -87,6 +89,7 @@ export struct ProfileEditPage {
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileAccountPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   accountScroller: Scroller = new Scroller();
   @Link oldPassword: string;
   @Link newPassword: string;
@@ -165,8 +168,8 @@ export struct ProfileAccountPage {
                 })
               Button(this.passwordSaving ? '提交中…' : '修改密码', { type: ButtonType.Normal })
                 .fontSize(15)
-                .fontColor(COLOR_WHITE)
-                .backgroundColor(this.passwordSaving ? COLOR_TEXT_HINT : COLOR_PRIMARY)
+                .fontColor(this.passwordSaving ? COLOR_WHITE : this.appearanceColors.onPrimary)
+                .backgroundColor(this.passwordSaving ? COLOR_TEXT_HINT : this.appearanceColors.primary)
                 .borderRadius(22)
                 .height(44)
                 .width('calc(100% - 32vp)')

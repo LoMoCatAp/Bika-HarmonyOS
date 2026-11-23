@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '1.5.3',
+    date: '2026-11-23',
+    items: [
+      '新增「外观」页，支持预设和自定义主题色。',
+      '新增多款应用图标。轻点应用，长按切换。',
+      '沉浸光感新增五档面板厚度。',
+      '修复阅读器退出后音量键仍可能触发翻页的问题，清理图片缓存时保留追更标记。',
+      '修复重启后自选 DNS 线路未生效、网络兜底地址未加入直连列表的问题。'
+    ]
+  },
+  {
     version: '1.5.2',
     date: '2026-11-16',
     items: [

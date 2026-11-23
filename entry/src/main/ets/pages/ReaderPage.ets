@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
 import { router, window, CommonModifier, SegmentButtonV2Items } from '@kit.ArkUI';
 import { unifiedDataChannel } from '@kit.ArkData';
@@ -44,8 +45,6 @@ import {
 } from '../common/ContinuationState';
 import { DownloadManager } from '../common/DownloadManager';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_READER_TEXT_MUTED,
   COLOR_READER_BG,
   COLOR_BG,
@@ -158,7 +157,9 @@ class ReaderBarBackground extends CommonModifier {
 @Entry
 @Component
 struct ReaderPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @StorageProp('bika_material_level') readerMaterialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   private readonly readerBarBackground: ReaderBarBackground = new ReaderBarBackground();
   @State @Watch('syncReaderSystemBars') showControls: boolean = true;
   @State readerControlsFadingOut: boolean = false;
@@ -326,7 +327,6 @@ struct ReaderPage {
     } else {
       this.lastStripReadingMode = this.readingMode;
     }
-    this.registerVolumeKeys();
     let params = router.getParams() as ReaderRouterParams;
     if (params) {
       this.comicId = params.comicId;
@@ -838,10 +838,11 @@ struct ReaderPage {
   };
   /** 上一次音量翻页时间（防重复事件） */
   private lastVolumeTurnAt: number = 0;
+  private volumeKeysRegistered: boolean = false;
 
   /** 音量键翻页（音量上=下一页，音量下=上一页；可在设置中关闭） */
   private registerVolumeKeys(): void {
-    if (!this.volumeTurnEnabled) {
+    if (this.volumeKeysRegistered || !this.volumeTurnEnabled || !this.readerPageVisible) {
       return;
     }
     try {
@@ -857,6 +858,7 @@ struct ReaderPage {
         isRepeat: false
       };
       inputConsumer.on('keyPressed', downOptions, this.volumeDownCallback);
+      this.volumeKeysRegistered = true;
     } catch (err) {
       console.warn('[ReaderPage] volume key register failed: ' + JSON.stringify(err));
     }
@@ -876,9 +878,13 @@ struct ReaderPage {
   }
 
   private unregisterVolumeKeys(): void {
+    if (!this.volumeKeysRegistered) {
+      return;
+    }
     try {
       inputConsumer.off('keyPressed', this.volumeUpCallback);
       inputConsumer.off('keyPressed', this.volumeDownCallback);
+      this.volumeKeysRegistered = false;
     } catch (err) {
       console.warn('[ReaderPage] volume key unregister failed');
     }
@@ -886,7 +892,8 @@ struct ReaderPage {
 
   /** 按音量方向翻页（防抖 300ms，弹窗打开时不翻页） */
   private turnByVolume(delta: number): void {
-    if (this.showSheet || this.downloadMenuVisible || this.progressDragging || this.progressTouching || this.pagerAnimating) {
+    if (this.showSheet || this.downloadMenuVisible || this.progressDragging || this.progressTouching || this.pagerAnimating
+      || !this.readerPageVisible) {
       return;
     }
     let now = Date.now();
@@ -1574,7 +1581,7 @@ struct ReaderPage {
       Row({ space: 12 }) {
         SymbolGlyph($r('sys.symbol.doc_text'))
           .fontSize(22)
-          .fontColor([COLOR_PRIMARY])
+          .fontColor([this.appearanceColors.primary])
         Text('导出为 PDF')
           .fontSize(15)
           .fontColor(COLOR_TEXT_TITLE)
@@ -1586,7 +1593,7 @@ struct ReaderPage {
       Row({ space: 12 }) {
         SymbolGlyph($r('sys.symbol.doc_zipper'))
           .fontSize(22)
-          .fontColor([COLOR_PRIMARY])
+          .fontColor([this.appearanceColors.primary])
         Text('导出为图片压缩包（ZIP）')
           .fontSize(15)
           .fontColor(COLOR_TEXT_TITLE)
@@ -1680,11 +1687,13 @@ struct ReaderPage {
 
   onPageShow(): void {
     this.readerPageVisible = true;
+    this.registerVolumeKeys();
     this.syncReaderSystemBars();
   }
 
   onPageHide(): void {
     this.readerPageVisible = false;
+    this.unregisterVolumeKeys();
     this.cancelReaderControlsTransition();
     this.syncReaderSystemBars();
     this.readerLayoutTransition.clear();
@@ -2271,12 +2280,12 @@ struct ReaderPage {
         Column() {
           Text(this.errorText)
             .fontSize(16)
-            .fontColor(COLOR_PRIMARY)
+            .fontColor(this.appearanceColors.primary)
             .margin({ bottom: 16 })
           Button('重试')
             .fontSize(14)
-            .backgroundColor(COLOR_PRIMARY)
-            .fontColor(COLOR_WHITE)
+            .backgroundColor(this.appearanceColors.primary)
+            .fontColor(this.appearanceColors.onPrimary)
             .borderRadius(20)
             .height(40)
             .padding({ left: 28, right: 28 })
@@ -2359,7 +2368,7 @@ struct ReaderPage {
         this.showSheet = false;
         this.readerSettingsMeasuredHeight = 0;
       }
-    }, this.sheetKind !== 'settings'))
+    }, this.sheetKind !== 'settings', this.materialStyle, this.readerMaterialLevel))
   }
 
   /** 底部 TabBar 是普通组件沉浸材质的官方生效范围。 */
@@ -2399,7 +2408,7 @@ struct ReaderPage {
         Row()
           .width('100%').height(52)
           .borderRadius(26)
-          .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
+          .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true, this.materialStyle))
           .hitTestBehavior(HitTestMode.None)
           .accessibilityLevel('no-hide-descendants')
         Row()
@@ -2425,7 +2434,7 @@ struct ReaderPage {
               .trackThickness(4)
               .blockSize({ width: 20, height: 20 })
               .trackColor('#4DFFFFFF')
-              .selectedColor(COLOR_PRIMARY)
+              .selectedColor(this.appearanceColors.primary)
               .blockColor(COLOR_WHITE)
               .showTips(false)
               .enabled(this.totalImages > 1 && !this.isLoading)
@@ -2518,7 +2527,7 @@ struct ReaderPage {
       Row()
         .width('100%').height(52)
         .borderRadius(26)
-        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
+        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true, this.materialStyle))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -2572,7 +2581,7 @@ struct ReaderPage {
       Row()
         .width('100%').height(52)
         .borderRadius(26)
-        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true))
+        .attributeModifier(new GlassCapsuleMaterial('#1C1C1E', true, this.materialStyle))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
@@ -2602,7 +2611,7 @@ struct ReaderPage {
           onDisappear: (): void => {
             this.downloadMenuVisible = false;
           }
-        }))
+        }, this.materialStyle, this.readerMaterialLevel))
         Stack({ alignContent: Alignment.Center }) {
           SymbolGlyph($r('sys.symbol.gearshape'))
             .fontSize(24)
@@ -2916,8 +2925,8 @@ struct ReaderPage {
       })
         .width('100%')
         .height(44)
-        .trackColor(COLOR_PRIMARY_TINT)
-        .selectedColor(COLOR_PRIMARY)
+        .trackColor(this.appearanceColors.tint)
+        .selectedColor(this.appearanceColors.primary)
         .showTips(false)
         .accessibilityText('阅读亮度')
         .onChange((value: number, mode: SliderChangeMode): void => {

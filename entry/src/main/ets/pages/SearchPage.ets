@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
 import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { router } from '@kit.ArkUI';
@@ -8,7 +9,6 @@ import { CacheManager } from '../common/CacheManager';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { publishContinuationRoute, ROUTE_SEARCH } from '../common/ContinuationState';
 import {
-  COLOR_PRIMARY,
   COLOR_BG,
   COLOR_CARD,
   COLOR_DIVIDER,
@@ -23,6 +23,7 @@ import {
 @Entry
 @Component
 struct SearchPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State keyword: string = '';
   @State keywords: string[] = [];
   @State searchHistory: string[] = [];
@@ -116,7 +117,7 @@ struct SearchPage {
         .fontSize(14)
         .fontColor(COLOR_TEXT_TITLE)
         .placeholderColor(COLOR_TEXT_HINT)
-        .caretColor(COLOR_PRIMARY)
+        .caretColor(this.appearanceColors.primary)
         .backgroundColor(Color.Transparent)
         .height(44)
         .layoutWeight(1)
@@ -133,7 +134,7 @@ struct SearchPage {
     Button('搜索', { type: ButtonType.Capsule })
       .width('100%').height(44)
       .fontSize(14)
-      .fontColor(COLOR_PRIMARY)
+      .fontColor(this.appearanceColors.primary)
       .backgroundColor(Color.Transparent)
       .enabled(this.keyword.trim().length > 0)
       .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.96 : 1 })
@@ -166,7 +167,7 @@ struct SearchPage {
                   .layoutWeight(1)
                 Text('清空')
                   .fontSize(13)
-                  .fontColor(COLOR_PRIMARY)
+                  .fontColor(this.appearanceColors.primary)
                   .onClick(() => this.clearSearchHistory())
               }
               .width('100%')

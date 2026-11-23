@@ -2,10 +2,28 @@
   "app": {
     "bundleName": "com.lomocat.bika",
     "vendor": "example",
-    "versionCode": 1005002,
-    "versionName": "1.5.2",
+    "versionCode": 1005003,
+    "versionName": "1.5.3",
     "buildVersion": "1",
     "icon": "$media:bika",
+    "alternateIcons": [
+      { "name": "rose", "icon": "$media:appearance_icon_rose" },
+      { "name": "graphite", "icon": "$media:appearance_icon_graphite" },
+      { "name": "berry", "icon": "$media:appearance_icon_berry" },
+      { "name": "mist", "icon": "$media:appearance_icon_mist" },
+      { "name": "wine", "icon": "$media:appearance_icon_wine" },
+      { "name": "multicolor", "icon": "$media:appearance_icon_multicolor" },
+      { "name": "multicolor_face", "icon": "$media:appearance_icon_multicolor_face" },
+      { "name": "lavender", "icon": "$media:appearance_icon_lavender" },
+      { "name": "silhouette", "icon": "$media:appearance_icon_silhouette" },
+      { "name": "lavender_wordmark", "icon": "$media:appearance_icon_lavender_wordmark" },
+      { "name": "berry_face", "icon": "$media:appearance_icon_berry_face" },
+      { "name": "rose_face", "icon": "$media:appearance_icon_rose_face" },
+      { "name": "graphite_face", "icon": "$media:appearance_icon_graphite_face" },
+      { "name": "mist_face", "icon": "$media:appearance_icon_mist_face" },
+      { "name": "wine_face", "icon": "$media:appearance_icon_wine_face" },
+      { "name": "halftone", "icon": "$media:appearance_icon_halftone" }
+    ],
     "label": "$string:app_name"
   }
 }

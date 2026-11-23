@@ -27,6 +27,9 @@
         "name": "ohos.permission.INTERNET"
       },
       {
+        "name": "ohos.permission.VIBRATE"
+      },
+      {
         "name": "ohos.permission.PRIVACY_WINDOW"
       },
       // 网络状态查询（仅 WiFi 下载判断）：不声明会以 201 Permission denied 失败，

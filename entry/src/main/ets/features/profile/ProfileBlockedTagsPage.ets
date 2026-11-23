@@ -1,10 +1,12 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_DIVIDER } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_HINT, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_DIVIDER } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileBlockedTagsPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   blockedTagsScroller: Scroller = new Scroller();
   @Link blockedTags: string[];
   toggleBlockedTag: (tag: string) => void = (tag: string): void => {};
@@ -42,10 +44,10 @@ export struct ProfileBlockedTagsPage {
                   ForEach(this.blockedTags, (tag: string) => {
                     Text(tag)
                       .fontSize(13)
-                      .fontColor(COLOR_PRIMARY)
+                      .fontColor(this.appearanceColors.primary)
                       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                      .backgroundColor(COLOR_PRIMARY_TINT)
-                      .border({ width: 1, color: COLOR_PRIMARY, radius: 15 })
+                      .backgroundColor(this.appearanceColors.tint)
+                      .border({ width: 1, color: this.appearanceColors.primary, radius: 15 })
                       .margin({ left: 16, bottom: 8 })
                       .onClick(() => this.toggleBlockedTag(tag))
                   }, (tag: string) => tag)
@@ -70,7 +72,7 @@ export struct ProfileBlockedTagsPage {
                   LoadingProgress()
                     .width(16)
                     .height(16)
-                    .color(COLOR_PRIMARY)
+                    .color(this.appearanceColors.primary)
                   Text('加载标签中…')
                     .fontSize(13)
                     .fontColor(COLOR_TEXT_HINT)
@@ -82,12 +84,12 @@ export struct ProfileBlockedTagsPage {
                   ForEach(this.keywordTags, (tag: string) => {
                     Text(tag)
                       .fontSize(13)
-                      .fontColor(this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY : COLOR_TEXT_TITLE)
+                      .fontColor(this.blockedTags.indexOf(tag) >= 0 ? this.appearanceColors.primary : COLOR_TEXT_TITLE)
                       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                      .backgroundColor(this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY_TINT : COLOR_CARD)
+                      .backgroundColor(this.blockedTags.indexOf(tag) >= 0 ? this.appearanceColors.tint : COLOR_CARD)
                       .border({
                         width: 1,
-                        color: this.blockedTags.indexOf(tag) >= 0 ? COLOR_PRIMARY : COLOR_DIVIDER,
+                        color: this.blockedTags.indexOf(tag) >= 0 ? this.appearanceColors.primary : COLOR_DIVIDER,
                         radius: 15
                       })
                       .margin({ left: 16, bottom: 8 })

@@ -1,12 +1,14 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { EpViewModel } from '../models/Comic';
 import {
-  COLOR_PRIMARY, COLOR_TEXT_TITLE, COLOR_TEXT_SECONDARY, COLOR_TEXT_DISABLED,
+  COLOR_TEXT_TITLE, COLOR_TEXT_SECONDARY, COLOR_TEXT_DISABLED,
   COLOR_CARD, COLOR_DIVIDER, COLOR_WHITE
 } from '../common/Constants';
 
 /** 详情页与阅读器共用的章节选择弹窗内容，由系统 sheet 统一绘制表面。 */
 @Component
 export struct ChapterDownloadSheet {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @Prop chapters: EpViewModel[] = [];
   @Link selectedOrders: number[];
   isDownloaded: (order: number) => boolean = (_order: number): boolean => false;
@@ -48,7 +50,7 @@ export struct ChapterDownloadSheet {
           .layoutWeight(1)
         Text('全选')
           .fontSize(14)
-          .fontColor(COLOR_PRIMARY)
+          .fontColor(this.appearanceColors.primary)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
           .onClick(() => this.selectAllChapters())
         Text('清除')
@@ -70,11 +72,11 @@ export struct ChapterDownloadSheet {
                 if (this.isDownloaded(ep.order)) {
                   SymbolGlyph($r('sys.symbol.checkmark_circle'))
                     .fontSize(14)
-                    .fontColor([this.selectedOrders.indexOf(ep.order) >= 0 ? COLOR_WHITE : COLOR_PRIMARY])
+                    .fontColor([this.selectedOrders.indexOf(ep.order) >= 0 ? this.appearanceColors.onPrimary : this.appearanceColors.primary])
                 }
                 Text(ep.title.length > 0 ? ep.title : ('第' + ep.order + '话'))
                   .fontSize(13)
-                  .fontColor(this.selectedOrders.indexOf(ep.order) >= 0 ? COLOR_WHITE : COLOR_TEXT_TITLE)
+                  .fontColor(this.selectedOrders.indexOf(ep.order) >= 0 ? this.appearanceColors.onPrimary : COLOR_TEXT_TITLE)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .layoutWeight(this.isDownloaded(ep.order) ? 1 : 0)
@@ -83,8 +85,8 @@ export struct ChapterDownloadSheet {
               .height(38)
               .justifyContent(FlexAlign.Center)
               .padding({ left: 8, right: 8 })
-              .backgroundColor(this.selectedOrders.indexOf(ep.order) >= 0 ? COLOR_PRIMARY : COLOR_CARD)
-              .border({ width: 1, color: this.selectedOrders.indexOf(ep.order) >= 0 ? COLOR_PRIMARY : COLOR_DIVIDER, radius: 12 })
+              .backgroundColor(this.selectedOrders.indexOf(ep.order) >= 0 ? this.appearanceColors.primary : COLOR_CARD)
+              .border({ width: 1, color: this.selectedOrders.indexOf(ep.order) >= 0 ? this.appearanceColors.primary : COLOR_DIVIDER, radius: 12 })
               .onClick(() => this.toggleDownloadSelect(ep.order))
             }
           }, (ep: EpViewModel) => String(ep.order))
@@ -106,8 +108,8 @@ export struct ChapterDownloadSheet {
         .width('100%')
         .height(46)
         .fontSize(15)
-        .fontColor(COLOR_WHITE)
-        .backgroundColor(this.selectedOrders.length > 0 ? COLOR_PRIMARY : COLOR_TEXT_DISABLED)
+        .fontColor(this.selectedOrders.length > 0 ? this.appearanceColors.onPrimary : COLOR_WHITE)
+        .backgroundColor(this.selectedOrders.length > 0 ? this.appearanceColors.primary : COLOR_TEXT_DISABLED)
         .borderRadius(23)
         .enabled(this.selectedOrders.length > 0)
         .onClick(() => this.onStart())

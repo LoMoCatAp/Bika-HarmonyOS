@@ -5,12 +5,13 @@ import {
   BIKA_INIT_HOST,
   BIKA_FALLBACK_IPS
 } from '../common/Constants';
+import { isAllowedDirectAddress, shouldTryPlaintextBootstrap } from '../models/RouteGuard';
 
 /**
  * API 直连路由管理器：
  *
  * 1. 默认直连 IP 池（首项 104.21.20.188），App 启动立即可用，完全不依赖 init 引导。
- * 2. init 引导（https://68.183.234.72/init，HTTPS 失败回退 HTTP）在后台异步
+ * 2. init 引导（https://68.183.234.72/init，所有直连候选失败后才回退 HTTP）在后台异步
  *    拉取，成功后把合法地址追加进池（「池 ∪ init 地址」语义，默认 IP 保持首位）。
  * 3. 一次请求内按池顺序逐个 IP 尝试连接，全部失败才报网络错误。
  *
@@ -35,6 +36,8 @@ export class ApiRouteManager {
   private refreshPromise: Promise<void> | null = null;
   /** 上次刷新成功时间（节流：1 小时内不重复刷） */
   private lastRefreshAt: number = 0;
+  private lastHttpBootstrapAt: number = 0;
+  private poolExhausted: boolean = false;
 
   static getInstance(): ApiRouteManager {
     if (!ApiRouteManager.instance) {
@@ -70,6 +73,10 @@ export class ApiRouteManager {
     });
   }
 
+  notifyCandidatesExhausted(): void {
+    this.poolExhausted = true;
+  }
+
   /** 恢复默认 IP 池 */
   resetToDefault(): void {
     this.ipPool = BIKA_FALLBACK_IPS.slice(0);
@@ -94,54 +101,73 @@ export class ApiRouteManager {
 
   /**
    * 后台拉取 init 引导配置。
-   * 先 HTTPS 再 HTTP 回退；响应地址严格
-   * 校验（ADDRESS_PATTERN 同款），防明文通道中间人注入。
+   * 首选 HTTPS。直连候选耗尽且冷却结束后，才尝试 HTTP。
    */
   private async doRefresh(): Promise<void> {
-    let responseText: string = '';
-    let ok: boolean = false;
-    for (let scheme of ['https', 'http']) {
-      let request = http.createHttp();
-      try {
-        let response = await request.request(scheme + '://' + BIKA_INIT_HOST + '/init', {
-          method: http.RequestMethod.GET,
-          expectDataType: http.HttpDataType.STRING,
-          connectTimeout: 5000,
-          readTimeout: 5000
-        });
-        if (response.responseCode === 200) {
-          responseText = response.result as string;
-          ok = true;
-          break;
-        }
-        console.warn('[ApiRouteManager] init ' + scheme + ' 响应异常: HTTP ' + response.responseCode);
-      } catch (err) {
-        console.warn('[ApiRouteManager] init ' + scheme + ' 失败: ' + (err instanceof Error ? err.message : JSON.stringify(err)));
-      } finally {
-        request.destroy();
-      }
+    if (await this.fetchBootstrap('https')) {
+      return;
     }
 
-    if (ok && responseText.length > 0) {
-      try {
-        let init = JSON.parse(responseText) as InitResponse;
-        if (init && init.addresses && init.addresses.length > 0) {
-          // 地址合法性校验（BIKA ADDRESS_PATTERN 同款）：仅接受合法 IP/主机名
-          let validated = init.addresses.filter((s: string) => /^[0-9a-zA-Z.\-:\[\]]{1,255}$/.test(s));
-          // 默认 IP 保持首位，init 返回地址去重追加
-          for (let ip of validated) {
-            if (this.ipPool.indexOf(ip) < 0) {
-              this.ipPool.push(ip);
-            }
-          }
-          this.lastRefreshAt = Date.now();
-          console.info('[ApiRouteManager] init 刷新成功，直连池: ' + JSON.stringify(this.ipPool));
-          this.probeEgressIp();
-        }
-      } catch (err) {
-        console.warn('[ApiRouteManager] init 响应解析失败: ' + (err instanceof Error ? err.message : JSON.stringify(err)));
+    const now = Date.now();
+    if (!shouldTryPlaintextBootstrap(this.poolExhausted, this.lastHttpBootstrapAt, now)) {
+      return;
+    }
+
+    this.lastHttpBootstrapAt = now;
+    if (await this.fetchBootstrap('http')) {
+      console.warn('[ApiRouteManager] 已使用明文引导通道（最后手段）刷新直连池');
+    }
+  }
+
+  private async fetchBootstrap(scheme: string): Promise<boolean> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(scheme + '://' + BIKA_INIT_HOST + '/init', {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 5000,
+        readTimeout: 5000
+      });
+      if (response.responseCode !== 200) {
+        console.warn('[ApiRouteManager] init ' + scheme + ' 响应异常: HTTP ' + response.responseCode);
+        return false;
+      }
+      if (typeof response.result !== 'string' || !this.mergeInitAddresses(response.result)) {
+        console.warn('[ApiRouteManager] init ' + scheme + ' 未返回可用地址');
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('[ApiRouteManager] init ' + scheme + ' 失败: ' + (err instanceof Error ? err.message : JSON.stringify(err)));
+      return false;
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private mergeInitAddresses(responseText: string): boolean {
+    const init = JSON.parse(responseText) as InitResponse;
+    if (!init || !Array.isArray(init.addresses)) {
+      return false;
+    }
+
+    const validated = init.addresses.filter((address: string): boolean =>
+      typeof address === 'string' && isAllowedDirectAddress(address));
+    if (validated.length === 0) {
+      return false;
+    }
+
+    // 保留已有候选的优先级，将新地址按响应顺序去重追加。
+    for (const address of validated) {
+      if (this.ipPool.indexOf(address) < 0) {
+        this.ipPool.push(address);
       }
     }
+    this.lastRefreshAt = Date.now();
+    this.poolExhausted = false;
+    console.info('[ApiRouteManager] init 刷新成功，直连池: ' + JSON.stringify(this.ipPool));
+    this.probeEgressIp();
+    return true;
   }
 
   /**

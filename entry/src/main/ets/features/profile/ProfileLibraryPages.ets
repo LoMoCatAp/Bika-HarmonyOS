@@ -1,16 +1,18 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { router } from '@kit.ArkUI';
 import { ComicViewModel, buildImageUrl, BikaNotification, BikaComment } from '../../models/Comic';
 import { NetImage } from '../../components/NetImage';
 import { ComicCard } from '../../components/ComicCard';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
 import { HistoryItem } from '../../common/CacheManager';
-import { COLOR_PRIMARY, COLOR_BG, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_DIVIDER, adaptiveListColumns } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_DIVIDER, adaptiveListColumns } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { DownloadListView } from '../downloads/DownloadListView';
 
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileFavouritesPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   favouritesScroller: Scroller = new Scroller();
   @Link favLoading: boolean;
   @Link favComics: ComicViewModel[];
@@ -36,7 +38,7 @@ export struct ProfileFavouritesPage {
 
           if (this.favLoading && this.favComics.length === 0) {
             LoadingProgress()
-              .width(28).height(28).color(COLOR_PRIMARY)
+              .width(28).height(28).color(this.appearanceColors.primary)
               .margin({ top: 24, bottom: 16 })
           }
           Grid() {

@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { navigationBlurTitleBar } from '../../common/NavigationBlur';
 import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_DIVIDER } from '../../common/Constants';
 import { HdsNavDestination } from '@kit.UIDesignKit';
@@ -6,8 +7,8 @@ import { CHANGELOG_ENTRIES } from '../../common/Changelog';
 /** 沿用个人中心的状态绑定、滚动位置与事件。 */
 @Component
 export struct ProfileAboutPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   aboutScroller: Scroller = new Scroller();
-  accentColor: ResourceColor = $r('app.color.bika_primary');
   openChangelog: () => void = (): void => {};
   openPrivacyPolicy: () => void = (): void => {};
   openExternalLink: (url: string) => void = (url: string): void => {};
@@ -60,7 +61,7 @@ export struct ProfileAboutPage {
           Row({ space: 12 }) {
             SymbolGlyph($r('sys.symbol.clock'))
               .fontSize(20)
-              .fontColor([this.accentColor])
+              .fontColor([this.appearanceColors.primary])
             Column({ space: 3 }) {
               Text('更新日志')
                 .fontSize(17)
@@ -89,7 +90,7 @@ export struct ProfileAboutPage {
           Row({ space: 12 }) {
             SymbolGlyph($r('sys.symbol.doc_text'))
               .fontSize(20)
-              .fontColor([this.accentColor])
+              .fontColor([this.appearanceColors.primary])
             Column({ space: 3 }) {
               Text('隐私政策')
                 .fontSize(17)
@@ -123,7 +124,7 @@ export struct ProfileAboutPage {
           Row({ space: 12 }) {
             SymbolGlyph($r('sys.symbol.link'))
               .fontSize(20)
-              .fontColor([this.accentColor])
+              .fontColor([this.appearanceColors.primary])
             Column({ space: 3 }) {
               Text('GitHub 项目主页')
                 .fontSize(17)

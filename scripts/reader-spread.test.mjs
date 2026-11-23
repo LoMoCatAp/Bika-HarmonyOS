@@ -121,7 +121,7 @@ function reader() {
     persistPageIndex:()=>writes.push(page.swiperIndex),publishCurrentReading(){},
     nativeReaderSwipe:null,onReaderContentTouch(){},onReaderContentClick:()=>calls.push(['center']),showPageTip:index=>tips.push(index),resetProgressControl:()=>{page.progressMode=false;},
     listScroller:{scrollToIndex:index=>calls.push(['list',index])},
-    observeReaderInsets:()=>{page.readerWindowActive=true;},registerVolumeKeys(){},updateChapterButtons(){},loadImagesWithCache:async()=>{},loadLocalImages(){}
+    observeReaderInsets:()=>{page.readerWindowActive=true;},registerVolumeKeys(){},unregisterVolumeKeys(){},updateChapterButtons(){},loadImagesWithCache:async()=>{},loadLocalImages(){}
   });
   const flush=()=>{let limit=20;while(frames.length&&limit--){for(const callback of frames.splice(0))callback.onFrame(0);}assert(limit>0,'frame loop');};
   return {page,frames,calls,writes,messages,tips,systemBars,controlAnimations,settings,cache,images,timers,flush,

@@ -1,12 +1,14 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { router } from '@kit.ArkUI';
 import { supportsHdsImmersiveMaterial } from '../common/CompatibleMaterial';
+import { normalizeMaterialStyle, hdsPanelThicknessEffect } from '../common/ImmersiveMaterialLevel';
 import { showImmersiveToast } from '../common/ImmersiveToast';
 import { ApiService } from '../network/ApiService';
 import { BikaComicDetail } from '../models/Comic';
 import { CacheManager, HistoryItem } from '../common/CacheManager';
 import { FollowUpdateManager } from '../common/FollowUpdateManager';
 import { publishContinuationRoute, CONTINUATION_PROFILE_SUBPAGE_KEY, ContinuationRouteParams, ROUTE_HOME, ROUTE_CHANNEL_LIST, ROUTE_COMIC_DETAIL, ROUTE_READER, ROUTE_PROFILE_SUBPAGE, ROUTE_SEARCH, ROUTE_SEARCH_RESULT } from '../common/ContinuationState';
-import { COLOR_PRIMARY, COLOR_BG, COLOR_CARD, COLOR_TEXT_SECONDARY } from '../common/Constants';
+import { COLOR_BG, COLOR_CARD, COLOR_TEXT_SECONDARY } from '../common/Constants';
 import { HdsTabs, HdsTabsController, HdsAnimationMode, DividerMode, hdsMaterial } from '@kit.UIDesignKit';
 import { HomePage } from '../features/home/HomePage';
 import { ProfilePage } from '../features/profile/ProfilePage';
@@ -16,12 +18,14 @@ import { WidgetActionParams, SubpageOpenSignal } from '../models/IndexNavigation
 @Entry
 @Component
 struct IndexPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   /** 桌面卡片点击深链：EntryAbility 每次写入都带新的 timestamp，用 @Watch 感知新事件 */
   @StorageLink('bika_widget_action') @Watch('onWidgetActionChanged') widgetAction: string = '';
   @StorageLink('bika_subpage_open') @Watch('onSubpageChanged') subpageOpen: boolean = false;
   @StorageLink('bika_goto_profile') @Watch('onGotoProfile') gotoProfile: number = 0;
   @StorageLink('bika_material_level') @Watch('onTabsMaterialChanged') materialLevel: string = 'EXQUISITE';
   @StorageProp('bika_material_rev') @Watch('onTabsMaterialChanged') materialRev: number = 0;
+  @StorageProp('bika_material_style') @Watch('onTabsMaterialChanged') materialStyle: string = 'THIN';
   @StorageLink('bika_animations') animationsEnabled: boolean = true;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @State currentTab: number = 0;
@@ -29,6 +33,7 @@ struct IndexPage {
   private readonly immersiveTabs: boolean = supportsHdsImmersiveMaterial();
   /** 只有安全回到根页才应用材质变更；进出子页不切换 HdsTabs 的 key。 */
   @State appliedTabsMaterial: string = 'EXQUISITE';
+  @State appliedTabsStyle: string = 'THIN';
   @State appliedTabsRevision: number = 0;
   private tabsPageVisible: boolean = false;
   private tabsNodeReady: boolean = false;
@@ -45,6 +50,7 @@ struct IndexPage {
       + ', auth_resolved=' + (AppStorage.get<boolean>('auth_resolved') === true ? 'true' : 'false'));
     AppStorage.setOrCreate('bika_material_level', this.materialLevel);
     this.appliedTabsMaterial = this.materialLevel;
+    this.appliedTabsStyle = normalizeMaterialStyle(this.materialStyle);
     this.appliedTabsRevision = this.materialRev;
     let saved: number | undefined = AppStorage.get<number>('bika_active_tab') as number | undefined;
     if (saved === 0 || saved === 1) {
@@ -119,10 +125,13 @@ struct IndexPage {
     if (!this.tabsPageVisible || this.subpageOpen || this.channelOpening) {
       return false;
     }
-    if (this.appliedTabsMaterial === this.materialLevel && this.appliedTabsRevision === this.materialRev) {
+    const style = normalizeMaterialStyle(this.materialStyle);
+    if (this.appliedTabsMaterial === this.materialLevel && this.appliedTabsStyle === style &&
+      this.appliedTabsRevision === this.materialRev) {
       return false;
     }
     this.appliedTabsMaterial = this.materialLevel;
+    this.appliedTabsStyle = style;
     this.appliedTabsRevision = this.materialRev;
     this.lastTabBarVisible = undefined;
     return true;
@@ -491,6 +500,13 @@ struct IndexPage {
     this.publishCurrentRoute();
   }
 
+  private tabsBackgroundEffect(): BackgroundEffectOptions {
+    if (!this.immersiveTabs) {
+      return { radius: 0, color: COLOR_CARD };
+    }
+    return hdsPanelThicknessEffect(this.appliedTabsStyle);
+  }
+
   /** 沉浸光感档位映射 */
   private hdsMaterialLevel(): hdsMaterial.MaterialLevel {
     if (this.appliedTabsMaterial === 'EXQUISITE') {
@@ -510,10 +526,10 @@ struct IndexPage {
     Column({ space: 2 }) {
       SymbolGlyph(symbol)
         .fontSize(20)
-        .fontColor([this.currentTab === index ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
+        .fontColor([this.currentTab === index ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY])
       Text(label)
         .fontSize(12)
-        .fontColor(this.currentTab === index ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+        .fontColor(this.currentTab === index ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY)
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -535,10 +551,11 @@ struct IndexPage {
       .tabBar(this.tabLabel(1, '我的', $r('sys.symbol.person')))
     }
     // 显隐不改变组件身份；仅安全回到根页后，因真实材质变更重建。
-    .key('hds_tabs_' + this.appliedTabsMaterial + '_' + this.appliedTabsRevision)
+    .key('hds_tabs_' + this.appliedTabsMaterial + '_' + this.appliedTabsStyle + '_' + this.appliedTabsRevision)
     .onAppear((): void => this.onTabsAppear())
     .barOverlap(this.immersiveTabs)
     .barBackgroundColor(this.immersiveTabs ? Color.Transparent : COLOR_CARD)
+    .barBackgroundEffect(this.tabsBackgroundEffect())
     .animationDuration(0)
     .scrollable(this.canSwipeRootTabs())
     .vertical(false)

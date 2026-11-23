@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { router, promptAction, curves, window, ComponentContent } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
@@ -18,8 +19,6 @@ import { ChannelControlCapsule } from '../components/ChannelControlCapsule';
 import { compatibleSheetOptions } from '../common/CompatibleMaterial';
 import { DetailGlassCapsule, DetailBarBackground } from '../components/DetailGlassCapsule';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_TEXT_HINT,
   COLOR_TEXT_TITLE,
   COLOR_TEXT_SECONDARY,
@@ -64,6 +63,7 @@ function detailCommentRefreshPlaceholder() {
 @Entry
 @Component
 struct ComicDetailPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State comic: ComicDetailViewModel | null = null;
   @State chapters: EpViewModel[] = [];
   @State recommendations: ComicViewModel[] = [];
@@ -115,6 +115,8 @@ struct ComicDetailPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('bika_animations') animationsOn: boolean = true;
+  @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   @StorageProp('bika_color_mode') colorMode: string = 'system';
   @StorageProp('system_color_mode') systemColorMode: string = 'light';
   @State lastReadOrder: number = 0;
@@ -898,7 +900,7 @@ detailHero() {
           .lineHeight(29)
         Text(this.comic.author)
           .fontSize(13)
-          .fontColor(this.comic.author === '未知作者' ? COLOR_TEXT_SECONDARY : COLOR_PRIMARY)
+          .fontColor(this.comic.author === '未知作者' ? COLOR_TEXT_SECONDARY : this.appearanceColors.primary)
           .maxLines(2)
           .enabled(this.comic.author !== '未知作者')
           .accessibilityText('搜索作者：' + this.comic.author)
@@ -907,7 +909,7 @@ detailHero() {
         Text((this.detailComplete ? (this.comic.finished ? '已完结' : '连载中') : '完结状态未知')
           + ' · ' + (this.chaptersComplete ? '共 ' + this.chapters.length + ' 话' : '已下载 ' + this.downloadedOrders.length + ' 话'))
           .fontSize(12)
-          .fontColor(this.comic.finished ? COLOR_TEXT_SECONDARY : COLOR_PRIMARY)
+          .fontColor(this.comic.finished ? COLOR_TEXT_SECONDARY : this.appearanceColors.primary)
         Text(this.detailComplete ? '观看 ' + this.comic.totalViews + ' · 收藏 ' + this.comic.totalLikes : '观看／收藏暂无数据')
           .fontSize(12)
           .fontColor(COLOR_TEXT_SECONDARY)
@@ -925,9 +927,9 @@ detailHero() {
 metadataSearchTag(value: string, kind: ComicSearchKind) {
   Text(value)
     .fontSize(12)
-    .fontColor(COLOR_PRIMARY)
+    .fontColor(this.appearanceColors.primary)
     .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-    .backgroundColor(COLOR_PRIMARY_TINT)
+    .backgroundColor(this.appearanceColors.tint)
     .borderRadius(10)
     .margin({ right: 8, bottom: 8 })
     .constraintSize({ maxWidth: '100%' })
@@ -949,8 +951,8 @@ detailTab() {
             Text(this.errorMsg).fontSize(14).fontColor(COLOR_TEXT_HINT)
             Button('重新加载', { type: ButtonType.Normal })
               .fontSize(13)
-              .fontColor(COLOR_PRIMARY)
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .fontColor(this.appearanceColors.primary)
+              .backgroundColor(this.appearanceColors.tint)
               .borderRadius(18)
               .height(36)
               .onClick((): void => { this.loadDetail(); })
@@ -964,7 +966,7 @@ detailTab() {
               Text('已下载 ' + this.downloadedOrders.length + ' 话')
                 .fontSize(12).fontColor(COLOR_TEXT_SECONDARY).layoutWeight(1)
               Button('重试', { type: ButtonType.Normal })
-                .fontSize(12).fontColor(COLOR_PRIMARY).backgroundColor(Color.Transparent)
+                .fontSize(12).fontColor(this.appearanceColors.primary).backgroundColor(Color.Transparent)
                 .enabled(!this.isLoading)
                 .onClick((): void => { this.loadDetail(); this.loadComments(); })
             }
@@ -981,10 +983,10 @@ detailTab() {
                 Row({ space: 5 }) {
                   SymbolGlyph($r('sys.symbol.heart'))
                     .fontSize(17)
-                    .fontColor([this.isLiked ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
+                    .fontColor([this.isLiked ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY])
                   Text(this.isLiked ? '已点赞' : '点赞')
                     .fontSize(13)
-                    .fontColor(this.isLiked ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+                    .fontColor(this.isLiked ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY)
                 }
               }
                 .height(36)
@@ -1065,7 +1067,7 @@ detailTab() {
           LoadingProgress()
             .width(36)
             .height(36)
-            .color(COLOR_PRIMARY)
+            .color(this.appearanceColors.primary)
             .margin({ top: 100, bottom: 100 })
         }
       }
@@ -1182,7 +1184,7 @@ chapterTab() {
       ListItem() {
         Column({ space: 10 }) {
           if (this.isLoading) {
-            LoadingProgress().width(28).height(28).color(COLOR_PRIMARY)
+            LoadingProgress().width(28).height(28).color(this.appearanceColors.primary)
           }
           Text(this.isLoading ? '章节加载中…' : this.usingLocalDetail ? '还没有下载章节'
             : (this.errorMsg.length > 0 ? this.errorMsg : '暂无章节'))
@@ -1216,9 +1218,9 @@ chapterTab() {
           } else if (this.readChapterOrders.indexOf(ep.order) >= 0) {
             Text('已读')
               .fontSize(11)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .backgroundColor(this.appearanceColors.tint)
               .borderRadius(8)
           }
           if (this.usingLocalDetail && !this.epDownloaded(ep.order)) {
@@ -1227,7 +1229,7 @@ chapterTab() {
           if (this.epDownloaded(ep.order)) {
             SymbolGlyph($r('sys.symbol.checkmark_circle'))
               .fontSize(16)
-              .fontColor([COLOR_PRIMARY])
+              .fontColor([this.appearanceColors.primary])
               .margin({ left: 8, right: 8 })
           }
           SymbolGlyph($r('sys.symbol.chevron_right'))
@@ -1264,7 +1266,7 @@ commentsRefreshIndicator() {
     LoadingProgress()
       .width(20)
       .height(20)
-      .color(COLOR_PRIMARY)
+      .color(this.appearanceColors.primary)
     Text(this.commentsRefreshing ? '正在刷新' : '下拉刷新')
       .fontSize(13)
       .fontColor(COLOR_TEXT_SECONDARY)
@@ -1293,7 +1295,7 @@ commentTab() {
                 LoadingProgress()
                   .width(28)
                   .height(28)
-                  .color(COLOR_PRIMARY)
+                  .color(this.appearanceColors.primary)
                 Text('评论加载中…')
                   .fontSize(13)
                   .fontColor(COLOR_TEXT_HINT)
@@ -1333,7 +1335,7 @@ commentTab() {
               LoadingProgress()
                 .width(16)
                 .height(16)
-                .color(COLOR_PRIMARY)
+                .color(this.appearanceColors.primary)
               Text('加载中…')
                 .fontSize(12)
                 .fontColor(COLOR_TEXT_HINT)
@@ -1431,7 +1433,7 @@ commentItem(comment: BikaComment) {
           if (comment._user?.level) {
             Text('LV.' + comment._user.level)
               .fontSize(10)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .margin({ left: 6 })
           }
         }
@@ -1449,17 +1451,17 @@ commentItem(comment: BikaComment) {
           if ((comment.totalComments ?? 0) > 0) {
             Text('展开回复 (' + comment.totalComments + ')')
               .fontSize(11)
-              .fontColor(COLOR_PRIMARY)
+              .fontColor(this.appearanceColors.primary)
               .onClick(() => this.toggleReplies(comment._id))
           }
           Blank()
           Row({ space: 3 }) {
             SymbolGlyph($r(comment.isLiked ? 'sys.symbol.heart_fill' : 'sys.symbol.heart'))
               .fontSize(14)
-              .fontColor([comment.isLiked ? COLOR_PRIMARY : COLOR_TEXT_HINT])
+              .fontColor([comment.isLiked ? this.appearanceColors.primary : COLOR_TEXT_HINT])
             Text('' + (comment.likesCount ?? 0))
               .fontSize(11)
-              .fontColor(comment.isLiked ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+              .fontColor(comment.isLiked ? this.appearanceColors.primary : COLOR_TEXT_HINT)
           }
             .onClick(() => this.onToggleCommentLike(comment._id, false))
         }
@@ -1480,7 +1482,7 @@ commentItem(comment: BikaComment) {
           LoadingProgress()
             .width(18)
             .height(18)
-            .color(COLOR_PRIMARY)
+            .color(this.appearanceColors.primary)
           Text('加载回复中…')
             .fontSize(12)
             .fontColor(COLOR_TEXT_HINT)
@@ -1507,7 +1509,7 @@ repliesBlock(replies: BikaComment[] | undefined) {
           Text(reply._user?.name ?? '匿名')
             .fontSize(12)
             .fontWeight(FontWeight.Bold)
-            .fontColor(COLOR_PRIMARY)
+            .fontColor(this.appearanceColors.primary)
           Text('：' + reply.content)
             .fontSize(12)
             .fontColor(COLOR_TEXT_TITLE)
@@ -1515,10 +1517,10 @@ repliesBlock(replies: BikaComment[] | undefined) {
           Row({ space: 3 }) {
             SymbolGlyph($r(reply.isLiked ? 'sys.symbol.heart_fill' : 'sys.symbol.heart'))
               .fontSize(12)
-              .fontColor([reply.isLiked ? COLOR_PRIMARY : COLOR_TEXT_HINT])
+              .fontColor([reply.isLiked ? this.appearanceColors.primary : COLOR_TEXT_HINT])
             Text('' + (reply.likesCount ?? 0))
               .fontSize(10)
-              .fontColor(reply.isLiked ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+              .fontColor(reply.isLiked ? this.appearanceColors.primary : COLOR_TEXT_HINT)
           }
             .onClick(() => this.onToggleCommentLike(reply._id, true))
         }
@@ -1536,7 +1538,7 @@ repliesBlock(replies: BikaComment[] | undefined) {
   }
     .width('100%')
     .padding({ left: 48, right: 4, top: 2, bottom: 4 })
-    .backgroundColor(COLOR_PRIMARY_TINT)
+    .backgroundColor(this.appearanceColors.tint)
     .borderRadius(12)
 }
 
@@ -1558,7 +1560,7 @@ detailTopActions() {
     Button({ type: ButtonType.Circle }) {
       SymbolGlyph($r('sys.symbol.bookmark'))
         .fontSize(20)
-        .fontColor([this.isFavourited ? COLOR_PRIMARY : COLOR_TEXT_TITLE])
+        .fontColor([this.isFavourited ? this.appearanceColors.primary : COLOR_TEXT_TITLE])
         .scale({ x: this.favScale, y: this.favScale })
     }
       .width(44).height(44)
@@ -1590,7 +1592,7 @@ detailTabButton(label: string, index: number) {
     .fontSize(15)
     .maxFontScale(1.3)
     .fontWeight(this.currentTab === index ? FontWeight.Bold : FontWeight.Medium)
-    .fontColor(this.currentTab === index ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+    .fontColor(this.currentTab === index ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY)
     .backgroundColor(Color.Transparent)
     .accessibilitySelected(this.currentTab === index)
     .clickEffect({ level: ClickEffectLevel.LIGHT, scale: this.animationsOn ? 0.97 : 1 })
@@ -1610,7 +1612,7 @@ detailTabCapsule() {
       .width('33.33%')
       .height(36)
       .borderRadius(18)
-      .backgroundColor(COLOR_PRIMARY_TINT)
+      .backgroundColor(this.appearanceColors.tint)
       .translate({ x: (this.currentTab * 100) + '%' })
       .animation({ duration: this.animationsOn ? 180 : 0, curve: Curve.EaseOut })
       .hitTestBehavior(HitTestMode.None)
@@ -1666,13 +1668,13 @@ detailReadAction() {
       Row({ space: 8 }) {
         SymbolGlyph($r('sys.symbol.book'))
           .fontSize(20)
-          .fontColor([COLOR_PRIMARY])
+          .fontColor([this.appearanceColors.primary])
         Text(this.lastReadOrder > 0 ? '继续阅读' : '开始阅读')
           .fontSize(16)
           .maxFontScale(1.3)
           .maxLines(1)
           .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_PRIMARY)
+          .fontColor(this.appearanceColors.primary)
         if (this.lastReadOrder > 0 && this.detailWidth - this.detailLeftInset - this.detailRightInset >= 340) {
           Text('第 ' + this.lastReadOrder + ' 话')
             .fontSize(12)
@@ -1690,13 +1692,13 @@ detailReadAction() {
       Row({ space: 8 }) {
         SymbolGlyph($r('sys.symbol.square_and_pencil'))
           .fontSize(20)
-          .fontColor([COLOR_PRIMARY])
+          .fontColor([this.appearanceColors.primary])
         Text('写评论')
           .fontSize(16)
           .maxFontScale(1.3)
           .maxLines(1)
           .fontWeight(FontWeight.Bold)
-          .fontColor(COLOR_PRIMARY)
+          .fontColor(this.appearanceColors.primary)
       }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -1876,7 +1878,7 @@ build() {
       onWillDismiss: (): void => {
         this.showDetailSheet = false;
       }
-    }))
+    }, true, this.materialStyle, this.materialLevel))
     .width('100%')
     .height('100%')
 }
@@ -1913,8 +1915,8 @@ commentSheet() {
       // 发送改为右下角紧凑胶囊（原先通栏 100% 宽 + 40 高，只承载两个控件时比例过重）
       Button(this.commentSending ? '发送中…' : '发送')
         .fontSize(15)
-        .fontColor(COLOR_WHITE)
-        .backgroundColor(this.commentSending ? COLOR_TEXT_DISABLED : COLOR_PRIMARY)
+        .fontColor(this.commentSending ? COLOR_WHITE : this.appearanceColors.onPrimary)
+        .backgroundColor(this.commentSending ? COLOR_TEXT_DISABLED : this.appearanceColors.primary)
         .borderRadius(19)
         .width(96)
         .height(38)

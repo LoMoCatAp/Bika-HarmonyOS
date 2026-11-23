@@ -49,19 +49,19 @@ I built this project to learn ArkTS and ArkUI. If you find it helpful, consider 
 
 ## Release notes
 
-**v1.5.2 · Tablet Reading and Page Curl**
+**v1.5.3 · Appearance and App Icons**
 
-1. Added Auto, Single Page, and Double Page layouts to the reader.
-2. Added a page-curl animation option for horizontal reading.
-3. Swipe left or right anywhere in the reading area, or tap either side to turn pages. The reader now shows a message when you try to go past the first or last page of a chapter.
-4. Reader settings are grouped into Reading and Display tabs. You can show the time and battery level when the reader controls are hidden.
-5. Improved the feedback when favoriting or liking a comic on its details page.
+- Added an Appearance page with preset and custom accent colors.
+- Added more app icons. Tap to apply and long-press to switch variants.
+- Added five panel thickness levels for immersive materials.
+- Fixed volume keys sometimes turning pages after leaving the reader. Clearing the image cache keeps chapter update badges.
+- Fixed custom DNS routes failing to take effect after restart and fallback addresses missing from the direct connection list.
 
 This release targets **API 26**. Glass effects on toasts and system dialogs require **HarmonyOS 7.0.0 or later**.
 
 Sign the HAP before installing it. To keep your login and local data when upgrading, use the same signing certificate as your current installation. 
 
-[Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.2/Bika-HarmonyOS-1.5.2.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.2)
+[Download HAP](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/download/v1.5.3/Bika-HarmonyOS-1.5.3.hap) · [GitHub release](https://github.com/LoMoCatAp/Bika-HarmonyOS/releases/tag/v1.5.3)
 
 In the app, open Settings → About → Changelog to see the version history.
 
@@ -140,7 +140,8 @@ In the app, open Settings → About → Changelog to see the version history.
 
 | Version | Highlights |
 |---|---|
-| **v1.5.2** | Auto, Single Page, and Double Page layouts, page curl, full-area gestures, and chapter boundary hints. Reader settings tabs and improved favorite and like feedback. |
+| **v1.5.3** | Appearance settings, custom accent colors, switchable app icons, and five panel thickness levels. Reader, cache, and DNS fixes. |
+| v1.5.2 | Auto, Single Page, and Double Page layouts, page curl, full-area gestures, and chapter boundary hints. Reader settings tabs and improved favorite and like feedback. |
 | v1.5.1 | Fixed offline access to details and chapters. Saved comic metadata and chapter lists, and improved offline navigation and messages. |
 | v1.5.0 | Favorite update notifications, chapter badges, metadata search, and secure credential migration. Reader and navigation fixes. |
 | v1.4.7 | Glass effects across the app and refined page edges. |

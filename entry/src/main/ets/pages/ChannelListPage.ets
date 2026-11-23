@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { compatibleSheetOptions } from '../common/CompatibleMaterial';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
 import { navigationBlurTitleBar } from '../common/NavigationBlur';
@@ -10,8 +11,6 @@ import { ChannelControlCapsule } from '../components/ChannelControlCapsule';
 import { NetImage } from '../components/NetImage';
 import { publishContinuationRoute, ROUTE_CHANNEL_LIST } from '../common/ContinuationState';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_BG,
   COLOR_CARD,
   COLOR_DIVIDER,
@@ -20,7 +19,6 @@ import {
   COLOR_TEXT_HINT,
   COLOR_TEXT_SECONDARY,
   COLOR_TEXT_DISABLED,
-  COLOR_WHITE,
   SORT_OPTIONS,
   SortOption,
   ChannelKind,
@@ -49,6 +47,7 @@ function channelRefreshPlaceholder() {
 @Entry
 @Component
 struct ChannelListPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State label: string = '';
   @State kind: ChannelKind = 'topic';
   @State comics: ComicViewModel[] = [];
@@ -79,6 +78,8 @@ struct ChannelListPage {
     '歐美', 'Cosplay', '重口地帶'
   ];
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   private apiService: ApiService = ApiService.getInstance();
   private listScroller: Scroller = new Scroller();
   private knightsScroller: Scroller = new Scroller();
@@ -322,7 +323,7 @@ struct ChannelListPage {
       LoadingProgress()
         .width(20)
         .height(20)
-        .color(COLOR_PRIMARY)
+        .color(this.appearanceColors.primary)
       Text(this.refreshing ? '正在刷新' : '下拉刷新')
         .fontSize(13)
         .fontColor(COLOR_TEXT_SECONDARY)
@@ -403,8 +404,8 @@ struct ChannelListPage {
           .padding({ left: 24, right: 24 })
         Button('重新加载', { type: ButtonType.Normal })
           .fontSize(13)
-          .fontColor(COLOR_PRIMARY)
-          .backgroundColor(COLOR_PRIMARY_TINT)
+          .fontColor(this.appearanceColors.primary)
+          .backgroundColor(this.appearanceColors.tint)
           .borderRadius(18)
           .height(36)
           .onClick(() => this.load(true))
@@ -415,7 +416,7 @@ struct ChannelListPage {
     } else if (this.kind === 'leaderboard' && this.leaderboardTab === 3) {
       if (this.knights.length === 0 && this.isLoading) {
         Column() {
-          LoadingProgress().width(40).height(40).color(COLOR_PRIMARY)
+          LoadingProgress().width(40).height(40).color(this.appearanceColors.primary)
         }
         .width('100%')
         .padding({ top: this.controlsHeight() + 60 })
@@ -429,7 +430,7 @@ struct ChannelListPage {
                 Text(String(index + 1))
                   .fontSize(15)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor(index < 3 ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+                  .fontColor(index < 3 ? this.appearanceColors.primary : COLOR_TEXT_HINT)
                   .width(36)
                   .textAlign(TextAlign.Center)
 
@@ -493,7 +494,7 @@ struct ChannelListPage {
       }
     } else if (this.comics.length === 0 && this.isLoading) {
       Column() {
-        LoadingProgress().width(40).height(40).color(COLOR_PRIMARY)
+        LoadingProgress().width(40).height(40).color(this.appearanceColors.primary)
       }
       .width('100%')
       .padding({ top: this.controlsHeight() + 60 })
@@ -511,8 +512,8 @@ struct ChannelListPage {
           .fontColor(COLOR_TEXT_HINT)
         Button('重新加载', { type: ButtonType.Normal })
           .fontSize(13)
-          .fontColor(COLOR_PRIMARY)
-          .backgroundColor(COLOR_PRIMARY_TINT)
+          .fontColor(this.appearanceColors.primary)
+          .backgroundColor(this.appearanceColors.tint)
           .borderRadius(18)
           .height(36)
           .onClick(() => this.load(true))
@@ -590,7 +591,7 @@ struct ChannelListPage {
                 LoadingProgress()
                   .width(16)
                   .height(16)
-                  .color(COLOR_PRIMARY)
+                  .color(this.appearanceColors.primary)
                 Text('加载中…')
                   .fontSize(12)
                   .fontColor(COLOR_TEXT_SECONDARY)
@@ -626,7 +627,7 @@ struct ChannelListPage {
         onWillDismiss: (): void => {
           this.showFilter = false;
         }
-      }))
+      }, true, this.materialStyle, this.materialLevel))
       .width('100%')
       .height('100%')
       .backgroundColor(COLOR_BG)
@@ -700,19 +701,19 @@ struct ChannelListPage {
                 Row() {
                   Text(opt)
                     .fontSize(15)
-                    .fontColor(this.isTopicSelected(opt) ? COLOR_PRIMARY : COLOR_TEXT_TITLE)
+                    .fontColor(this.isTopicSelected(opt) ? this.appearanceColors.primary : COLOR_TEXT_TITLE)
                     .fontWeight(this.isTopicSelected(opt) ? FontWeight.Medium : FontWeight.Normal)
                     .layoutWeight(1)
                   if (this.isTopicSelected(opt)) {
                     SymbolGlyph($r('sys.symbol.checkmark'))
                       .fontSize(18)
-                      .fontColor([COLOR_PRIMARY])
+                      .fontColor([this.appearanceColors.primary])
                   }
                 }
                 .width('100%')
                 .height(48)
                 .padding({ left: 14, right: 14 })
-                .backgroundColor(this.isTopicSelected(opt) ? COLOR_PRIMARY_TINT : Color.Transparent)
+                .backgroundColor(this.isTopicSelected(opt) ? this.appearanceColors.tint : Color.Transparent)
                 .onClick(() => this.toggleTopic(opt, this.filterSubPanel === 'excludeTopics'))
               }
               .width('100%')
@@ -747,7 +748,7 @@ struct ChannelListPage {
         .layoutWeight(1)
       Text(count > 0 ? '已选 ' + count : '全部')
         .fontSize(13)
-        .fontColor(count > 0 ? COLOR_PRIMARY : COLOR_TEXT_HINT)
+        .fontColor(count > 0 ? this.appearanceColors.primary : COLOR_TEXT_HINT)
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
         .fontColor([COLOR_TEXT_DISABLED])
@@ -772,9 +773,9 @@ struct ChannelListPage {
         ForEach(options, (opt: string) => {
           Text(opt)
             .fontSize(13)
-            .fontColor(this.currentFilterValue(kind) === opt ? COLOR_WHITE : COLOR_TEXT_TITLE)
+            .fontColor(this.currentFilterValue(kind) === opt ? this.appearanceColors.onPrimary : COLOR_TEXT_TITLE)
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.currentFilterValue(kind) === opt ? COLOR_PRIMARY : COLOR_CARD)
+            .backgroundColor(this.currentFilterValue(kind) === opt ? this.appearanceColors.primary : COLOR_CARD)
             .borderRadius(14)
             .margin({ right: 8, bottom: 8 })
             .onClick(() => this.setFilterValue(kind, opt))

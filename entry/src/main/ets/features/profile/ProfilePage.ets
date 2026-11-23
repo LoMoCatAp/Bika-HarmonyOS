@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { router, promptAction } from '@kit.ArkUI';
 import { showImmersiveToast, showImmersiveDialog } from '../../common/ImmersiveToast';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -17,10 +18,12 @@ import { ImageLoader } from '../../common/ImageLoader';
 import { WindowHelper } from '../../common/WindowHelper';
 import { ApiRouteManager } from '../../network/ApiRouteManager';
 import { DnsService, DnsIpEntry } from '../../network/DnsService';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_PRIMARY_TINT_2, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_DIVIDER, COLOR_WHITE, COLOR_LOGOUT_TEXT, SORT_OPTIONS, SortOption } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_DIVIDER, COLOR_LOGOUT_TEXT, SORT_OPTIONS, SortOption } from '../../common/Constants';
 import { HdsTabs, HdsNavigation } from '@kit.UIDesignKit';
 import { ProfileFavouritesPage, ProfileHistoryPage, ProfileDownloadsPage, ProfileNotificationsPage, ProfileCommentsPage } from './ProfileLibraryPages';
 import { ProfileSettingsPage } from './ProfileSettingsPage';
+import { ProfileAppearancePage } from './ProfileAppearancePage';
+import { syncAccentColors } from '../../common/AppearanceAccent';
 import { ProfileAboutPage } from './ProfileAboutPage';
 import { ProfileStoragePage } from './ProfileStoragePage';
 import { ProfileDnsPage } from './ProfileDnsPage';
@@ -39,16 +42,13 @@ interface MenuItemData {
 
 @Component
 export struct ProfilePage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @StorageProp(CONTINUATION_PROFILE_SUBPAGE_KEY) visibleSubpage: string = '';
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
   /** 登录态是否已确定：未置位前不渲染「未登录」这类确定性文案 */
   @StorageProp('auth_resolved') authResolved: boolean = false;
-  // 主题强调色：哔咔粉
-  private accentColor: ResourceColor = $r('app.color.bika_primary');
-  /** 强调色 hex（沉浸光感点光用） */
-  private accentHex: string = '#FF7CA8';
   @State profileError: string = '';
   @State userName: string = '';
   @State avatarUrl: string = '';
@@ -61,6 +61,7 @@ export struct ProfilePage {
   private cache: CacheManager | null = null;
   private stack: NavPathStack = new NavPathStack();
   private settingsScroller: Scroller = new Scroller();
+  private appearanceScroller: Scroller = new Scroller();
   private aboutScroller: Scroller = new Scroller();
   private storageScroller: Scroller = new Scroller();
   private dnsScroller: Scroller = new Scroller();
@@ -147,6 +148,7 @@ export struct ProfilePage {
   @State aboutSheetKind: number = 0;
   /** 沉浸光感档位（与 IndexPage 页签联动） */
   @StorageLink('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   /** 动画效果开关 */
   @StorageLink('bika_animations') animationsEnabled: boolean = true;
   /** 使用系统代理（规则模式 VPN） */
@@ -291,7 +293,7 @@ export struct ProfilePage {
       message: '将清除章节图片列表、列表页与分类缓存，不影响已下载的漫画。',
       buttons: [
         { text: '取消', color: '#666666' },
-        { text: '清理', color: '#FF7CA8' }
+        { text: '清理', color: this.appearanceColors.primary }
       ]
     }).then((res: promptAction.ShowDialogSuccessResponse) => {
       if (res.index === 1) {
@@ -604,7 +606,7 @@ export struct ProfilePage {
 
   /** 打开子页面：底部导航动画收缩隐藏 */
   private openSubpage(name: string): void {
-    if (!this.isLoggedIn && name !== 'settings' && name !== 'downloads' && name !== 'about' && name !== 'storage' && name !== 'dns' && name !== 'blocked' && name !== 'profile_edit' && name !== 'account') {
+    if (!this.isLoggedIn && name !== 'settings' && name !== 'appearance' && name !== 'downloads' && name !== 'about' && name !== 'storage' && name !== 'dns' && name !== 'blocked' && name !== 'profile_edit' && name !== 'account') {
       router.pushUrl({ url: 'pages/LoginPage' });
       return;
     }
@@ -856,6 +858,7 @@ export struct ProfilePage {
   private setColorMode(mode: string): void {
     // StorageLink 赋值即同步 AppStorage，Menu 下拉显示实时刷新
     this.colorMode = mode;
+    syncAccentColors(undefined, mode);
     CacheManager.getInstance().then(c => c.saveSetting('color_mode', mode));
     let ctx = getContext(this).getApplicationContext();
     if (mode === 'dark') {
@@ -941,10 +944,10 @@ export struct ProfilePage {
             if (this.userTitle.length > 0) {
               Text(this.userTitle)
                 .fontSize(10)
-                .fontColor(COLOR_PRIMARY)
+                .fontColor(this.appearanceColors.primary)
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .backgroundColor(COLOR_PRIMARY_TINT)
-                .border({ width: 1, color: COLOR_PRIMARY })
+                .backgroundColor(this.appearanceColors.tint)
+                .border({ width: 1, color: this.appearanceColors.primary })
                 .borderRadius(4)
             }
           }
@@ -955,7 +958,7 @@ export struct ProfilePage {
         .layoutWeight(1)
         SymbolGlyph($r('sys.symbol.square_and_pencil'))
           .fontSize(20)
-          .fontColor([COLOR_PRIMARY])
+          .fontColor([this.appearanceColors.primary])
           .padding(6)
           .onClick(() => {
             this.openSubpage('profile_edit');
@@ -969,7 +972,7 @@ export struct ProfilePage {
           .fontSize(11)
           .fontColor(COLOR_TEXT_SECONDARY)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .backgroundColor(COLOR_PRIMARY_TINT_2)
+          .backgroundColor(this.appearanceColors.softTint)
           .borderRadius(4)
         Text(this.slogan.length > 0 ? this.slogan : '这个人很懒，什么都没写')
           .fontSize(12)
@@ -981,8 +984,8 @@ export struct ProfilePage {
 
         Button(this.punched ? '已签到' : '签到', { type: ButtonType.Normal })
           .fontSize(12)
-          .fontColor(this.punched ? COLOR_TEXT_SECONDARY : COLOR_WHITE)
-          .backgroundColor(this.punched ? COLOR_PRIMARY_TINT : COLOR_PRIMARY)
+          .fontColor(this.punched ? COLOR_TEXT_SECONDARY : this.appearanceColors.onPrimary)
+          .backgroundColor(this.punched ? this.appearanceColors.tint : this.appearanceColors.primary)
           .borderRadius(14)
           .height(30)
           .padding({ left: 14, right: 14 })
@@ -1063,6 +1066,7 @@ export struct ProfilePage {
       case 'notifications': return '通知';
       case 'comments': return '我的评论';
       case 'settings': return '设置';
+      case 'appearance': return '外观';
       case 'about': return '关于';
       case 'storage': return '存储与空间';
       case 'dns': return 'DNS 直连与分流优化';
@@ -1111,8 +1115,8 @@ export struct ProfilePage {
                   if (this.authResolved) {
                     Button('登录', { type: ButtonType.Normal })
                       .fontSize(14)
-                      .fontColor(COLOR_WHITE)
-                      .backgroundColor(COLOR_PRIMARY)
+                      .fontColor(this.appearanceColors.onPrimary)
+                      .backgroundColor(this.appearanceColors.primary)
                       .borderRadius(18)
                       .height(36)
                       .padding({ left: 20, right: 20 })
@@ -1183,7 +1187,7 @@ export struct ProfilePage {
           this.aboutEntered = false;
           this.aboutSheetKind = 0;
         }
-      }))
+      }, true, this.materialStyle, this.materialLevel))
 
       if (this.subpageHeaderTitle().length > 0) {
         GlassNavigationHeader({
@@ -1228,6 +1232,8 @@ export struct ProfilePage {
       this.commentsDestination()
     } else if (name === 'settings') {
       this.settingsDestination()
+    } else if (name === 'appearance') {
+      this.appearanceDestination()
     } else if (name === 'about') {
       this.aboutDestination()
     } else if (name === 'storage') {
@@ -1342,8 +1348,6 @@ export struct ProfilePage {
   settingsDestination() {
     ProfileSettingsPage({
       settingsScroller: this.settingsScroller,
-      accentColor: this.accentColor,
-      selectColorModeOption: (index: number): void => this.selectColorModeOption(index),
       autoPunch: $autoPunch,
       maybeAutoPunch: (): Promise<void> => this.maybeAutoPunch(),
       followUpdates: $followUpdates,
@@ -1365,12 +1369,21 @@ export struct ProfilePage {
     })
   }
 
+  @Builder
+  appearanceDestination() {
+    ProfileAppearancePage({
+      scroller: this.appearanceScroller,
+      subpageContentTop: this.subpageContentTop,
+      selectColorModeOption: (index: number): void => this.selectColorModeOption(index),
+      closeSubpage: (): void => this.closeSubpage()
+    })
+  }
+
   /** 关于子页 */
   @Builder
   aboutDestination() {
     ProfileAboutPage({
       aboutScroller: this.aboutScroller,
-      accentColor: this.accentColor,
       openChangelog: (): void => this.openChangelog(),
       openPrivacyPolicy: (): void => this.openPrivacyPolicy(),
       openExternalLink: (url: string): void => this.openExternalLink(url),
@@ -1402,7 +1415,6 @@ export struct ProfilePage {
       dnsScroller: this.dnsScroller,
       dnsFetching: $dnsFetching,
       dnsTesting: $dnsTesting,
-      accentColor: this.accentColor,
       dnsApiIps: $dnsApiIps,
       dnsImageIps: $dnsImageIps,
       fetchAndTestDns: (): Promise<void> => this.fetchAndTestDns(),

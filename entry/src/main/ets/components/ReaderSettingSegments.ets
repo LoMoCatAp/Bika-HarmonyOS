@@ -1,9 +1,11 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { CapsuleSegmentButtonV2, ColorMetrics, SegmentButtonV2Items, TabSegmentButtonV2 } from '@kit.ArkUI';
-import { COLOR_CARD, COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_TEXT_TITLE } from '../common/Constants';
-import { noImmersiveMaterial, supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
+import { COLOR_CARD, COLOR_TEXT_TITLE } from '../common/Constants';
+import { compatiblePopupMaterial, noImmersiveMaterial, supportsComponentImmersiveMaterial } from '../common/CompatibleMaterial';
 
 @Component
 export struct ReaderSettingSegments {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   items: SegmentButtonV2Items = new SegmentButtonV2Items([]);
   @Prop selected: number = 0;
   @Prop groupLabel: string = '';
@@ -17,8 +19,8 @@ export struct ReaderSettingSegments {
         items: this.items,
         selectedIndex: this.selected,
         $selectedIndex: (index: number): void => this.onSelect(index),
-        itemSelectedFontColor: ColorMetrics.resourceColor(COLOR_PRIMARY),
-        itemSelectedBackgroundColor: ColorMetrics.resourceColor(COLOR_PRIMARY_TINT),
+        itemSelectedFontColor: ColorMetrics.resourceColor(this.appearanceColors.primary),
+        itemSelectedBackgroundColor: ColorMetrics.resourceColor(this.appearanceColors.tint),
         enableStateAnimation: this.animationsOn,
         backgroundSystemMaterial: noImmersiveMaterial()
       })
@@ -29,8 +31,8 @@ export struct ReaderSettingSegments {
         items: this.items,
         selectedIndex: this.selected,
         $selectedIndex: (index: number): void => this.onSelect(index),
-        itemSelectedFontColor: ColorMetrics.resourceColor(COLOR_PRIMARY),
-        itemSelectedBackgroundColor: ColorMetrics.resourceColor(COLOR_PRIMARY_TINT),
+        itemSelectedFontColor: ColorMetrics.resourceColor(this.appearanceColors.primary),
+        itemSelectedBackgroundColor: ColorMetrics.resourceColor(this.appearanceColors.tint),
         enableStateAnimation: this.animationsOn,
         backgroundSystemMaterial: noImmersiveMaterial()
       })
@@ -42,6 +44,8 @@ export struct ReaderSettingSegments {
 
 @Component
 export struct ReaderSettingSelect {
+  @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   @Prop label: string = '';
   @Prop options: SelectOption[] = [];
   @Prop selected: number = 0;
@@ -53,7 +57,7 @@ export struct ReaderSettingSelect {
       Select(this.options)
         .selected(this.selected)
         .value(this.options[this.selected]?.value ?? '')
-        .menuSystemMaterial(supportsComponentImmersiveMaterial() ? undefined : noImmersiveMaterial())
+        .menuSystemMaterial(compatiblePopupMaterial(undefined, this.materialStyle, this.materialLevel) ?? noImmersiveMaterial())
         .menuBackgroundColor(supportsComponentImmersiveMaterial() ? undefined : COLOR_CARD)
         .menuBackgroundBlurStyle(supportsComponentImmersiveMaterial() ? undefined : BlurStyle.NONE)
         .height(44)
@@ -67,6 +71,7 @@ export struct ReaderSettingSelect {
 
 @Component
 export struct ReaderSettingToggle {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @Prop label: string = '';
   @Prop checked: boolean = false;
   onChange: (checked: boolean) => void = (_checked: boolean): void => {};
@@ -75,7 +80,7 @@ export struct ReaderSettingToggle {
     Row({ space: 12 }) {
       Text(this.label).fontSize(15).fontColor(COLOR_TEXT_TITLE).layoutWeight(1)
       Toggle({ type: ToggleType.Switch, isOn: this.checked })
-        .selectedColor(COLOR_PRIMARY)
+        .selectedColor(this.appearanceColors.primary)
         .accessibilityText(this.label)
         .onChange((checked: boolean): void => this.onChange(checked))
     }

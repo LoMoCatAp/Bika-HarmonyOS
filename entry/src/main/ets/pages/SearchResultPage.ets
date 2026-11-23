@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { GlassNavigationHeader } from '../components/GlassNavigationHeader';
 import { navigationBlurTitleBar } from '../common/NavigationBlur';
 import { router } from '@kit.ArkUI';
@@ -8,8 +9,6 @@ import { ComicViewModel, BikaComicSummary, ComicSearchKind, normalizeComicSearch
 import { ComicCard } from '../components/ComicCard';
 import { publishContinuationRoute, ROUTE_SEARCH_RESULT } from '../common/ContinuationState';
 import {
-  COLOR_PRIMARY,
-  COLOR_PRIMARY_TINT,
   COLOR_BG,
   COLOR_TEXT_HINT,
   COLOR_TEXT_SECONDARY,
@@ -29,6 +28,7 @@ interface SearchResultParams {
 @Entry
 @Component
 struct SearchResultPage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @State keyword: string = '';
   @State searchKind: ComicSearchKind = 'keyword';
   @State results: ComicViewModel[] = [];
@@ -167,7 +167,7 @@ struct SearchResultPage {
         if (this.results.length === 0) {
           Column({ space: 12 }) {
             if (this.isLoading) {
-              LoadingProgress().width(32).height(32).color(COLOR_PRIMARY)
+              LoadingProgress().width(32).height(32).color(this.appearanceColors.primary)
             } else {
               Text(this.errorMsg.length > 0 ? this.errorMsg : this.hasMore ? '当前页暂无可展示的漫画' : '没有找到相关漫画')
                 .fontSize(14)
@@ -176,14 +176,14 @@ struct SearchResultPage {
               if (this.errorMsg.length > 0) {
                 Button('重新加载', { type: ButtonType.Capsule })
                   .fontSize(13)
-                  .fontColor(COLOR_PRIMARY)
-                  .backgroundColor(COLOR_PRIMARY_TINT)
+                  .fontColor(this.appearanceColors.primary)
+                  .backgroundColor(this.appearanceColors.tint)
                   .height(36)
                   .padding({ left: 16, right: 16 })
                   .onClick((): void => { this.doSearch(this.currentPage === 0); })
               } else if (this.hasMore) {
                 Button('继续加载', { type: ButtonType.Capsule })
-                  .fontSize(13).fontColor(COLOR_PRIMARY).backgroundColor(COLOR_PRIMARY_TINT)
+                  .fontSize(13).fontColor(this.appearanceColors.primary).backgroundColor(this.appearanceColors.tint)
                   .height(36).padding({ left: 16, right: 16 })
                   .onClick((): void => { this.doSearch(false); })
               }
@@ -211,7 +211,7 @@ struct SearchResultPage {
           .cachedCount(3, true)
           if (this.isLoading) {
             Row({ space: 6 }) {
-              LoadingProgress().width(16).height(16).color(COLOR_PRIMARY)
+              LoadingProgress().width(16).height(16).color(this.appearanceColors.primary)
               Text('加载中…').fontSize(12).fontColor(COLOR_TEXT_SECONDARY)
             }
             .width('100%')
@@ -219,14 +219,14 @@ struct SearchResultPage {
           } else if (this.errorMsg.length > 0) {
             Button('加载失败，点击重试', { type: ButtonType.Capsule })
               .fontSize(13)
-              .fontColor(COLOR_PRIMARY)
-              .backgroundColor(COLOR_PRIMARY_TINT)
+              .fontColor(this.appearanceColors.primary)
+              .backgroundColor(this.appearanceColors.tint)
               .height(36)
               .padding({ left: 16, right: 16 })
               .onClick((): void => { this.doSearch(false); })
           } else if (this.hasMore) {
             Button('加载更多', { type: ButtonType.Capsule })
-              .fontSize(13).fontColor(COLOR_PRIMARY).backgroundColor(COLOR_PRIMARY_TINT)
+              .fontSize(13).fontColor(this.appearanceColors.primary).backgroundColor(this.appearanceColors.tint)
               .height(36).padding({ left: 16, right: 16 })
               .onClick((): void => { this.doSearch(false); })
           }

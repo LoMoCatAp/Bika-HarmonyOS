@@ -26,6 +26,12 @@ interface FollowChapterState {
   snapshots: FollowChapterSnapshot[];
 }
 
+export function isImageCacheKey(key: string): boolean {
+  return (key.startsWith('chapter_') && !key.startsWith('chapter_updates_'))
+    || key.startsWith('comics_')
+    || key === 'categories';
+}
+
 /**
  * 本地缓存管理器
  * 普通缓存使用 Preferences，登录凭据使用 Asset Store Kit。
@@ -325,7 +331,7 @@ export class CacheManager {
       let all = this.prefs.getAllSync();
       let keys = Object.keys(all);
       for (let k of keys) {
-        if (k.startsWith('chapter_') || k.startsWith('comics_') || k === 'categories') {
+        if (isImageCacheKey(k)) {
           this.prefs.deleteSync(k);
           count++;
         }

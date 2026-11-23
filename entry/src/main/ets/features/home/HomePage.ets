@@ -1,3 +1,4 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../../common/AppearanceAccent';
 import { router, display, ComponentContent } from '@kit.ArkUI';
 import { showImmersiveToast } from '../../common/ImmersiveToast';
 import { ApiService } from '../../network/ApiService';
@@ -7,7 +8,7 @@ import { DetailGlassCapsule } from '../../components/DetailGlassCapsule';
 import { navigationBlurStyle } from '../../common/NavigationBlur';
 import { CacheManager } from '../../common/CacheManager';
 import { compatibleSheetOptions } from '../../common/CompatibleMaterial';
-import { COLOR_PRIMARY, COLOR_PRIMARY_TINT, COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, COLOR_WHITE, DEFAULT_CHANNELS, BikaChannel, adaptiveChannelColumns } from '../../common/Constants';
+import { COLOR_BG, COLOR_TEXT_SECONDARY, COLOR_TEXT_HINT, COLOR_TEXT_DISABLED, COLOR_TEXT_TITLE, COLOR_CARD, COLOR_PLACEHOLDER, DEFAULT_CHANNELS, BikaChannel, adaptiveChannelColumns } from '../../common/Constants';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 
 @Builder
@@ -17,6 +18,7 @@ function homeRefreshPlaceholder() {
 
 @Component
 export struct HomePage {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   /** 由根页协调底栏收起与频道路由，避免频道与子页显隐各走一套。 */
   onOpenChannel: (label: string, kind: string) => void = (): void => {};
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
@@ -25,6 +27,8 @@ export struct HomePage {
   @StorageProp('isLoggedIn') @Watch('onHomeAuthChanged') isLoggedIn: boolean = false;
   @StorageProp('avatarUrl') avatarUrl: string = '';
   @StorageProp('bika_material_rev') materialRev: number = 0;
+  @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   /** 频道自定义：顺序与隐藏 */
   @State channelOrder: string[] = [];
   @State channelColumns: string = adaptiveChannelColumns(0);
@@ -190,7 +194,7 @@ export struct HomePage {
           .layoutWeight(1)
         Text('恢复默认')
           .fontSize(13)
-          .fontColor(COLOR_PRIMARY)
+          .fontColor(this.appearanceColors.primary)
           .onClick(() => this.resetChannels())
       }
       .width('100%')
@@ -221,7 +225,7 @@ export struct HomePage {
                 .padding(6)
                 .onClick(() => this.moveChannel(index, 1))
               Toggle({ type: ToggleType.Switch, isOn: this.channelHidden.indexOf(label) < 0 })
-                .selectedColor(COLOR_PRIMARY)
+                .selectedColor(this.appearanceColors.primary)
                 .onChange((isOn: boolean) => {
                   this.toggleChannelHidden(label);
                 })
@@ -341,22 +345,22 @@ export struct HomePage {
   guestChannel() {
     Column({ space: 12 }) {
       Stack() {
-        Circle().width(172).height(172).fill(COLOR_PRIMARY_TINT)
-        Circle().width(18).height(18).fill(COLOR_PRIMARY).opacity(0.35)
+        Circle().width(172).height(172).fill(this.appearanceColors.tint)
+        Circle().width(18).height(18).fill(this.appearanceColors.primary).opacity(0.35)
           .translate({ x: 78, y: -60 })
-        Circle().width(10).height(10).fill(COLOR_PRIMARY).opacity(0.5)
+        Circle().width(10).height(10).fill(this.appearanceColors.primary).opacity(0.5)
           .translate({ x: -82, y: 42 })
         Column() {}
-          .width(118).height(144).backgroundColor(COLOR_PRIMARY).opacity(0.25)
+          .width(118).height(144).backgroundColor(this.appearanceColors.primary).opacity(0.25)
           .borderRadius(18).rotate({ angle: -14 }).translate({ x: -8, y: 2 })
         Column({ space: 12 }) {
-          Text('Bika').fontSize(25).fontWeight(FontWeight.Bold).fontColor(COLOR_PRIMARY)
-          Row().width(54).height(4).backgroundColor(COLOR_PRIMARY_TINT).borderRadius(2)
-          Row().width(38).height(4).backgroundColor(COLOR_PRIMARY_TINT).borderRadius(2)
+          Text('Bika').fontSize(25).fontWeight(FontWeight.Bold).fontColor(this.appearanceColors.primary)
+          Row().width(54).height(4).backgroundColor(this.appearanceColors.tint).borderRadius(2)
+          Row().width(38).height(4).backgroundColor(this.appearanceColors.tint).borderRadius(2)
         }
         .width(118).height(144).justifyContent(FlexAlign.Center)
         .backgroundColor(COLOR_CARD).borderRadius(18)
-        .border({ width: 2, color: COLOR_PRIMARY_TINT }).rotate({ angle: 8 })
+        .border({ width: 2, color: this.appearanceColors.tint }).rotate({ angle: 8 })
       }
       .width(208).height(200)
       .accessibilityLevel('no')
@@ -365,15 +369,15 @@ export struct HomePage {
       Text('登录后可同步收藏与阅读进度')
         .fontSize(14).fontColor(COLOR_TEXT_SECONDARY).textAlign(TextAlign.Center)
       Row({ space: 8 }) {
-        Text('立即登录').fontSize(15).fontWeight(FontWeight.Medium).fontColor(COLOR_WHITE)
-        SymbolGlyph($r('sys.symbol.arrow_right')).fontSize(16).fontColor([COLOR_WHITE])
+        Text('立即登录').fontSize(15).fontWeight(FontWeight.Medium).fontColor(this.appearanceColors.onPrimary)
+        SymbolGlyph($r('sys.symbol.arrow_right')).fontSize(16).fontColor([this.appearanceColors.onPrimary])
       }
       .height(44).padding({ left: 24, right: 24 }).borderRadius(22)
-      .backgroundColor(COLOR_PRIMARY).margin({ top: 10 })
+      .backgroundColor(this.appearanceColors.primary).margin({ top: 10 })
     }
     .width('100%')
     .padding({ top: 30, bottom: 32, left: 20, right: 20 })
-    .linearGradient({ angle: 160, colors: [[COLOR_PRIMARY_TINT, 0], [COLOR_CARD, 0.7]] })
+    .linearGradient({ angle: 160, colors: [[this.appearanceColors.tint, 0], [COLOR_CARD, 0.7]] })
     .borderRadius(28)
     .scale({ x: this.pressedChannel === '__guest_login__' ? 0.97 : 1,
       y: this.pressedChannel === '__guest_login__' ? 0.97 : 1 })
@@ -392,7 +396,7 @@ export struct HomePage {
   @Builder
   refreshHeader() {
     Row({ space: 8 }) {
-      LoadingProgress().width(22).height(22).color(COLOR_PRIMARY)
+      LoadingProgress().width(22).height(22).color(this.appearanceColors.primary)
       Text(this.refreshing ? '正在刷新' : (this.refreshPullOffset >= 64 ? '松开刷新' : '下拉刷新'))
         .fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
     }
@@ -533,6 +537,6 @@ export struct HomePage {
       onWillDismiss: (): void => {
         this.showChannelEdit = false;
       }
-    }))
+    }, true, this.materialStyle, this.materialLevel))
   }
 }

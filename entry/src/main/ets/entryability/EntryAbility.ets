@@ -6,6 +6,8 @@ import { ApiRouteManager } from '../network/ApiRouteManager';
 import { BikaHttpClient } from '../network/BikaHttpClient';
 import { WindowHelper } from '../common/WindowHelper';
 import { CacheManager } from '../common/CacheManager';
+import { ACCENT_SETTINGS_KEY, applyNativeAccent, syncAccentColors } from '../common/AppearanceAccent';
+import { normalizeMaterialStyle } from '../common/ImmersiveMaterialLevel';
 import { readContinuationRoute, ContinuationRouteState, ContinuationRouteParams, ROUTE_READER } from '../common/ContinuationState';
 import { ImageLoader } from '../common/ImageLoader';
 import { ApiService } from '../network/ApiService';
@@ -85,6 +87,7 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'BikaTag', '%{public}s', 'logout cleanup: WidgetData.resetMemo done');
     });
     let authCache: CacheManager = CacheManager.initSync(this.context);
+    syncAccentColors(authCache.getSetting(ACCENT_SETTINGS_KEY, 'bika'), authCache.getSetting('color_mode', 'system'));
     authCache.migrateAuthStorage();
     FollowUpdateManager.getInstance().initialize(this.context);
     let bootTokenPresent: boolean = false;
@@ -387,6 +390,7 @@ export default class EntryAbility extends UIAbility {
     }
     const isDark: boolean = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     AppStorage.setOrCreate('system_color_mode', isDark ? 'dark' : 'light');
+    syncAccentColors();
   }
 
   onDestroy(): void {
@@ -440,6 +444,9 @@ export default class EntryAbility extends UIAbility {
         AppStorage.set('bika_color_mode', colorMode);
         AppStorage.setOrCreate('bika_material_level', cache.getSetting('material_level', 'EXQUISITE'));
         AppStorage.set('bika_material_level', cache.getSetting('material_level', 'EXQUISITE'));
+        const materialStyle = normalizeMaterialStyle(cache.getSetting('material_style', 'THIN'));
+        AppStorage.setOrCreate('bika_material_style', materialStyle);
+        AppStorage.set('bika_material_style', materialStyle);
         AppStorage.setOrCreate('bika_auto_punch', cache.getSetting('auto_punch', 'false') === 'true');
         AppStorage.set('bika_auto_punch', cache.getSetting('auto_punch', 'false') === 'true');
         AppStorage.setOrCreate('bika_secure_screen', cache.getSetting('secure_screen', 'false') === 'true');
@@ -448,6 +455,21 @@ export default class EntryAbility extends UIAbility {
         AppStorage.set('bika_dns_api_ips', cache.getSetting('dns_api_ips', '[]'));
         AppStorage.setOrCreate('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
         AppStorage.set('bika_dns_image_ips', cache.getSetting('dns_image_ips', '[]'));
+        try {
+          let apiIps = JSON.parse(cache.getSetting('dns_api_ips', '[]')) as string[];
+          let imageIps = JSON.parse(cache.getSetting('dns_image_ips', '[]')) as string[];
+          if (!Array.isArray(apiIps)) {
+            apiIps = [];
+          }
+          if (!Array.isArray(imageIps)) {
+            imageIps = [];
+          }
+          if (apiIps.length > 0 || imageIps.length > 0) {
+            ApiRouteManager.getInstance().applyCustomDns(apiIps, imageIps);
+          }
+        } catch (err) {
+          console.warn('[EntryAbility] 恢复 DNS 选择失败: ' + JSON.stringify(err));
+        }
         AppStorage.setOrCreate('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
         AppStorage.set('bika_blocked_tags', JSON.stringify(cache.loadBlockedTags()));
         AppStorage.setOrCreate('bika_animations', cache.getSetting('animations', 'true') === 'true');
@@ -531,6 +553,7 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, 'BikaTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
+      applyNativeAccent();
       hilog.info(DOMAIN, 'BikaTag', 'Succeeded in loading the content.');
     });
   }

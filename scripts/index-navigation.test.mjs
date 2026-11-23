@@ -43,7 +43,7 @@ test('home channel columns fit the measured compact tablet and split-screen widt
   }
 });
 
-function materialHarness({ api = 26, hardware = true, disabled = false, failBuild = false } = {}) {
+function materialHarness({ api = 26, hardware = true, componentHardware = hardware, disabled = false, failBuild = false } = {}) {
   const empty = {};
   const card = 'theme-card';
   const title = 'theme-text';
@@ -51,7 +51,8 @@ function materialHarness({ api = 26, hardware = true, disabled = false, failBuil
   const uiMaterial = {
     Material: { empty },
     MaterialState: { ENABLE: 1, DISABLE: 2 },
-    ImmersiveStyle: { THIN: 1 },
+    ImmersiveStyle: { ULTRA_THIN: 0, THIN: 1, REGULAR: 2, THICK: 3, ULTRA_THICK: 4 },
+    isImmersiveMaterialSupported: () => componentHardware,
     getMaterialInfo: () => ({ state: disabled ? 2 : 1 }),
     ImmersiveMaterial: class {
       constructor(options) {
@@ -60,7 +61,10 @@ function materialHarness({ api = 26, hardware = true, disabled = false, failBuil
       }
     }
   };
-  const globals = { Color: { Transparent: 'transparent' }, BlurStyle: { NONE: 0 }, AppStorage: { get: () => 'dark' } };
+  const storage = new Map([['bika_color_mode','dark']]);
+  const globals = { Color: { Transparent: 'transparent' }, BlurStyle: { NONE: 0 },
+    AppStorage: { get: key => storage.get(key) } };
+  const materialStyle = evaluate(read('common/ImmersiveMaterialLevel.ets'), globals);
   const material = evaluate(read('common/CompatibleMaterial.ets'), globals, {
     '@kit.ArkUI': { CommonModifier: class {}, uiMaterial },
     '@kit.BasicServicesKit': { deviceInfo: { sdkApiVersion: api } },
@@ -68,14 +72,16 @@ function materialHarness({ api = 26, hardware = true, disabled = false, failBuil
       MaterialType: { IMMERSIVE: 101 },
       getSystemMaterialTypes: () => { hardwareQueries++; return hardware ? [101] : []; }
     } },
-    './Constants': { COLOR_CARD: card }
+    './Constants': { COLOR_CARD: card },
+    './ImmersiveMaterialLevel': materialStyle
   });
   const popup = evaluate(read('common/ImmersiveToast.ets'), globals, {
     '@kit.ArkUI': { promptAction: { showToast() {}, showDialog: async options => options } },
     './CompatibleMaterial': material,
     './Constants': { COLOR_CARD: card, COLOR_TEXT_TITLE: title }
   });
-  return { ...material, ...popup, empty, card, title, get hardwareQueries() { return hardwareQueries; } };
+  return { ...material, ...popup, ...materialStyle, storage, empty, card, title,
+    get hardwareQueries() { return hardwareQueries; } };
 }
 
 test('legacy, unsupported and disabled material use opaque capsule and popup surfaces', async () => {
@@ -117,12 +123,154 @@ test('supported material keeps native styling and a failed material builds a sol
   assert.equal(fallback.systemMaterial, failing.empty);
 });
 
+test('all five material thicknesses reach capsule, menu and popup constructors', () => {
+  const h = materialHarness();
+  for (const [style, expected] of ['ULTRA_THIN','THIN','REGULAR','THICK','ULTRA_THICK'].map((name,index) => [name,index])) {
+    h.storage.set('bika_material_style',style);
+    let applied;
+    new h.GlassCapsuleMaterial(h.card).applyNormalAttribute({
+      backgroundColor(){}, systemMaterial:material=>{applied=material;}
+    });
+    assert.equal(applied.options.style,expected);
+    assert.equal(h.compatibleMenuOptions({}).systemMaterial.options.style,expected);
+    assert.equal(h.compatibleSheetOptions({}).systemMaterial.options.style,expected);
+    assert.equal(h.compatiblePopupMaterial().options.style,expected);
+    assert.equal(h.immersiveCapsuleTint('GENTLE',false),'#33FFFFFF');
+  }
+  h.storage.delete('bika_material_style');
+  assert.equal(h.compatiblePopupMaterial().options.style,1);
+  h.storage.set('bika_material_style','old-invalid-value');
+  assert.equal(h.compatiblePopupMaterial().options.style,1);
+  assert.equal(h.normalizeMaterialStyle(''), 'THIN');
+});
+
+test('switching grade affects reopened popups and retains independently chosen thickness', async () => {
+  const h = materialHarness();
+  h.storage.set('bika_material_style', 'THICK');
+  for (const [level, shadow, light] of [
+    ['SMOOTH', false, null], ['EXQUISITE', true, '#FF7CA8'],
+    ['GENTLE', false, '#66FF7CA8'], ['ADAPTIVE', undefined, undefined]
+  ]) {
+    h.storage.set('bika_material_level', level);
+    const toast = { message: 'test' };
+    h.showImmersiveToast(toast);
+    const dialog = await h.showImmersiveDialog({});
+    for (const popup of [toast, dialog, h.compatibleMenuOptions({}, 'THICK', level),
+      h.compatibleSheetOptions({}, true, 'THICK', level)]) {
+      const opts = popup.systemMaterial.options;
+      assert.equal(opts.style, 3);
+      assert.equal(opts.applyShadow, shadow);
+      assert.equal(opts.lightEffect && opts.lightEffect.color, light);
+    }
+  }
+});
+
+test('both native material menus use the chosen grade and thickness', () => {
+  // ArkUI capability and HDS capability must be queried independently.
+  const h = materialHarness({ hardware: false, componentHardware: true });
+  assert.equal(h.supportsHdsImmersiveMaterial(), false);
+  for (const thickness of [true, false]) {
+    const picker = subject('features/profile/MaterialLevelSelect.ets', 'MaterialLevelSelect', ['menuOptions'], h);
+    Object.assign(picker, { thickness, colorMode: 'system', systemColorMode: 'dark', materialStyle: 'THICK' });
+    for (const [grade, tint] of [['EXQUISITE', undefined], ['GENTLE', '#6620252E'],
+      ['SMOOTH', '#D920252E'], ['ADAPTIVE', undefined]]) {
+      picker.level = grade;
+      const menu = picker.menuOptions();
+      assert.equal(menu.systemMaterial.options.style, 3);
+      assert.equal(menu.systemMaterial.options.materialColor, tint);
+    }
+    picker.level = 'SMOOTH';
+    picker.systemColorMode = 'light';
+    assert.equal(picker.menuOptions().systemMaterial.options.materialColor, '#D9FFFFFF');
+  }
+});
+
+function materialSelector(thickness) {
+  const options=evaluate(read('features/profile/ProfileOptions.ets'));
+  const saved=new Map(), messages=[];
+  const storage=new Map([['bika_animations',false],['bika_material_rev',2]]);
+  let provider;
+  const cache={isReady:()=>true,saveSetting:(key,value)=>saved.set(key,value)};
+  provider=()=>Promise.resolve(cache);
+  const page=subject('features/profile/MaterialLevelSelect.ets','MaterialLevelSelect',
+    ['options','selectedIndex','label','select','aboutToDisappear'],{
+      ...options,CacheManager:{getInstance:()=>provider()},showImmersiveToast:options=>messages.push(options.message),
+      AppStorage:{get:key=>storage.get(key),setOrCreate:(key,value)=>storage.set(key,value)}
+    });
+  Object.assign(page,{thickness,level:'SMOOTH',materialStyle:'THIN',pendingValue:'',request:0});
+  return {page,saved,storage,messages,cache,setProvider:value=>provider=value};
+}
+
+test('material selectors persist independent preferences while preserving the saved level',async()=>{
+  const thickness=materialSelector(true);
+  await thickness.page.select('ULTRA_THICK');
+  assert.equal(thickness.saved.get('material_style'),'ULTRA_THICK');
+  assert.equal(thickness.saved.has('material_level'),false);
+  assert.equal(thickness.page.level,'SMOOTH');
+  assert.equal(thickness.page.label(),'超厚');
+  const grade=materialSelector(false);
+  await grade.page.select('GENTLE');
+  assert.equal(grade.saved.get('material_level'),'GENTLE');
+  assert.equal(grade.page.materialStyle,'THIN');
+  assert.equal(grade.storage.get('bika_material_rev'),3);
+});
+
+test('the selector shows a choice pending save and keeps it once saved', async () => {
+  for (const [thickness, value, label] of [[false, 'GENTLE', '轻柔'], [true, 'ULTRA_THIN', '超薄']]) {
+    const h = materialSelector(thickness);
+    let resume;
+    h.setProvider(() => new Promise(resolve => { resume = resolve; }));
+    const pending = h.page.select(value);
+    assert.equal(h.page.label(), label);
+    assert.equal(h.saved.size, 0);
+    resume(h.cache);
+    await pending;
+    assert.equal(h.saved.get(thickness ? 'material_style' : 'material_level'), value);
+    assert.equal(h.page.label(), label);
+    assert.equal(h.page.pendingValue, '');
+  }
+});
+
+test('failed persistence keeps the active thickness and reports the failure',async()=>{
+  for (const failure of ['not-ready','write-failed']) {
+    const h=materialSelector(true);
+    if(failure==='not-ready')h.cache.isReady=()=>false;
+    else h.cache.saveSetting=()=>{throw new Error('write failed');};
+    await h.page.select('THICK');
+    assert.equal(h.page.materialStyle,'THIN');
+    assert.equal(h.page.label(),'薄');
+    assert.equal(h.saved.size,0);
+    assert.deepEqual(h.messages,['显示设置保存失败，请重试']);
+  }
+});
+
+test('latest material choice wins if settings load out of order, and leaving cancels pending writes',async()=>{
+  const h=materialSelector(true),pending=[];
+  h.setProvider(()=>new Promise(resolve=>pending.push(resolve)));
+  const first=h.page.select('ULTRA_THIN');
+  const second=h.page.select('THICK');
+  pending[1](h.cache);
+  await second;
+  pending[0](h.cache);
+  await first;
+  assert.equal(h.saved.get('material_style'),'THICK');
+  const leaving=h.page.select('REGULAR');
+  h.page.aboutToDisappear();
+  pending[2](h.cache);
+  await leaving;
+  assert.equal(h.saved.get('material_style'),'THICK');
+});
+
 const navigationMethods = ['shouldShowTabBar', 'canSwipeRootTabs', 'applyTabBarVisibility', 'syncTabBarVisibility',
   'applyPendingTabsMaterial', 'onTabsMaterialChanged', 'onTabsAppear', 'onSubpageChanged', 'openChannel',
+  'tabsBackgroundEffect', 'hdsMaterialLevel',
   'onPageHide', 'onPageShow', 'aboutToDisappear', 'openProfileSubpage'];
 function navigation({ routeFails = false } = {}) {
   const frames = [], animations = [], routes = [], messages = [], storage = new Map(), tabs = [];
   const page = subject('pages/IndexPage.ets', 'IndexPage', navigationMethods, {
+    ...evaluate(read('common/ImmersiveMaterialLevel.ets')),
+    COLOR_CARD: 'theme-card',
+    hdsMaterial: { MaterialLevel: { EXQUISITE: 'exquisite', GENTLE: 'gentle', SMOOTH: 'smooth', ADAPTIVE: 'adaptive' } },
     HdsAnimationMode: { CLICK_ANIMATION: 'click' },
     router: { pushUrl: route => { routes.push(route); return routeFails ? Promise.reject(new Error('route failed')) : Promise.resolve(); } },
     showImmersiveToast: message => messages.push(message.message),
@@ -133,6 +281,7 @@ function navigation({ routeFails = false } = {}) {
   Object.assign(page, { currentTab: 1, subpageOpen: false, tabsPageVisible: true, tabsNodeReady: true,
     tabsSyncGeneration: 0, lastTabBarVisible: undefined, channelOpening: false, channelNavigationGeneration: 0,
     animationsEnabled: true, appliedTabsMaterial: 'EXQUISITE', materialLevel: 'EXQUISITE', appliedTabsRevision: 1, materialRev: 1,
+    appliedTabsStyle: 'THIN', materialStyle: 'THIN', immersiveTabs: true,
     tabsController: { applyShowAnimation: () => animations.push('show'), applyHideAnimation: () => animations.push('hide'),
       changeIndex: index => tabs.push(index) },
     getUIContext: () => ({ postFrameCallback: callback => frames.push(callback) }), consumeWidgetAction() {}, publishCurrentRoute() {} });
@@ -190,6 +339,62 @@ test('material changes are deferred during channel entry or while the root page 
     assert.equal(h.page.applyPendingTabsMaterial(), false); assert.equal(h.page.appliedTabsMaterial, 'EXQUISITE');
     h.page.onPageShow(); assert.equal(h.page.appliedTabsMaterial, 'SMOOTH');
   }
+});
+test('thickness alone reaches HDS on returning from settings without changing its native grade', () => {
+  const h = navigation();
+  h.page.subpageOpen = true;
+  h.page.materialStyle = 'ULTRA_THICK';
+  h.page.onTabsMaterialChanged();
+  assert.equal(h.page.appliedTabsStyle, 'THIN');
+  assert.equal(h.frames.length, 0);
+  const thin = h.page.tabsBackgroundEffect();
+  const grade = h.page.hdsMaterialLevel();
+  h.page.subpageOpen = false;
+  h.page.onSubpageChanged();
+  h.flush();
+  assert.equal(h.page.appliedTabsStyle, 'ULTRA_THICK');
+  assert.equal(h.page.hdsMaterialLevel(), grade);
+  assert.equal(h.page.appliedTabsRevision, 1);
+  assert(h.page.tabsBackgroundEffect().radius > thin.radius);
+  assert.equal(h.animations.at(-1), 'show');
+  assert.equal(h.page.applyPendingTabsMaterial(), false);
+  h.page.materialStyle = 'THIN';
+  assert.equal(h.page.applyPendingTabsMaterial(), true);
+  assert.deepEqual(plain(h.page.tabsBackgroundEffect()), plain(thin));
+});
+test('pending HDS thickness waits for channel navigation and uses the latest saved choice', () => {
+  for (const flag of ['channelOpening', 'tabsPageVisible']) {
+    const h = navigation();
+    h.page[flag] = flag === 'channelOpening';
+    for (const style of ['ULTRA_THICK', 'REGULAR']) {
+      h.page.materialStyle = style;
+      assert.equal(h.page.applyPendingTabsMaterial(), false);
+      assert.equal(h.page.appliedTabsStyle, 'THIN');
+    }
+    h.page.onPageShow();
+    h.flush();
+    assert.equal(h.page.appliedTabsStyle, 'REGULAR');
+    assert.equal(h.animations.at(-1), 'show');
+  }
+});
+test('HDS thickness changes only blur radius and preserves the unsupported-device fallback', () => {
+  const h = navigation();
+  let lastRadius = -1;
+  for (const style of ['ULTRA_THIN', 'THIN', 'REGULAR', 'THICK', 'ULTRA_THICK']) {
+    h.page.materialStyle = style;
+    h.page.applyPendingTabsMaterial();
+    const effect = plain(h.page.tabsBackgroundEffect());
+    assert.deepEqual(Object.keys(effect), ['radius']);
+    if (style === 'ULTRA_THIN') assert.equal(effect.radius, 0);
+    assert(effect.radius > lastRadius);
+    lastRadius = effect.radius;
+  }
+  h.page.immersiveTabs = false;
+  assert.deepEqual(plain(h.page.tabsBackgroundEffect()), { radius: 0, color: 'theme-card' });
+  h.page.immersiveTabs = true;
+  h.page.materialStyle = 'invalid-old-value';
+  h.page.applyPendingTabsMaterial();
+  assert.equal(h.page.appliedTabsStyle, 'THIN');
 });
 test('an unready native controller can recover on appear instead of leaving the bar permanently missing', () => {
   const h = navigation(); const original = h.page.tabsController.applyShowAnimation;

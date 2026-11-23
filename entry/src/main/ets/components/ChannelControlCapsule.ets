@@ -1,15 +1,18 @@
+import { ACCENT_COLORS_KEY, AccentColors, DEFAULT_ACCENT_COLORS } from '../common/AppearanceAccent';
 import { immersiveCapsuleTint } from '../common/ImmersiveMaterialLevel';
 import { common } from '@kit.AbilityKit';
 import { GlassCapsuleMaterial, noImmersiveMaterial } from '../common/CompatibleMaterial';
-import { COLOR_CARD, COLOR_PRIMARY, COLOR_TEXT_SECONDARY } from '../common/Constants';
+import { COLOR_CARD, COLOR_TEXT_SECONDARY } from '../common/Constants';
 
 /** 沿用阅读器方案：胶囊位于独立 Navigation.title 作用域，宿主背板透明。 */
 @Component
 export struct ChannelControlCapsule {
+  @StorageProp(ACCENT_COLORS_KEY) appearanceColors: AccentColors = DEFAULT_ACCENT_COLORS;
   @Prop label: string = '';
   @Prop selected: boolean = false;
   @Prop filterIcon: boolean = false;
   @StorageProp('bika_material_level') materialLevel: string = 'EXQUISITE';
+  @StorageProp('bika_material_style') materialStyle: string = 'THIN';
   @StorageProp('bika_color_mode') colorMode: string = 'system';
   @StorageProp('system_color_mode') systemColorMode: string = 'light';
   @StorageProp('bika_animations') animationsOn: boolean = true;
@@ -49,13 +52,13 @@ export struct ChannelControlCapsule {
       if (this.filterIcon) {
         SymbolGlyph($r('sys.symbol.line_3_horizontal'))
           .fontSize(16)
-          .fontColor([this.selected ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY])
+          .fontColor([this.selected ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY])
       }
       Text(this.label)
         .fontSize(13)
         .maxFontScale(1.3)
         .fontWeight(this.selected ? FontWeight.Bold : FontWeight.Medium)
-        .fontColor(this.selected ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+        .fontColor(this.selected ? this.appearanceColors.primary : COLOR_TEXT_SECONDARY)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
@@ -72,7 +75,7 @@ export struct ChannelControlCapsule {
       Row()
         .width('100%').height(36)
         .borderRadius(18)
-        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD))
+        .attributeModifier(new GlassCapsuleMaterial(COLOR_CARD, false, this.materialStyle))
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no-hide-descendants')
       Row()
